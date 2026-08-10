@@ -1,0 +1,5 @@
+{
+  "extends": "../../pyproject.toml",
+  "include": ["generated_batch.py", "generated_schema.py"],
+  "exclude": []
+}
