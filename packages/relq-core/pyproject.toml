@@ -1,0 +1,19 @@
+[project]
+name = "relq"
+version = "0.0.1"
+description = "Type-safe SQL query builder core for Python 3.15+"
+readme = "readme.md"
+requires-python = ">=3.15"
+
+[project.optional-dependencies]
+sqlite = ["relq-sqlite==0.0.1"]
+postgres = ["relq-postgres==0.0.1"]
+all = ["relq-sqlite==0.0.1", "relq-postgres==0.0.1"]
+
+[tool.uv.sources]
+relq-sqlite = { workspace = true }
+relq-postgres = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13"]
+build-backend = "uv_build"
