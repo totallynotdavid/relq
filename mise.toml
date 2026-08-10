@@ -33,11 +33,17 @@ depends = ["test:sqlite", "test:postgres"]
 
 [tasks.build]
 description = "Build every workspace package"
-run = "uv build --all-packages"
+run = [
+  "uv build --package relq --clear",
+  "uv build --package relq-sqlite",
+  "uv build --package relq-postgres",
+  "uv build --package relq-codegen",
+]
 
 [tasks.release]
 description = "Verify built distributions install and run outside this workspace"
-run = "scripts/check-install.sh"
+depends = ["build"]
+run = "scripts/check-install.sh \"$PWD/dist\""
 
 [tasks.check]
 description = "Run the complete local quality gate"

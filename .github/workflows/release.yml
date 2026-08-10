@@ -44,8 +44,12 @@ jobs:
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync basedpyright
       - run: uv run --no-sync pytest
-      - run: scripts/check-install.sh
-      - run: uv build --all-packages --out-dir dist
+      - run: uv build --package relq --clear --out-dir dist
+      - run: uv build --package relq-sqlite --out-dir dist
+      - run: uv build --package relq-postgres --out-dir dist
+      - run: uv build --package relq-codegen --out-dir dist
+      - name: Verify release artifacts install outside the workspace
+        run: scripts/check-install.sh "$PWD/dist"
       - uses: actions/upload-artifact@v5
         with:
           name: python-distributions

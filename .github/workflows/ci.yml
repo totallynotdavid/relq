@@ -33,4 +33,8 @@ jobs:
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync basedpyright
       - run: uv run --no-sync pytest
-      - run: scripts/check-install.sh
+      - run: uv build --package relq --clear --out-dir dist
+      - run: uv build --package relq-sqlite --out-dir dist
+      - run: uv build --package relq-postgres --out-dir dist
+      - run: uv build --package relq-codegen --out-dir dist
+      - run: scripts/check-install.sh "$PWD/dist"

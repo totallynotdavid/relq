@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Exercise built distributions in environments that cannot import this workspace.
+# Exercise release artifacts in environments that cannot import this workspace.
+if [ "$#" -ne 1 ]; then
+  echo "usage: $0 ARTIFACT_DIR" >&2
+  exit 2
+fi
+
+artifact_dir=$(cd "$1" && pwd -P)
+if ! compgen -G "$artifact_dir/*.whl" >/dev/null; then
+  echo "artifact directory contains no wheels: $artifact_dir" >&2
+  exit 1
+fi
+
 check_dir=$(mktemp -d)
 trap 'rm -rf "$check_dir"' EXIT
 
-artifact_dir="$check_dir/dist"
 sqlite_env="$check_dir/sqlite"
 postgres_env="$check_dir/postgres"
-
-uv build --all-packages --out-dir "$artifact_dir"
+cd "$check_dir"
 
 uv venv --clear --python python "$sqlite_env"
 env -u PYTHONPATH uv pip install --python "$sqlite_env/bin/python" \
