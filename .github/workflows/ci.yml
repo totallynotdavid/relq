@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: relq
+          POSTGRES_PASSWORD: relq
+          POSTGRES_USER: relq
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U relq -d relq" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      RELQ_TEST_POSTGRES_DSN: postgresql://relq:relq@localhost:5432/relq
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.15.0-rc.1"
+          allow-prereleases: true
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --all-packages
+      - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync basedpyright
+      - run: uv run --no-sync pytest
+      - run: scripts/check-install.sh
