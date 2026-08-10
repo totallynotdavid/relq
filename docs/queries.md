@@ -39,7 +39,9 @@ projection over one of them.
 ## Subqueries
 
 ```python
-latest_email = scalar(select(logs.email).from_(logs).where(logs.user_id.eq(users.id)).limit(1))
+latest_email = scalar(
+    select(logs.email).from_(logs).where(logs.user_id.eq(users.id)).limit(1),
+)
 ```
 
 `scalar(query)` embeds a query as `Expr[T | None]`. It's `T | None` because an
