@@ -1,0 +1,44 @@
+[tools]
+python = "3.15.0rc1"
+uv = "0.12.3"
+postgres = "18.4"
+
+[tasks.format]
+description = "Format Python source"
+run = "uv run --locked --all-packages ruff format ."
+
+[tasks.format-check]
+description = "Check formatting without modifying files"
+run = "uv run --locked --all-packages ruff format --check ."
+
+[tasks.lint]
+description = "Lint the workspace"
+run = "uv run --locked --all-packages ruff check ."
+
+[tasks.typecheck]
+description = "Run strict static type checks"
+run = "uv run --locked --all-packages basedpyright"
+
+[tasks."test:sqlite"]
+description = "Run compiler, SQLite integration, and backend-independent tests"
+run = "uv run --locked --all-packages pytest --ignore=tests/integration/postgres"
+
+[tasks."test:postgres"]
+description = "Run PostgreSQL integration tests against an ephemeral server"
+run = "scripts/test-postgres.sh"
+
+[tasks.test]
+description = "Run the complete SQLite and PostgreSQL test suite"
+depends = ["test:sqlite", "test:postgres"]
+
+[tasks.build]
+description = "Build every workspace package"
+run = "uv build --all-packages"
+
+[tasks.release]
+description = "Verify built distributions install and run outside this workspace"
+run = "scripts/check-install.sh"
+
+[tasks.check]
+description = "Run the complete local quality gate"
+depends = ["format-check", "lint", "typecheck", "test", "release"]

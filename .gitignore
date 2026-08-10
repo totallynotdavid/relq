@@ -1,0 +1,23 @@
+# Python bytecode and type-checker caches
+__pycache__/
+*.py[cod]
+*.pyi.bak
+.mypy_cache/
+.pyright/
+.basedpyright/
+
+# Local environments and test/tool output
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Generated local CodeGraph index
+.codegraph/
