@@ -3,6 +3,21 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to build and publish (for example, v0.0.1)
+        required: true
+        type: string
+      package:
+        description: Single distribution to publish; use only for PyPI bootstrap or recovery
+        required: true
+        type: choice
+        options:
+          - relq
+          - relq-sqlite
+          - relq-postgres
+          - relq-codegen
 
 permissions:
   contents: read
@@ -24,8 +39,11 @@ jobs:
           --health-timeout 5s --health-retries 10
     env:
       RELQ_TEST_POSTGRES_DSN: postgresql://relq:relq@localhost:5432/relq
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
       - uses: actions/setup-python@v7
         with:
           python-version: "3.15.0-rc.1"
@@ -35,8 +53,7 @@ jobs:
       - name: Verify the release tag and all distribution versions agree
         run: >-
           uv run --no-sync python -c 'from importlib.metadata import version;
-          from os import environ; tag =
-          environ["GITHUB_REF_NAME"].removeprefix("v"); versions =
+          from os import environ; tag = environ["RELEASE_TAG"].removeprefix("v"); versions =
           {version(name) for name in ("relq", "relq-sqlite", "relq-postgres",
           "relq-codegen")}; assert versions == {tag}, f"tag {tag!r} does not
           match distribution versions {versions!r}"'
@@ -68,4 +85,24 @@ jobs:
         with:
           name: python-distributions
           path: dist/
+      - name: Select the bootstrap distribution
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          case "$PACKAGE" in
+            relq|relq-sqlite|relq-postgres|relq-codegen) ;;
+            *) echo "unsupported distribution: $PACKAGE" >&2; exit 2 ;;
+          esac
+          package_prefix=${PACKAGE//-/_}
+          shopt -s nullglob
+          artifacts=(dist/"$package_prefix"-*)
+          if [ "${#artifacts[@]}" -eq 0 ]; then
+            echo "no artifacts found for $PACKAGE" >&2
+            exit 1
+          fi
+          mkdir publish-dist
+          cp "${artifacts[@]}" publish-dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ${{ github.event_name == 'workflow_dispatch' && 'publish-dist/' || 'dist/' }}
