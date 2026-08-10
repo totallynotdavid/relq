@@ -11,3 +11,4 @@
 - [Execution](./execution.md)
 - [Code generation](./codegen.md)
 - [Design boundaries](./design-boundaries.md)
+- [Releasing relq](./releasing.md)
