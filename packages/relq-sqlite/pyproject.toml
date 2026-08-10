@@ -1,0 +1,13 @@
+[project]
+name = "relq-sqlite"
+version = "0.0.1"
+description = "SQLite executor for relq's type-safe SQL queries"
+requires-python = ">=3.15"
+dependencies = ["relq==0.0.1"]
+
+[tool.uv.sources]
+relq = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13"]
+build-backend = "uv_build"
