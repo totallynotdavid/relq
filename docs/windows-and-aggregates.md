@@ -5,12 +5,7 @@ Ranking and distribution functions (`row_number`, `rank`, `dense_rank`,
 `percent_rank`, `cume_dist`) require it:
 
 ```python
-ranked = (
-    row_number()
-    .over()
-    .partition_by(users.manager_id)
-    .order_by(users.id.asc())
-)
+ranked = row_number().over().partition_by(users.manager_id).order_by(users.id.asc())
 ```
 
 The resulting value is refined with `.partition_by(...)` and `.order_by(...)`

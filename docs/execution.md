@@ -42,9 +42,7 @@ class UserEmail:
     email: str
 
 
-rows = database.fetch_all_as(
-    select(users.id, users.email).from_(users), row_adapter(UserEmail)
-)
+rows = database.fetch_all_as(select(users.id, users.email).from_(users), row_adapter(UserEmail))
 ```
 
 `fetch_all_as` / `fetch_one_as` are the explicit, one-off adapter path for a raw
