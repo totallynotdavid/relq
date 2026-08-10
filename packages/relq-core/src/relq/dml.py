@@ -1,0 +1,473 @@
+# ruff: noqa: UP046
+"""Immutable data-modification builders.
+
+Payloads intentionally use keyword arguments.  Python cannot derive a
+``TypedDict`` from arbitrary column descriptors; generated schemas can expose
+their own payload TypedDicts while this API validates target column names at
+runtime and retains typed ``RETURNING`` rows.
+"""
+
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
+from typing import Generic, Literal, Self, TypeVar, overload
+
+from relq._ast import (
+    ColumnNode,
+    ConflictNode,
+    DefaultValuesSourceNode,
+    DeleteNode,
+    InsertNode,
+    InsertRowsSourceNode,
+    InsertSelectSourceNode,
+    InsertSourceNode,
+    InsertValuesSourceNode,
+    Node,
+    UpdateNode,
+    ValueNode,
+)
+from relq._query import Query, extract_query, new_query, select_node
+from relq.expressions import BooleanExpression, Column, Expr, Expression, Table
+from relq.query import SelectQuery
+from relq.rows import RowAdapter, row_adapter
+
+
+def _values(table: Table, entries: dict[str, object]) -> tuple[tuple[str, Node], ...]:
+    if not entries:
+        raise ValueError("values requires at least one column")
+    known = table.column_names()
+    unknown = entries.keys() - known
+    if unknown:
+        names = ", ".join(sorted(unknown))
+        raise ValueError(f"unknown column(s) for {table.table_name}: {names}")
+    return tuple(
+        (name, item.node() if isinstance(item, Expr) else ValueNode(item))
+        for name, item in entries.items()
+    )
+
+
+def _target_column_names(
+    table: Table, columns: tuple[object, ...], *, allow_empty: bool = False
+) -> tuple[str, ...]:
+    if not columns and not allow_empty:
+        raise ValueError("insert-from-select requires at least one target column")
+    names: list[str] = []
+    for column in columns:
+        if not isinstance(column, Column):
+            raise TypeError("target and conflict arguments must be table columns")
+        node = column.node()
+        if not isinstance(node, ColumnNode):
+            raise TypeError("target and conflict arguments must be table columns")
+        if node.source != table.reference or node.name not in table.column_names():
+            raise ValueError("target and conflict columns must belong to the INSERT table")
+        names.append(node.name)
+    if len(names) != len(set(names)):
+        raise ValueError("target and conflict columns cannot contain duplicates")
+    return tuple(names)
+
+
+Row_co = TypeVar("Row_co", covariant=True)
+Returns = TypeVar("Returns", Literal[False], Literal[True])
+Bounded = TypeVar("Bounded", Literal[False], Literal[True])
+
+
+def _model_returning[Model](
+    model: type[Model] | RowAdapter[Model], expressions: tuple[Expression, ...]
+) -> tuple[tuple[Node, ...], RowAdapter[Model]]:
+    adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
+    if not expressions:
+        raise ValueError("returning_model requires at least one expression")
+    if len(expressions) != adapter.arity:
+        raise ValueError(
+            f"{adapter.model_name} requires {adapter.arity} RETURNING expressions; "
+            f"received {len(expressions)}"
+        )
+    return tuple(expression.node() for expression in expressions), adapter
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class _DmlQuery(Query[Row_co], Generic[Row_co]):
+    _table: Table
+
+    def with_node(self, node: InsertNode | UpdateNode | DeleteNode) -> Self:
+        return new_query(type(self), node, extract_query(self).adapter, table=self._table)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
+    @property
+    def _node(self) -> InsertNode:
+        node = extract_query(self).node
+        if not isinstance(node, InsertNode):  # pragma: no cover - factory invariant
+            raise TypeError("INSERT query has a non-INSERT node")
+        return node
+
+    def _with_source(self, source: InsertSourceNode) -> InsertQuery[Row_co, Returns]:
+        if self._node.source is not None:
+            raise ValueError("an INSERT source can only be specified once")
+        return self.with_node(replace(self._node, source=source))
+
+    def values(self, **entries: object) -> InsertQuery[Row_co, Returns]:
+        return self._with_source(InsertValuesSourceNode(_values(self._table, entries)))
+
+    def values_many(self, rows: Iterable[Mapping[str, object]]) -> InsertQuery[Row_co, Returns]:
+        """Insert equally shaped rows as one parameterized SQL statement."""
+        prepared = tuple(_values(self._table, dict(row)) for row in rows)
+        if not prepared:
+            raise ValueError("values_many requires at least one row")
+        columns = tuple(name for name, _ in prepared[0])
+        if any(tuple(name for name, _ in row) != columns for row in prepared[1:]):
+            raise ValueError(
+                "every values_many row must contain the same columns in the same order"
+            )
+        return self._with_source(InsertRowsSourceNode(prepared))
+
+    @overload
+    def from_select[A](
+        self, query: SelectQuery[tuple[A]], first: Column[A], /
+    ) -> InsertQuery[Row_co, Returns]: ...
+
+    @overload
+    def from_select[A, B](
+        self, query: SelectQuery[tuple[A, B]], first: Column[A], second: Column[B], /
+    ) -> InsertQuery[Row_co, Returns]: ...
+
+    @overload
+    def from_select[A, B, C](
+        self,
+        query: SelectQuery[tuple[A, B, C]],
+        first: Column[A],
+        second: Column[B],
+        third: Column[C],
+        /,
+    ) -> InsertQuery[Row_co, Returns]: ...
+
+    @overload
+    def from_select[A, B, C, D](
+        self,
+        query: SelectQuery[tuple[A, B, C, D]],
+        first: Column[A],
+        second: Column[B],
+        third: Column[C],
+        fourth: Column[D],
+        /,
+    ) -> InsertQuery[Row_co, Returns]: ...
+
+    def from_select(
+        self, query: SelectQuery[tuple[object, ...]], *columns: object
+    ) -> InsertQuery[Row_co, Returns]:
+        names = _target_column_names(self._table, columns)
+        node = select_node(query)
+        if len(node.selections) != len(names):
+            raise ValueError(
+                "insert-from-select requires one target column per projected expression: "
+                f"targets={len(names)}, projection={len(node.selections)}"
+            )
+        return self._with_source(InsertSelectSourceNode(node, names))
+
+    def default_values(self) -> InsertQuery[Row_co, Returns]:
+        """Insert one row using the table's declared defaults."""
+        return self._with_source(DefaultValuesSourceNode())
+
+    def on_conflict[T](self, *columns: Column[T]) -> ConflictBuilder[Row_co, Returns]:
+        """Start an SQLite/PostgreSQL ``ON CONFLICT`` clause."""
+        if self._node.source is None:
+            raise ValueError("on_conflict requires values() or from_select() first")
+        match self._node.source:
+            case DefaultValuesSourceNode():
+                raise ValueError(
+                    "default-values inserts and conflict clauses are mutually exclusive"
+                )
+            case _:
+                pass
+        return ConflictBuilder(
+            self, _target_column_names(self._table, columns, allow_empty=True), self._table
+        )
+
+    @overload
+    def returning[A](self, first: Expr[A]) -> InsertQuery[tuple[A], Literal[True]]: ...
+
+    @overload
+    def returning[A, B](
+        self, first: Expr[A], second: Expr[B]
+    ) -> InsertQuery[tuple[A, B], Literal[True]]: ...
+
+    @overload
+    def returning[A, B, C](
+        self, first: Expr[A], second: Expr[B], third: Expr[C]
+    ) -> InsertQuery[tuple[A, B, C], Literal[True]]: ...
+
+    @overload
+    def returning[A, B, C, D](
+        self, first: Expr[A], second: Expr[B], third: Expr[C], fourth: Expr[D]
+    ) -> InsertQuery[tuple[A, B, C, D], Literal[True]]: ...
+
+    @overload
+    def returning[A, B, C, D, E](
+        self, first: Expr[A], second: Expr[B], third: Expr[C], fourth: Expr[D], fifth: Expr[E]
+    ) -> InsertQuery[tuple[A, B, C, D, E], Literal[True]]: ...
+
+    @overload
+    def returning[A, B, C, D, E, F](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+    ) -> InsertQuery[tuple[A, B, C, D, E, F], Literal[True]]: ...
+
+    def returning(
+        self, first: object, *rest: object, **named: object
+    ) -> InsertQuery[tuple[object, ...], Literal[True]]:
+        if self._node.returning:
+            raise ValueError("returning() can only be specified once")
+        if named:
+            raise TypeError("returning expressions must be positional")
+        expressions = (first, *rest)
+        if len(expressions) > 6:
+            raise ValueError("returning supports at most six expressions")
+        nodes: list[Node] = []
+        for expression in expressions:
+            if not isinstance(expression, Expr):
+                raise TypeError("returning accepts only SQL expressions")
+            nodes.append(expression.node())
+        return new_query(
+            InsertQuery, replace(self._node, returning=tuple(nodes)), table=self._table
+        )
+
+    def returning_model[Model](
+        self, model: type[Model] | RowAdapter[Model], *expressions: Expression
+    ) -> ModelInsertQuery[Model]:
+        if self._node.returning:
+            raise ValueError("returning_model() can only be specified once")
+        nodes, adapter = _model_returning(model, expressions)
+        return new_query(ModelInsertQuery, replace(self._node, returning=nodes), adapter)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ModelInsertQuery[Model](Query[Model]):
+    """An INSERT RETURNING query decoded into one declared model."""
+
+
+@dataclass(frozen=True, slots=True)
+class ConflictBuilder(Generic[Row_co, Returns]):
+    """Incomplete INSERT conflict clause. It must end in an action."""
+
+    _query: InsertQuery[Row_co, Returns]
+    _columns: tuple[str, ...]
+    _table: Table
+
+    def do_nothing(self) -> InsertQuery[Row_co, Returns]:
+        node = _insert_node(self._query)
+        return self._query.with_node(replace(node, conflict=ConflictNode(self._columns, "nothing")))
+
+    def do_update(self, **entries: object) -> InsertQuery[Row_co, Returns]:
+        if not self._columns:
+            raise ValueError("ON CONFLICT DO UPDATE requires at least one conflict target column")
+        node = _insert_node(self._query)
+        return self._query.with_node(
+            replace(
+                node, conflict=ConflictNode(self._columns, "update", _values(self._table, entries))
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
+    @property
+    def _node(self) -> UpdateNode:
+        node = extract_query(self).node
+        if not isinstance(node, UpdateNode):  # pragma: no cover - factory invariant
+            raise TypeError("UPDATE query has a non-UPDATE node")
+        return node
+
+    def values(self, **entries: object) -> UpdateQuery[Row_co, Returns, Bounded]:
+        if self._node.values:
+            raise ValueError("values() can only be specified once")
+        return self.with_node(replace(self._node, values=_values(self._table, entries)))
+
+    def where(self, predicate: BooleanExpression) -> UpdateQuery[Row_co, Returns, Literal[True]]:
+        return new_query(
+            UpdateQuery,
+            replace(self._node, where=predicate.node(), bounded=True),
+            table=self._table,
+        )
+
+    def all_rows(self) -> UpdateQuery[Row_co, Returns, Literal[True]]:
+        """Explicitly authorize a full-table update."""
+        return new_query(UpdateQuery, replace(self._node, bounded=True), table=self._table)
+
+    @overload
+    def returning[A](self, first: Expr[A]) -> UpdateQuery[tuple[A], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B](
+        self, first: Expr[A], second: Expr[B]
+    ) -> UpdateQuery[tuple[A, B], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C](
+        self, first: Expr[A], second: Expr[B], third: Expr[C]
+    ) -> UpdateQuery[tuple[A, B, C], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D](
+        self, first: Expr[A], second: Expr[B], third: Expr[C], fourth: Expr[D]
+    ) -> UpdateQuery[tuple[A, B, C, D], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D, E](
+        self, first: Expr[A], second: Expr[B], third: Expr[C], fourth: Expr[D], fifth: Expr[E]
+    ) -> UpdateQuery[tuple[A, B, C, D, E], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D, E, F](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+    ) -> UpdateQuery[tuple[A, B, C, D, E, F], Literal[True], Bounded]: ...
+
+    def returning(
+        self, first: object, *rest: object, **named: object
+    ) -> UpdateQuery[tuple[object, ...], Literal[True], Bounded]:
+        if self._node.returning:
+            raise ValueError("returning() can only be specified once")
+        if named:
+            raise TypeError("returning expressions must be positional")
+        expressions = (first, *rest)
+        if len(expressions) > 6:
+            raise ValueError("returning supports at most six expressions")
+        nodes: list[Node] = []
+        for expression in expressions:
+            if not isinstance(expression, Expr):
+                raise TypeError("returning accepts only SQL expressions")
+            nodes.append(expression.node())
+        return new_query(
+            UpdateQuery, replace(self._node, returning=tuple(nodes)), table=self._table
+        )
+
+    def returning_model[Model](
+        self, model: type[Model] | RowAdapter[Model], *expressions: Expression
+    ) -> ModelUpdateQuery[Model]:
+        if self._node.returning:
+            raise ValueError("returning_model() can only be specified once")
+        nodes, adapter = _model_returning(model, expressions)
+        return new_query(ModelUpdateQuery, replace(self._node, returning=nodes), adapter)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ModelUpdateQuery[Model](Query[Model]):
+    """An UPDATE RETURNING query decoded into one declared model."""
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
+    @property
+    def _node(self) -> DeleteNode:
+        node = extract_query(self).node
+        if not isinstance(node, DeleteNode):  # pragma: no cover - factory invariant
+            raise TypeError("DELETE query has a non-DELETE node")
+        return node
+
+    def where(self, predicate: BooleanExpression) -> DeleteQuery[Row_co, Returns, Literal[True]]:
+        return new_query(
+            DeleteQuery,
+            replace(self._node, where=predicate.node(), bounded=True),
+            table=self._table,
+        )
+
+    def all_rows(self) -> DeleteQuery[Row_co, Returns, Literal[True]]:
+        """Explicitly authorize a full-table delete."""
+        return new_query(DeleteQuery, replace(self._node, bounded=True), table=self._table)
+
+    @overload
+    def returning[A](self, first: Expr[A]) -> DeleteQuery[tuple[A], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B](
+        self, first: Expr[A], second: Expr[B]
+    ) -> DeleteQuery[tuple[A, B], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C](
+        self, first: Expr[A], second: Expr[B], third: Expr[C]
+    ) -> DeleteQuery[tuple[A, B, C], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D](
+        self, first: Expr[A], second: Expr[B], third: Expr[C], fourth: Expr[D]
+    ) -> DeleteQuery[tuple[A, B, C, D], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D, E](
+        self, first: Expr[A], second: Expr[B], third: Expr[C], fourth: Expr[D], fifth: Expr[E]
+    ) -> DeleteQuery[tuple[A, B, C, D, E], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D, E, F](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+    ) -> DeleteQuery[tuple[A, B, C, D, E, F], Literal[True], Bounded]: ...
+
+    def returning(
+        self, first: object, *rest: object, **named: object
+    ) -> DeleteQuery[tuple[object, ...], Literal[True], Bounded]:
+        if self._node.returning:
+            raise ValueError("returning() can only be specified once")
+        if named:
+            raise TypeError("returning expressions must be positional")
+        expressions = (first, *rest)
+        if len(expressions) > 6:
+            raise ValueError("returning supports at most six expressions")
+        nodes: list[Node] = []
+        for expression in expressions:
+            if not isinstance(expression, Expr):
+                raise TypeError("returning accepts only SQL expressions")
+            nodes.append(expression.node())
+        return new_query(
+            DeleteQuery, replace(self._node, returning=tuple(nodes)), table=self._table
+        )
+
+    def returning_model[Model](
+        self, model: type[Model] | RowAdapter[Model], *expressions: Expression
+    ) -> ModelDeleteQuery[Model]:
+        if self._node.returning:
+            raise ValueError("returning_model() can only be specified once")
+        nodes, adapter = _model_returning(model, expressions)
+        return new_query(ModelDeleteQuery, replace(self._node, returning=nodes), adapter)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ModelDeleteQuery[Model](Query[Model]):
+    """A DELETE RETURNING query decoded into one declared model."""
+
+
+def insert_into(table: Table) -> InsertQuery[tuple[()], Literal[False]]:
+    return new_query(InsertQuery, InsertNode(table.node()), table=table)
+
+
+def update(table: Table) -> UpdateQuery[tuple[()], Literal[False], Literal[False]]:
+    return new_query(UpdateQuery, UpdateNode(table.node(), ()), table=table)
+
+
+def delete_from(table: Table) -> DeleteQuery[tuple[()], Literal[False], Literal[False]]:
+    return new_query(DeleteQuery, DeleteNode(table.node()), table=table)
+
+
+def _insert_node[Returns: (Literal[False], Literal[True])](
+    query: InsertQuery[object, Returns],
+) -> InsertNode:
+    node = extract_query(query).node
+    if not isinstance(node, InsertNode):  # pragma: no cover - structural invariant
+        raise TypeError("expected an INSERT query")
+    return node
