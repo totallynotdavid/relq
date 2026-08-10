@@ -44,7 +44,7 @@ for the complete list and the reasoning.
 
 ## Documentation
 
-The [manual](./docs/README.md) covers installation, the full query and DML
+The [manual](./docs/readme.md) covers installation, the full query and DML
 surface, execution, and code generation. Start at
 [Get started](./docs/get-started.md).
 
