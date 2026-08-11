@@ -21,6 +21,7 @@ from relq import (
     WindowExclusion,
     WindowSpec,
     add,
+    add_interval,
     case_when,
     coalesce,
     column,
@@ -38,9 +39,10 @@ from relq import (
     scalar,
     select,
     select_model,
-    subtract,
+    subtract_interval,
     sum,
 )
+from relq._compiler import compile_postgres
 from relq_sqlite import SQLiteDatabase
 
 
@@ -62,8 +64,8 @@ assert_type(count().filter(users.active.is_true()), AggregateExpr[int])
 manager = users.as_("manager")
 assert_type(manager.id, Column[int])
 assert_type(add(users.id, 1), Expr[int])
-assert_type(add(now(), datetime.timedelta(days=1)), Expr[datetime.datetime])
-assert_type(subtract(now(), datetime.timedelta(days=1)), Expr[datetime.datetime])
+assert_type(add_interval(now(), datetime.timedelta(days=1)), Expr[datetime.datetime])
+assert_type(subtract_interval(now(), datetime.timedelta(days=1)), Expr[datetime.datetime])
 assert_type(divide(users.id, 2), Expr[int])
 assert_type(users.id.eq(1), NullablePredicate)
 assert_type(users.id.is_null(), Predicate)
@@ -103,6 +105,9 @@ assert_type(
 assert_type(
     select(users.id).from_(users).except_(select(users.id).from_(users)), SelectQuery[tuple[int]]
 )
+locked = select(users.id).from_(users).for_update(of=users, skip_locked=True)
+assert_type(locked, SelectQuery[tuple[int], Literal["postgres"]])
+compile_postgres(locked)
 upsert = (
     insert_into(users)
     .values(id=1, email="a@example.com", active=True)

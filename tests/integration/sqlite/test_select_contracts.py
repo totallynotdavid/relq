@@ -16,7 +16,7 @@ from relq import (
     nullif,
     row_adapter,
     select,
-    subtract,
+    subtract_interval,
     sum,
 )
 from relq._compiler import compile_postgres, compile_sqlite
@@ -90,12 +90,12 @@ def test_postgres_row_locking_and_timestamp_arithmetic_are_closed_features() -> 
         'order by "users"."id" asc limit 1 for update of "users" skip locked'
     )
     with pytest.raises(ValueError, match="sqlite does not support FOR UPDATE"):
-        compile_sqlite(locked)
+        compile_sqlite(locked)  # pyright: ignore[reportArgumentType]
 
     recent = (
         select(users.id)
         .from_(users)
-        .where(users.id.gt(0) & subtract(now(), datetime.timedelta(days=7)).lt(now()))
+        .where(users.id.gt(0) & subtract_interval(now(), datetime.timedelta(days=7)).lt(now()))
     )
     assert compile_postgres(recent).sql == (
         'select "users"."id" from "users" where (("users"."id" > $1) and ((now() - $2::interval) < now()))'

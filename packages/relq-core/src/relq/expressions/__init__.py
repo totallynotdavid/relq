@@ -29,6 +29,7 @@ from relq.expressions.core import (
     NullablePredicate,
     Predicate,
     add,
+    add_interval,
     case_when,
     coalesce,
     divide,
@@ -39,6 +40,7 @@ from relq.expressions.core import (
     nullif,
     scalar,
     subtract,
+    subtract_interval,
     value,
 )
 from relq.expressions.ordering import Order
@@ -71,6 +73,7 @@ __all__ = [
     "WindowExclusion",
     "WindowSpec",
     "add",
+    "add_interval",
     "avg",
     "case_when",
     "coalesce",
@@ -96,6 +99,7 @@ __all__ = [
     "row_number",
     "scalar",
     "subtract",
+    "subtract_interval",
     "sum",
     "unbounded_following",
     "unbounded_preceding",

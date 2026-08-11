@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import overload
+from typing import Literal, overload
 
 import asyncpg
 from relq import RowAdapter
@@ -46,29 +46,49 @@ class PostgresDatabase:
         return database
 
     @overload
-    async def fetch_all[Row](self, query: RawResultQuery[Row]) -> list[Row]: ...
+    async def fetch_all[Row, Target: Literal["portable", "postgres"]](
+        self, query: RawResultQuery[Row, Target]
+    ) -> list[Row]: ...
 
     @overload
-    async def fetch_all[Model](self, query: MappedResultQuery[Model]) -> list[Model]: ...
+    async def fetch_all[Model, Target: Literal["portable", "postgres"]](
+        self, query: MappedResultQuery[Model, Target]
+    ) -> list[Model]: ...
 
-    async def fetch_all(self, query: RawResultQuery[object] | MappedResultQuery[object]) -> object:
+    async def fetch_all(
+        self,
+        query: (
+            RawResultQuery[object, Literal["portable", "postgres"]]
+            | MappedResultQuery[object, Literal["portable", "postgres"]]
+        ),
+    ) -> object:
         compiled = compile_postgres(query)
         records = await self._connection.fetch(compiled.sql, *compiled.parameters)
         return map_all(query, (tuple(record) for record in records))
 
     @overload
-    async def fetch_one[Row](self, query: RawResultQuery[Row]) -> Row | None: ...
+    async def fetch_one[Row, Target: Literal["portable", "postgres"]](
+        self, query: RawResultQuery[Row, Target]
+    ) -> Row | None: ...
 
     @overload
-    async def fetch_one[Model](self, query: MappedResultQuery[Model]) -> Model | None: ...
+    async def fetch_one[Model, Target: Literal["portable", "postgres"]](
+        self, query: MappedResultQuery[Model, Target]
+    ) -> Model | None: ...
 
-    async def fetch_one(self, query: RawResultQuery[object] | MappedResultQuery[object]) -> object:
+    async def fetch_one(
+        self,
+        query: (
+            RawResultQuery[object, Literal["portable", "postgres"]]
+            | MappedResultQuery[object, Literal["portable", "postgres"]]
+        ),
+    ) -> object:
         compiled = compile_postgres(query)
         row = await self._connection.fetchrow(compiled.sql, *compiled.parameters)
         return map_one(query, None if row is None else tuple(row))
 
-    async def fetch_all_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+    async def fetch_all_as[Row, Model, Target: Literal["portable", "postgres"]](
+        self, query: RawResultQuery[Row, Target], adapter: RowAdapter[Model]
     ) -> list[Model]:
         """Map result rows through an explicit, arity-validating adapter."""
         if extract_query(query).adapter is not None:
@@ -77,8 +97,8 @@ class PostgresDatabase:
         rows = await self._connection.fetch(compiled.sql, *compiled.parameters)
         return [adapter.map(tuple(row)) for row in rows]
 
-    async def fetch_one_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+    async def fetch_one_as[Row, Model, Target: Literal["portable", "postgres"]](
+        self, query: RawResultQuery[Row, Target], adapter: RowAdapter[Model]
     ) -> Model | None:
         if extract_query(query).adapter is not None:
             raise TypeError("query already declares a result model; use fetch_one()")
@@ -87,18 +107,22 @@ class PostgresDatabase:
         return None if row is None else adapter.map(tuple(row))
 
     @overload
-    def fetch_iter[Row](
-        self, query: RawResultQuery[Row]
+    def fetch_iter[Row, Target: Literal["portable", "postgres"]](
+        self, query: RawResultQuery[Row, Target]
     ) -> AbstractAsyncContextManager[AsyncIterator[Row]]: ...
 
     @overload
-    def fetch_iter[Model](
-        self, query: MappedResultQuery[Model]
+    def fetch_iter[Model, Target: Literal["portable", "postgres"]](
+        self, query: MappedResultQuery[Model, Target]
     ) -> AbstractAsyncContextManager[AsyncIterator[Model]]: ...
 
     @asynccontextmanager
     async def fetch_iter(
-        self, query: RawResultQuery[object] | MappedResultQuery[object]
+        self,
+        query: (
+            RawResultQuery[object, Literal["portable", "postgres"]]
+            | MappedResultQuery[object, Literal["portable", "postgres"]]
+        ),
     ) -> AsyncGenerator[AsyncIterator[object]]:
         """Stream rows through a server-side cursor instead of materializing them.
 

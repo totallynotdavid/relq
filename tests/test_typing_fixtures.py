@@ -10,6 +10,7 @@ GOOD = ROOT / "tests" / "typing" / "good.json"
 BAD = ROOT / "tests" / "typing" / "bad_window.json"
 BAD_COMPOUNDS = ROOT / "tests" / "typing" / "bad_compounds.json"
 BAD_CONDITIONAL = ROOT / "tests" / "typing" / "bad_conditional.json"
+BAD_DIALECT = ROOT / "tests" / "typing" / "bad_dialect.json"
 GENERATED = ROOT / "tests" / "typing" / "generated_batch.json"
 GENERATED_SCHEMA = ROOT / "tests" / "typing" / "generated_schema.py"
 SNAPSHOT = ROOT / "tests" / "snapshots" / "sqlite_schema.py"
@@ -64,6 +65,13 @@ def test_bad_compound_fixture_fails_for_the_result_shape_contract() -> None:
 
 def test_bad_conditional_fixture_fails_for_closed_case_contracts() -> None:
     returncode, diagnostics = _basedpyright(BAD_CONDITIONAL)
+    rules = {diagnostic.get("rule") for diagnostic in diagnostics}
+    assert returncode != 0
+    assert "reportArgumentType" in rules
+
+
+def test_bad_dialect_fixture_fails_for_the_dialect_contract() -> None:
+    returncode, diagnostics = _basedpyright(BAD_DIALECT)
     rules = {diagnostic.get("rule") for diagnostic in diagnostics}
     assert returncode != 0
     assert "reportArgumentType" in rules

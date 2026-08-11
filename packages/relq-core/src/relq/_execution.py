@@ -15,14 +15,14 @@ from relq.dml import (
 )
 from relq.query import ModelSelectQuery, SelectQuery
 
-type RawResultQuery[Row] = (
-    SelectQuery[Row]
+type RawResultQuery[Row, Target: Literal["portable", "postgres"] = Literal["portable"]] = (
+    SelectQuery[Row, Target]
     | InsertQuery[Row, Literal[True]]
     | UpdateQuery[Row, Literal[True], Literal[True]]
     | DeleteQuery[Row, Literal[True], Literal[True]]
 )
-type MappedResultQuery[Model] = (
-    ModelSelectQuery[Model]
+type MappedResultQuery[Model, Target: Literal["portable", "postgres"] = Literal["portable"]] = (
+    ModelSelectQuery[Model, Target]
     | ModelInsertQuery[Model]
     | ModelUpdateQuery[Model]
     | ModelDeleteQuery[Model]

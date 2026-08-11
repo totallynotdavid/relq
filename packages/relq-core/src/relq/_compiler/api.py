@@ -30,9 +30,10 @@ type CompilableQuery[
     Row,
     Returns: (Literal[True], Literal[False]),
     Bounded: (Literal[True], Literal[False]),
+    Target: Literal["portable", "postgres"],
 ] = (
-    SelectQuery[Row]
-    | ModelSelectQuery[Row]
+    SelectQuery[Row, Target]
+    | ModelSelectQuery[Row, Target]
     | InsertQuery[Row, Returns]
     | ModelInsertQuery[Row]
     | UpdateQuery[Row, Returns, Bounded]
@@ -46,7 +47,7 @@ def compile_sqlite[
     Row,
     Returns: (Literal[True], Literal[False]),
     Bounded: (Literal[True], Literal[False]),
-](query: CompilableQuery[Row, Returns, Bounded]) -> CompiledQuery:
+](query: CompilableQuery[Row, Returns, Bounded, Literal["portable"]]) -> CompiledQuery:
     return _compile(query, _SQLITE)
 
 
@@ -54,7 +55,8 @@ def compile_postgres[
     Row,
     Returns: (Literal[True], Literal[False]),
     Bounded: (Literal[True], Literal[False]),
-](query: CompilableQuery[Row, Returns, Bounded]) -> CompiledQuery:
+    Target: Literal["portable", "postgres"],
+](query: CompilableQuery[Row, Returns, Bounded, Target]) -> CompiledQuery:
     return _compile(query, _POSTGRES)
 
 

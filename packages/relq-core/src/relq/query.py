@@ -1,7 +1,7 @@
 """Immutable typed SELECT builder and relational composition."""
 
 from dataclasses import dataclass, replace
-from typing import Generic, Self, TypeVar, overload
+from typing import Generic, Literal, Self, TypeVar, overload
 
 from relq._ast import (
     AliasNode,
@@ -32,10 +32,11 @@ from relq.expressions import (
 from relq.rows import RowAdapter, row_adapter
 
 Row_co = TypeVar("Row_co", covariant=True)
+Target = TypeVar("Target", bound=Literal["portable", "postgres"], default=Literal["portable"])
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
+class _SelectQuery(Query[Row_co], Generic[Row_co, Target]):
     def _with_node(self, node: SelectNode) -> Self:
         return new_query(type(self), node, extract_query(self).adapter)
 
@@ -120,19 +121,6 @@ class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
             raise ValueError("offset must be non-negative")
         return self._with_node(replace(node, offset=amount))
 
-    def for_update(self, *, of: Table | None = None, skip_locked: bool = False) -> Self:
-        """Lock selected PostgreSQL rows for the lifetime of this transaction.
-
-        ``of`` narrows the lock to one direct declared table or table alias;
-        omit it to lock every direct table source. SQLite compilation rejects
-        this PostgreSQL-only clause.
-        """
-        node = select_node(self)
-        if node.for_update is not None:
-            raise ValueError("for_update() can only be specified once")
-        source = None if of is None else of.node()
-        return self._with_node(replace(node, for_update=ForUpdateNode(source, skip_locked)))
-
     def as_[Relation: DerivedTable](self, relation: type[Relation], alias: str) -> Relation:
         node = select_node(self)
         _validate_output_schema(node, relation.output_names())
@@ -176,13 +164,57 @@ class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class SelectQuery[Row](_SelectQuery[Row]):
+class SelectQuery[Row, Target: Literal["portable", "postgres"] = Literal["portable"]](
+    _SelectQuery[Row, Target]
+):
     """A SELECT that exposes raw driver tuples."""
+
+    def for_update(
+        self, *, of: Table | None = None, skip_locked: bool = False
+    ) -> SelectQuery[Row, Literal["postgres"]]:
+        """Lock selected PostgreSQL rows for the lifetime of this transaction.
+
+        ``of`` narrows the lock to one direct declared table or table alias;
+        omit it to lock every direct table source. The resulting query only
+        type-checks against ``compile_postgres()``; ``compile_sqlite()`` also
+        rejects it at runtime, as defense in depth.
+        """
+        node = select_node(self)
+        if node.for_update is not None:
+            raise ValueError("for_update() can only be specified once")
+        source = None if of is None else of.node()
+        result: SelectQuery[Row, Literal["postgres"]] = new_query(
+            SelectQuery, replace(node, for_update=ForUpdateNode(source, skip_locked))
+        )
+        return result
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class ModelSelectQuery[Model](_SelectQuery[Model]):
+class ModelSelectQuery[Model, Target: Literal["portable", "postgres"] = Literal["portable"]](
+    _SelectQuery[Model, Target]
+):
     """A SELECT whose rows are decoded into one declared model."""
+
+    def for_update(
+        self, *, of: Table | None = None, skip_locked: bool = False
+    ) -> ModelSelectQuery[Model, Literal["postgres"]]:
+        """Lock selected PostgreSQL rows for the lifetime of this transaction.
+
+        ``of`` narrows the lock to one direct declared table or table alias;
+        omit it to lock every direct table source. The resulting query only
+        type-checks against ``compile_postgres()``; ``compile_sqlite()`` also
+        rejects it at runtime, as defense in depth.
+        """
+        node = select_node(self)
+        if node.for_update is not None:
+            raise ValueError("for_update() can only be specified once")
+        source = None if of is None else of.node()
+        result: ModelSelectQuery[Model, Literal["postgres"]] = new_query(
+            ModelSelectQuery,
+            replace(node, for_update=ForUpdateNode(source, skip_locked)),
+            extract_query(self).adapter,
+        )
+        return result
 
 
 def cte[Relation: CteTable](relation: type[Relation], name: str) -> Relation:
@@ -325,9 +357,10 @@ def _validate_output_schema(node: SelectNode, expected: set[str]) -> None:
         )
 
 
-def _validate_compound_result_shape(
-    left: _SelectQuery[object], right: _SelectQuery[object]
-) -> None:
+def _validate_compound_result_shape[
+    LeftTarget: Literal["portable", "postgres"],
+    RightTarget: Literal["portable", "postgres"],
+](left: _SelectQuery[object, LeftTarget], right: _SelectQuery[object, RightTarget]) -> None:
     """Keep the public result-type transition sound across a compound."""
     left_node = select_node(left)
     right_node = select_node(right)

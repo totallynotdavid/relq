@@ -6,7 +6,17 @@ import os
 import asyncpg
 import pytest
 from asyncpg import Connection
-from relq import cte, delete_from, excluded, insert_into, now, scalar, select, subtract, update
+from relq import (
+    cte,
+    delete_from,
+    excluded,
+    insert_into,
+    now,
+    scalar,
+    select,
+    subtract_interval,
+    update,
+)
 from relq_postgres import PostgresDatabase
 
 from tests.integration.postgres.matrix_fixture import prepare_postgres_matrix
@@ -117,7 +127,7 @@ async def test_for_update_skip_locked_and_timestamp_duration_execute(
             await connection.close()
 
     rows = await database.fetch_all(
-        select(subtract(now(), datetime.timedelta(days=1))).from_(users).limit(1)
+        select(subtract_interval(now(), datetime.timedelta(days=1))).from_(users).limit(1)
     )
     assert len(rows) == 1
     assert isinstance(rows[0][0], datetime.datetime)

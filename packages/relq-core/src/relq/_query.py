@@ -39,23 +39,23 @@ class Query[Row]:
 
 
 @overload
-def new_query[Row](
-    query_type: type[SelectQuery[Row]],
+def new_query[Row, Target: Literal["portable", "postgres"]](
+    query_type: type[SelectQuery[Row, Target]],
     node: QueryNode,
     adapter: RowAdapter[Row] | None = None,
     *,
     table: object | None = None,
-) -> SelectQuery[Row]: ...
+) -> SelectQuery[Row, Target]: ...
 
 
 @overload
-def new_query[Model](
-    query_type: type[ModelSelectQuery[Model]],
+def new_query[Model, Target: Literal["portable", "postgres"]](
+    query_type: type[ModelSelectQuery[Model, Target]],
     node: QueryNode,
     adapter: RowAdapter[Model] | None = None,
     *,
     table: object | None = None,
-) -> ModelSelectQuery[Model]: ...
+) -> ModelSelectQuery[Model, Target]: ...
 
 
 @overload
