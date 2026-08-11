@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import datetime
 import decimal
 from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, overload
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Generic, Literal, Protocol, TypeVar, overload
 
 from relq._ast import (
     AliasNode,
@@ -16,8 +17,10 @@ from relq._ast import (
     FunctionNode,
     InNode,
     Node,
+    NowNode,
     NullableResultNode,
     ScalarSubqueryNode,
+    TemporalBinaryNode,
     UnaryNode,
     ValueNode,
 )
@@ -31,6 +34,7 @@ if TYPE_CHECKING:
 type DecimalDialectNumber = int | float | decimal.Decimal
 type AverageResult = float | decimal.Decimal | None
 T = TypeVar("T")
+type ExpressionKind = Literal["unknown", "timestamp", "duration"]
 
 
 class Expression(Protocol):
@@ -50,9 +54,15 @@ class Expr(Generic[T]):  # noqa: UP046 -- expressions require an invariant value
     """A SQL expression whose evaluated value has Python type ``T``."""
 
     _node: Node
+    _kind: ExpressionKind = field(default="unknown", kw_only=True)
 
     def node(self) -> Node:
         return self._node
+
+    @property
+    def kind(self) -> ExpressionKind:
+        """Internal scalar category used to choose closed temporal AST nodes."""
+        return self._kind
 
     def eq(self, other: object) -> NullablePredicate:
         return _comparison_node(self.node(), "=", other)
@@ -111,11 +121,11 @@ class Expr(Generic[T]):  # noqa: UP046 -- expressions require an invariant value
     def as_(self, alias: str) -> Expr[T]:
         if not alias:
             raise ValueError("expression alias must not be empty")
-        return Expr(AliasNode(self.node(), alias))
+        return Expr(AliasNode(self.node(), alias), _kind=self._kind)
 
     def nullable(self) -> Expr[T | None]:
         """Declare that this selected result may be SQL ``NULL``."""
-        return Expr(NullableResultNode(self.node()))
+        return Expr(NullableResultNode(self.node()), _kind=self._kind)
 
     def like(self: Expr[str], pattern: str | Expr[str]) -> NullablePredicate:
         return NullablePredicate(BinaryNode(self.node(), "like", _node(pattern)))
@@ -168,7 +178,17 @@ class NullablePredicate(Expr[bool | None]):
 
 
 def value[T](item: T) -> Expr[T]:
-    return Expr(ValueNode(item))
+    return Expr(ValueNode(item), _kind=_value_kind(item))
+
+
+def now() -> Expr[datetime.datetime]:
+    """Return PostgreSQL's transaction timestamp.
+
+    SQLite cannot preserve the declared ``datetime`` result or bind
+    ``timedelta`` arithmetic portably, so its compiler rejects this closed
+    PostgreSQL expression.
+    """
+    return Expr(NowNode(), _kind="timestamp")
 
 
 def scalar[T](query: SelectQuery[tuple[T]]) -> Expr[T | None]:
@@ -268,6 +288,13 @@ def _membership[T](
 
 
 @overload
+def add(
+    left: Expr[datetime.datetime],
+    right: datetime.timedelta | Expr[datetime.timedelta],
+) -> Expr[datetime.datetime]: ...
+
+
+@overload
 def add[Number: (int, float)](left: Expr[Number], right: Number | Expr[Number]) -> Expr[Number]: ...
 
 
@@ -291,7 +318,14 @@ def add(
 
 
 def add(left: object, right: object) -> object:
-    return _numeric_binary(left, "+", right)
+    return _arithmetic(left, "+", right)
+
+
+@overload
+def subtract(
+    left: Expr[datetime.datetime],
+    right: datetime.timedelta | Expr[datetime.timedelta],
+) -> Expr[datetime.datetime]: ...
 
 
 @overload
@@ -320,7 +354,7 @@ def subtract(
 
 
 def subtract(left: object, right: object) -> object:
-    return _numeric_binary(left, "-", right)
+    return _arithmetic(left, "-", right)
 
 
 @overload
@@ -386,6 +420,24 @@ def _numeric_binary(left: object, operator: str, right: object) -> Expr[object]:
     if not isinstance(left, Expr):
         raise TypeError("numeric operations require a SQL expression as their left operand")
     return Expr(BinaryNode(left.node(), operator, _node(right)))
+
+
+def _arithmetic(left: object, operator: Literal["+", "-"], right: object) -> Expr[object]:
+    if not isinstance(left, Expr):
+        raise TypeError("arithmetic operations require a SQL expression as their left operand")
+    right_node = _node(right)
+    right_kind = right.kind if isinstance(right, Expr) else _value_kind(right)
+    if left.kind == "timestamp" and right_kind == "duration":
+        return Expr(TemporalBinaryNode(left.node(), operator, right_node), _kind="timestamp")
+    return Expr(BinaryNode(left.node(), operator, right_node))
+
+
+def _value_kind(item: object) -> ExpressionKind:
+    if isinstance(item, datetime.datetime):
+        return "timestamp"
+    if isinstance(item, datetime.timedelta):
+        return "duration"
+    return "unknown"
 
 
 def _combine_truth(left: Node, operator: str, right: object) -> BooleanExpression:

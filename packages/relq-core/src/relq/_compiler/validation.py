@@ -25,12 +25,14 @@ from relq._ast import (
     InsertSelectSourceNode,
     InsertValuesSourceNode,
     Node,
+    NowNode,
     NullableResultNode,
     QueryNode,
     ScalarSubqueryNode,
     SelectNode,
     StarNode,
     TableSourceNode,
+    TemporalBinaryNode,
     UnaryNode,
     UpdateNode,
     ValueNode,
@@ -72,6 +74,7 @@ def _validate_select(node: SelectNode, outer_sources: frozenset[str] = frozenset
         visible_ctes.add(cte.name)
     cte_names = frozenset(visible_ctes)
     validate_sources(node, outer_sources | cte_names)
+    validate_for_update(node)
     validate_analytic_clauses(node)
     validate_grouping(node)
     for compound in node.compounds:
@@ -150,6 +153,34 @@ def validate_projected_nullability(node: SelectNode) -> None:
         _validate_selection_nullability(selection, nullable_sources)
 
 
+def validate_for_update(node: SelectNode) -> None:
+    """Defend PostgreSQL's row-identity restrictions at the AST boundary."""
+    lock = node.for_update
+    if lock is None:
+        return
+    if node.distinct:
+        raise ValueError("FOR UPDATE cannot be combined with DISTINCT")
+    if node.group_by or node.having is not None:
+        raise ValueError("FOR UPDATE cannot be combined with GROUP BY or HAVING")
+    if node.compounds:
+        raise ValueError("FOR UPDATE cannot be combined with UNION, INTERSECT, or EXCEPT")
+    if any(
+        isinstance(descendant, (AggregateNode, WindowNode))
+        for selection in node.selections
+        for descendant in walk(selection)
+    ):
+        raise ValueError("FOR UPDATE cannot be combined with aggregate or window expressions")
+    if lock.of is None:
+        return
+    direct_tables = {
+        source
+        for source in (node.from_source, *(join.source for join in node.joins))
+        if isinstance(source, TableSourceNode)
+    }
+    if lock.of not in direct_tables:
+        raise ValueError("FOR UPDATE OF must reference a direct table in from_() or join()")
+
+
 def _validate_selection_nullability(node: Node, nullable_sources: frozenset[str]) -> None:
     if isinstance(node, NullableResultNode):
         return
@@ -177,6 +208,8 @@ def _nullable_result_sources(node: Node) -> set[str]:
             return _nullable_result_sources(expression)
         case BinaryNode(left, operator, right) if operator in {"+", "-", "*", "/"}:
             return _nullable_result_sources(left) | _nullable_result_sources(right)
+        case TemporalBinaryNode(left, _, right):
+            return _nullable_result_sources(left) | _nullable_result_sources(right)
         case CaseNode(branches, otherwise):
             result = _nullable_result_sources(otherwise)
             for _, value in branches:
@@ -184,6 +217,7 @@ def _nullable_result_sources(node: Node) -> set[str]:
             return result
         case (
             ValueNode()
+            | NowNode()
             | UnaryNode()
             | FunctionNode()
             | AggregateNode()

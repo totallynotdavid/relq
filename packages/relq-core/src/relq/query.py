@@ -11,6 +11,7 @@ from relq._ast import (
     CompoundOperator,
     CteNode,
     DerivedSourceNode,
+    ForUpdateNode,
     JoinNode,
     Node,
     NullableResultNode,
@@ -26,6 +27,7 @@ from relq.expressions import (
     Expression,
     Order,
     Source,
+    Table,
 )
 from relq.rows import RowAdapter, row_adapter
 
@@ -117,6 +119,19 @@ class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
         if amount < 0:
             raise ValueError("offset must be non-negative")
         return self._with_node(replace(node, offset=amount))
+
+    def for_update(self, *, of: Table | None = None, skip_locked: bool = False) -> Self:
+        """Lock selected PostgreSQL rows for the lifetime of this transaction.
+
+        ``of`` narrows the lock to one direct declared table or table alias;
+        omit it to lock every direct table source. SQLite compilation rejects
+        this PostgreSQL-only clause.
+        """
+        node = select_node(self)
+        if node.for_update is not None:
+            raise ValueError("for_update() can only be specified once")
+        source = None if of is None else of.node()
+        return self._with_node(replace(node, for_update=ForUpdateNode(source, skip_locked)))
 
     def as_[Relation: DerivedTable](self, relation: type[Relation], alias: str) -> Relation:
         node = select_node(self)

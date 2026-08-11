@@ -1,8 +1,9 @@
 """Declared relation schemas and descriptor-backed columns."""
 
+import datetime
 from copy import copy
 from dataclasses import dataclass, replace
-from typing import Self, TypeForm, cast, overload
+from typing import Literal, Self, TypeForm, cast, overload
 
 from relq._ast import (
     ColumnNode,
@@ -111,7 +112,7 @@ def output_column[T](python_type: TypeForm[T], *, name: str = "") -> Column[T]:
     Nullability belongs in ``T`` (for example ``Column[str | None]``), not in
     redundant runtime metadata.
     """
-    return Column(ValueNode(None), python_type, name)
+    return Column(ValueNode(None), python_type, name, _kind=_python_type_kind(python_type))
 
 
 def column[T](
@@ -125,7 +126,7 @@ def column[T](
     the annotation respectively; keeping inert flags here created a false
     impression that the core enforced them.
     """
-    return Column(ValueNode(None), python_type, name)
+    return Column(ValueNode(None), python_type, name, _kind=_python_type_kind(python_type))
 
 
 def excluded[T](column: Column[T]) -> Expr[T]:
@@ -133,7 +134,15 @@ def excluded[T](column: Column[T]) -> Expr[T]:
     node = column.node()
     if not isinstance(node, ColumnNode):
         raise TypeError("excluded() requires a table column")
-    return Expr(ExcludedNode(node.source, node.name))
+    return Expr(ExcludedNode(node.source, node.name), _kind=column.kind)
+
+
+def _python_type_kind(python_type: object) -> Literal["unknown", "timestamp", "duration"]:
+    if python_type is datetime.datetime:
+        return "timestamp"
+    if python_type is datetime.timedelta:
+        return "duration"
+    return "unknown"
 
 
 def _declared_column_names(table_type: type[Source]) -> set[str]:

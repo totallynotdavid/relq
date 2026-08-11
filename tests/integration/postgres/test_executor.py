@@ -1,11 +1,12 @@
 """Real PostgreSQL execution contracts for queries and mutations."""
 
+import datetime
 import os
 
 import asyncpg
 import pytest
 from asyncpg import Connection
-from relq import cte, delete_from, excluded, insert_into, scalar, select, update
+from relq import cte, delete_from, excluded, insert_into, now, scalar, select, subtract, update
 from relq_postgres import PostgresDatabase
 
 from tests.integration.postgres.matrix_fixture import prepare_postgres_matrix
@@ -88,6 +89,38 @@ async def test_pool_transaction_binds_every_operation_to_one_acquired_connection
         assert await database.fetch_all(select(users.name).from_(users)) == [("Ada",)]
     finally:
         await pool.close()
+
+
+async def test_for_update_skip_locked_and_timestamp_duration_execute(
+    database: PostgresDatabase, postgres_schema: str
+) -> None:
+    await database.execute(insert_into(users).values(name="Ada", manager_id=None))
+    await database.execute(insert_into(users).values(name="Grace", manager_id=None))
+    claim = (
+        select(users.id)
+        .from_(users)
+        .order_by(users.id.asc())
+        .limit(1)
+        .for_update(of=users, skip_locked=True)
+    )
+    async with database.transaction() as first_worker:
+        assert await first_worker.fetch_all(claim) == [(1,)]
+        connection = await asyncpg.connect(
+            configured_harness().dsn,
+            server_settings={"search_path": f"{postgres_schema}, public"},
+        )
+        try:
+            second_worker = PostgresDatabase(connection)
+            async with second_worker.transaction() as transaction:
+                assert await transaction.fetch_all(claim) == [(2,)]
+        finally:
+            await connection.close()
+
+    rows = await database.fetch_all(
+        select(subtract(now(), datetime.timedelta(days=1))).from_(users).limit(1)
+    )
+    assert len(rows) == 1
+    assert isinstance(rows[0][0], datetime.datetime)
 
 
 async def test_relational_matrix(database: PostgresDatabase, postgres_admin: Connection) -> None:

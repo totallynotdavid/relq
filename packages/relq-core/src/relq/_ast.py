@@ -54,9 +54,23 @@ class ValueNode:
 
 
 @dataclass(frozen=True, slots=True)
+class NowNode:
+    """The PostgreSQL transaction timestamp expression."""
+
+
+@dataclass(frozen=True, slots=True)
 class BinaryNode:
     left: Node
     operator: str
+    right: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalBinaryNode:
+    """A typed PostgreSQL timestamp/interval operation."""
+
+    left: Node
+    operator: Literal["+", "-"]
     right: Node
 
 
@@ -211,6 +225,14 @@ class CompoundNode:
 
 
 @dataclass(frozen=True, slots=True)
+class ForUpdateNode:
+    """A closed PostgreSQL row-locking clause for one direct table, or all tables."""
+
+    of: TableSourceNode | None = None
+    skip_locked: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class SelectNode:
     selections: tuple[Node, ...]
     from_source: SourceNode | None = None
@@ -224,6 +246,7 @@ class SelectNode:
     distinct: bool = False
     ctes: tuple[CteNode, ...] = ()
     compounds: tuple[CompoundNode, ...] = ()
+    for_update: ForUpdateNode | None = None
 
 
 type CompoundOperator = Literal["union", "union all", "intersect", "except"]
@@ -290,7 +313,9 @@ class DeleteNode:
 type Node = (
     ColumnNode
     | ValueNode
+    | NowNode
     | BinaryNode
+    | TemporalBinaryNode
     | UnaryNode
     | FunctionNode
     | CaseNode

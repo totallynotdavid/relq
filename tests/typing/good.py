@@ -1,3 +1,4 @@
+import datetime
 import decimal
 from dataclasses import dataclass
 from typing import Literal, assert_type
@@ -30,12 +31,14 @@ from relq import (
     divide,
     excluded,
     insert_into,
+    now,
     output_column,
     percent_rank,
     row_number,
     scalar,
     select,
     select_model,
+    subtract,
     sum,
 )
 from relq_sqlite import SQLiteDatabase
@@ -59,6 +62,8 @@ assert_type(count().filter(users.active.is_true()), AggregateExpr[int])
 manager = users.as_("manager")
 assert_type(manager.id, Column[int])
 assert_type(add(users.id, 1), Expr[int])
+assert_type(add(now(), datetime.timedelta(days=1)), Expr[datetime.datetime])
+assert_type(subtract(now(), datetime.timedelta(days=1)), Expr[datetime.datetime])
 assert_type(divide(users.id, 2), Expr[int])
 assert_type(users.id.eq(1), NullablePredicate)
 assert_type(users.id.is_null(), Predicate)
