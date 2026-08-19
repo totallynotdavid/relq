@@ -54,8 +54,16 @@ class ValueNode:
 
 
 @dataclass(frozen=True, slots=True)
-class NowNode:
-    """The PostgreSQL transaction timestamp expression."""
+class TemporalCurrentNode:
+    kind: Literal[
+        "transaction_timestamp",
+        "statement_timestamp",
+        "clock_timestamp",
+        "current_date",
+        "current_time",
+        "local_time",
+        "local_timestamp",
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,11 +75,31 @@ class BinaryNode:
 
 @dataclass(frozen=True, slots=True)
 class TemporalBinaryNode:
-    """A typed PostgreSQL timestamp/interval operation."""
+    """A closed PostgreSQL temporal operation."""
 
     left: Node
-    operator: Literal["+", "-"]
+    operator: Literal["+", "-", "*", "/"]
     right: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalFunctionNode:
+    """A closed PostgreSQL temporal function; never constructed publicly by name."""
+
+    kind: Literal[
+        "make_date",
+        "make_time",
+        "make_timestamp",
+        "make_timestamptz",
+        "make_interval",
+        "to_timestamp",
+        "date_trunc",
+        "age",
+        "justify_days",
+        "justify_hours",
+        "justify_interval",
+    ]
+    arguments: tuple[Node, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,11 +253,10 @@ class CompoundNode:
 
 
 @dataclass(frozen=True, slots=True)
-class ForUpdateNode:
-    """A closed PostgreSQL row-locking clause for one direct table, or all tables."""
-
-    of: TableSourceNode | None = None
-    skip_locked: bool = False
+class LockClauseNode:
+    strength: Literal["update", "no key update", "share", "key share"]
+    of: tuple[TableSourceNode, ...] = ()
+    wait: Literal["nowait", "skip locked"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,7 +273,7 @@ class SelectNode:
     distinct: bool = False
     ctes: tuple[CteNode, ...] = ()
     compounds: tuple[CompoundNode, ...] = ()
-    for_update: ForUpdateNode | None = None
+    locks: tuple[LockClauseNode, ...] = ()
 
 
 type CompoundOperator = Literal["union", "union all", "intersect", "except"]
@@ -313,9 +340,10 @@ class DeleteNode:
 type Node = (
     ColumnNode
     | ValueNode
-    | NowNode
+    | TemporalCurrentNode
     | BinaryNode
     | TemporalBinaryNode
+    | TemporalFunctionNode
     | UnaryNode
     | FunctionNode
     | CaseNode

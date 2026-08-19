@@ -141,6 +141,16 @@ def _resolve_builtin(sql_type: BuiltinType, config: CodegenConfig | None) -> Res
         return ResolvedType(Name("float"), Call(relq_decoder("float_decoder")))
     if any(token in normalized for token in ("blob", "bytea", "binary")):
         return ResolvedType(Name("bytes"), Call(relq_decoder("bytes_decoder")))
+    if normalized in {"timestamptz", "timestamp with time zone"}:
+        return ResolvedType(
+            Name("AwareDateTime", frozenset({Import("relq", ("AwareDateTime",))})),
+            Call(relq_decoder("aware_datetime_decoder")),
+        )
+    if normalized == "timestamp without time zone":
+        return ResolvedType(
+            Name("NaiveDateTime", frozenset({Import("relq", ("NaiveDateTime",))})),
+            Call(relq_decoder("naive_datetime_decoder")),
+        )
     if "timestamp" in normalized or "datetime" in normalized:
         return ResolvedType(
             _attribute("datetime", "datetime", Import("datetime")),
@@ -155,7 +165,10 @@ def _resolve_builtin(sql_type: BuiltinType, config: CodegenConfig | None) -> Res
             _attribute("datetime", "time", Import("datetime")), Call(relq_decoder("time_decoder"))
         )
     if "interval" in normalized:
-        return ResolvedType(_attribute("datetime", "timedelta", Import("datetime")))
+        return ResolvedType(
+            Name("Interval", frozenset({Import("relq", ("Interval",))})),
+            Call(relq_decoder("interval_decoder")),
+        )
     if any(token in normalized for token in ("char", "text", "string", "citext", "xml", "name")):
         return ResolvedType(Name("str"), Call(relq_decoder("str_decoder")))
     raise ValueError(

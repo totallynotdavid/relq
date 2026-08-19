@@ -1,16 +1,17 @@
-import datetime
 import decimal
 from dataclasses import dataclass
 from typing import Literal, assert_type
 
 from relq import (
     AggregateExpr,
+    AwareDateTime,
     CaseWhen,
     Column,
     CteTable,
     DerivedTable,
     Expr,
     InsertQuery,
+    Interval,
     ModelInsertQuery,
     ModelSelectQuery,
     NullablePredicate,
@@ -32,7 +33,6 @@ from relq import (
     divide,
     excluded,
     insert_into,
-    now,
     output_column,
     percent_rank,
     row_number,
@@ -41,6 +41,7 @@ from relq import (
     select_model,
     subtract_interval,
     sum,
+    transaction_timestamp,
 )
 from relq._compiler import compile_postgres
 from relq_sqlite import SQLiteDatabase
@@ -64,8 +65,8 @@ assert_type(count().filter(users.active.is_true()), AggregateExpr[int])
 manager = users.as_("manager")
 assert_type(manager.id, Column[int])
 assert_type(add(users.id, 1), Expr[int])
-assert_type(add_interval(now(), datetime.timedelta(days=1)), Expr[datetime.datetime])
-assert_type(subtract_interval(now(), datetime.timedelta(days=1)), Expr[datetime.datetime])
+assert_type(add_interval(transaction_timestamp(), Interval(days=1)), Expr[AwareDateTime])
+assert_type(subtract_interval(transaction_timestamp(), Interval(days=1)), Expr[AwareDateTime])
 assert_type(divide(users.id, 2), Expr[int])
 assert_type(users.id.eq(1), NullablePredicate)
 assert_type(users.id.is_null(), Predicate)
@@ -105,8 +106,8 @@ assert_type(
 assert_type(
     select(users.id).from_(users).except_(select(users.id).from_(users)), SelectQuery[tuple[int]]
 )
-locked = select(users.id).from_(users).for_update(of=users, skip_locked=True)
-assert_type(locked, SelectQuery[tuple[int], Literal["postgres"]])
+locked = select(users.id).from_(users).for_update(users).skip_locked()
+assert_type(locked, SelectQuery[tuple[int]])
 compile_postgres(locked)
 upsert = (
     insert_into(users)

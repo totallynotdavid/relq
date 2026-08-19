@@ -16,6 +16,7 @@ from relq._ast import (
     CteSourceNode,
     DefaultValuesSourceNode,
     DeleteNode,
+    DerivedSourceNode,
     ExcludedNode,
     ExistsNode,
     FunctionNode,
@@ -25,7 +26,6 @@ from relq._ast import (
     InsertSelectSourceNode,
     InsertValuesSourceNode,
     Node,
-    NowNode,
     NullableResultNode,
     QueryNode,
     ScalarSubqueryNode,
@@ -33,21 +33,24 @@ from relq._ast import (
     StarNode,
     TableSourceNode,
     TemporalBinaryNode,
+    TemporalCurrentNode,
+    TemporalFunctionNode,
     UnaryNode,
     UpdateNode,
     ValueNode,
     WindowNode,
 )
+from relq._compiler._model import Dialect
 from relq._compiler.grouping import validate_analytic_clauses, validate_grouping
 
 
-def validate_query(node: QueryNode) -> None:
+def validate_query(node: QueryNode, dialect: Dialect) -> None:
     """Validate the complete query tree before dialect-specific rendering."""
     match node:
         case SelectNode():
-            _validate_select(node)
+            _validate_select(node, dialect)
         case InsertNode():
-            _validate_insert(node)
+            _validate_insert(node, dialect)
         case UpdateNode():
             if not node.values:
                 raise ValueError("UPDATE requires at least one value")
@@ -60,7 +63,9 @@ def validate_query(node: QueryNode) -> None:
             validate_dml_sources(node.table, node.where, (), node.returning)
 
 
-def _validate_select(node: SelectNode, outer_sources: frozenset[str] = frozenset()) -> None:
+def _validate_select(
+    node: SelectNode, dialect: Dialect, outer_sources: frozenset[str] = frozenset()
+) -> None:
     validate_compound_shape(node)
     visible_ctes: set[str] = set()
     for cte in node.ctes:
@@ -70,18 +75,36 @@ def _validate_select(node: SelectNode, outer_sources: frozenset[str] = frozenset
         if cte.recursive:
             cte_sources |= {cte.name}
             validate_recursive_cte(cte.query, cte.name)
-        _validate_select(cte.query, cte_sources)
+        _validate_select(cte.query, dialect, cte_sources)
         visible_ctes.add(cte.name)
     cte_names = frozenset(visible_ctes)
     validate_sources(node, outer_sources | cte_names)
-    validate_for_update(node)
+    validate_locks(node)
+    _validate_dialect_nodes(node, dialect)
     validate_analytic_clauses(node)
     validate_grouping(node)
     for compound in node.compounds:
-        _validate_select(compound.query, outer_sources | cte_names)
+        _validate_select(compound.query, dialect, outer_sources | cte_names)
+    if node.from_source is None:  # pragma: no cover - established by validate_sources()
+        raise AssertionError("validated SELECT has no source")
+    local_sources = frozenset(
+        {node.from_source.reference, *(join.source.reference for join in node.joins)}
+    )
+    for source in (node.from_source, *(join.source for join in node.joins)):
+        if isinstance(source, DerivedSourceNode):
+            _validate_select(source.query, dialect, outer_sources | cte_names)
+    for expression in (
+        *node.selections,
+        node.where,
+        *node.group_by,
+        node.having,
+        *(order.expression for order in node.order_by),
+    ):
+        if expression is not None:
+            _validate_nested_selects(expression, dialect, outer_sources | cte_names | local_sources)
 
 
-def _validate_insert(node: InsertNode) -> None:
+def _validate_insert(node: InsertNode, dialect: Dialect) -> None:
     match node.source:
         case None:
             raise ValueError("INSERT requires values(), from_select(), or default_values()")
@@ -90,7 +113,7 @@ def _validate_insert(node: InsertNode) -> None:
                 raise ValueError("insert-from-select requires target columns")
             if len(query.selections) != len(columns):
                 raise ValueError("insert-from-select projection width changed after construction")
-            _validate_select(query)
+            _validate_select(query, dialect)
         case InsertRowsSourceNode(rows):
             columns = tuple(column for column, _ in rows[0])
             if any(tuple(column for column, _ in row) != columns for row in rows[1:]):
@@ -153,32 +176,73 @@ def validate_projected_nullability(node: SelectNode) -> None:
         _validate_selection_nullability(selection, nullable_sources)
 
 
-def validate_for_update(node: SelectNode) -> None:
+def validate_locks(node: SelectNode) -> None:
     """Defend PostgreSQL's row-identity restrictions at the AST boundary."""
-    lock = node.for_update
-    if lock is None:
+    if not node.locks:
         return
     if node.distinct:
-        raise ValueError("FOR UPDATE cannot be combined with DISTINCT")
+        raise ValueError("row locking cannot be combined with DISTINCT")
     if node.group_by or node.having is not None:
-        raise ValueError("FOR UPDATE cannot be combined with GROUP BY or HAVING")
+        raise ValueError("row locking cannot be combined with GROUP BY or HAVING")
     if node.compounds:
-        raise ValueError("FOR UPDATE cannot be combined with UNION, INTERSECT, or EXCEPT")
+        raise ValueError("row locking cannot be combined with UNION, INTERSECT, or EXCEPT")
     if any(
         isinstance(descendant, (AggregateNode, WindowNode))
-        for selection in node.selections
-        for descendant in walk(selection)
+        for expression in (
+            *node.selections,
+            node.where,
+            *node.group_by,
+            node.having,
+            *(order.expression for order in node.order_by),
+        )
+        if expression is not None
+        for descendant in walk(expression)
     ):
-        raise ValueError("FOR UPDATE cannot be combined with aggregate or window expressions")
-    if lock.of is None:
-        return
+        raise ValueError("row locking cannot be combined with aggregate or window expressions")
     direct_tables = {
         source
         for source in (node.from_source, *(join.source for join in node.joins))
         if isinstance(source, TableSourceNode)
     }
-    if lock.of not in direct_tables:
-        raise ValueError("FOR UPDATE OF must reference a direct table in from_() or join()")
+    nullable = null_extended_sources(node)
+    for lock in node.locks:
+        targets = direct_tables if not lock.of else set(lock.of)
+        if not targets <= direct_tables:
+            raise ValueError("lock OF must reference direct tables in from_() or join()")
+        locked_names = {target.reference for target in targets}
+        if nullable & locked_names:
+            raise ValueError("row locking cannot lock a nullable outer-join side")
+
+
+def _validate_dialect_nodes(node: SelectNode, dialect: Dialect) -> None:
+    if dialect.name == "postgres":
+        return
+    for expression in (
+        *node.selections,
+        node.where,
+        *node.group_by,
+        node.having,
+        *(order.expression for order in node.order_by),
+    ):
+        if expression is not None and any(
+            isinstance(item, (TemporalCurrentNode, TemporalBinaryNode)) for item in walk(expression)
+        ):
+            raise ValueError(f"{dialect.name} does not support PostgreSQL temporal expressions")
+    if node.locks:
+        raise ValueError(f"{dialect.name} does not support PostgreSQL row locking")
+
+
+def _validate_nested_selects(
+    expression: Node, dialect: Dialect, outer_sources: frozenset[str]
+) -> None:
+    for item in walk(expression):
+        match item:
+            case ScalarSubqueryNode(query) | ExistsNode(query):
+                _validate_select(query, dialect, outer_sources)
+            case InNode(values=SelectNode() as query):
+                _validate_select(query, dialect, outer_sources)
+            case _:
+                pass
 
 
 def _validate_selection_nullability(node: Node, nullable_sources: frozenset[str]) -> None:
@@ -210,6 +274,11 @@ def _nullable_result_sources(node: Node) -> set[str]:
             return _nullable_result_sources(left) | _nullable_result_sources(right)
         case TemporalBinaryNode(left, _, right):
             return _nullable_result_sources(left) | _nullable_result_sources(right)
+        case TemporalFunctionNode(_, arguments):
+            result: set[str] = set()
+            for argument in arguments:
+                result.update(_nullable_result_sources(argument))
+            return result
         case CaseNode(branches, otherwise):
             result = _nullable_result_sources(otherwise)
             for _, value in branches:
@@ -217,7 +286,7 @@ def _nullable_result_sources(node: Node) -> set[str]:
             return result
         case (
             ValueNode()
-            | NowNode()
+            | TemporalCurrentNode()
             | UnaryNode()
             | FunctionNode()
             | AggregateNode()

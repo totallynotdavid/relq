@@ -30,10 +30,9 @@ type CompilableQuery[
     Row,
     Returns: (Literal[True], Literal[False]),
     Bounded: (Literal[True], Literal[False]),
-    Target: Literal["portable", "postgres"],
 ] = (
-    SelectQuery[Row, Target]
-    | ModelSelectQuery[Row, Target]
+    SelectQuery[Row]
+    | ModelSelectQuery[Row]
     | InsertQuery[Row, Returns]
     | ModelInsertQuery[Row]
     | UpdateQuery[Row, Returns, Bounded]
@@ -47,7 +46,7 @@ def compile_sqlite[
     Row,
     Returns: (Literal[True], Literal[False]),
     Bounded: (Literal[True], Literal[False]),
-](query: CompilableQuery[Row, Returns, Bounded, Literal["portable"]]) -> CompiledQuery:
+](query: CompilableQuery[Row, Returns, Bounded]) -> CompiledQuery:
     return _compile(query, _SQLITE)
 
 
@@ -55,13 +54,12 @@ def compile_postgres[
     Row,
     Returns: (Literal[True], Literal[False]),
     Bounded: (Literal[True], Literal[False]),
-    Target: Literal["portable", "postgres"],
-](query: CompilableQuery[Row, Returns, Bounded, Target]) -> CompiledQuery:
+](query: CompilableQuery[Row, Returns, Bounded]) -> CompiledQuery:
     return _compile(query, _POSTGRES)
 
 
 def _compile[Row](query: Query[Row], dialect: Dialect) -> CompiledQuery:
     """Run relq's complete AST-only compilation pipeline for one fixed dialect."""
     node = extract_query(query).node
-    validate_query(node)
+    validate_query(node, dialect)
     return render_query(node, dialect)

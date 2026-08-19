@@ -28,12 +28,13 @@ from relq._ast import (
     FunctionNode,
     InNode,
     Node,
-    NowNode,
     NullableResultNode,
     ScalarSubqueryNode,
     SelectNode,
     StarNode,
     TemporalBinaryNode,
+    TemporalCurrentNode,
+    TemporalFunctionNode,
     UnaryNode,
     ValueNode,
     WindowNode,
@@ -43,7 +44,7 @@ from relq._ast import (
 def children(node: Node) -> Iterator[Node]:
     """Yield a node's direct Node-typed children, never crossing into a nested SELECT."""
     match node:
-        case ColumnNode() | ValueNode() | NowNode() | StarNode() | ExcludedNode():
+        case ColumnNode() | ValueNode() | TemporalCurrentNode() | StarNode() | ExcludedNode():
             return
         case ScalarSubqueryNode() | ExistsNode():
             return
@@ -54,6 +55,9 @@ def children(node: Node) -> Iterator[Node]:
         case TemporalBinaryNode(left, _, right):
             yield left
             yield right
+            return
+        case TemporalFunctionNode(_, arguments):
+            yield from arguments
             return
         case UnaryNode(_, operand) | AliasNode(operand, _) | NullableResultNode(operand):
             yield operand

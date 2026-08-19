@@ -22,7 +22,6 @@ from relq._ast import (
     InsertSelectSourceNode,
     InsertValuesSourceNode,
     Node,
-    NowNode,
     NullableResultNode,
     OrderNode,
     QueryNode,
@@ -32,6 +31,8 @@ from relq._ast import (
     StarNode,
     TableSourceNode,
     TemporalBinaryNode,
+    TemporalCurrentNode,
+    TemporalFunctionNode,
     UnaryNode,
     UpdateNode,
     ValueNode,
@@ -119,14 +120,12 @@ def _compile_select(
         sql += " limit " + str(node.limit)
     if node.offset is not None:
         sql += " offset " + str(node.offset)
-    if node.for_update is not None:
-        if not dialect.supports_row_locking:
-            raise ValueError(f"{dialect.name} does not support FOR UPDATE")
-        sql += " for update"
-        if node.for_update.of is not None:
-            sql += " of " + _identifier(node.for_update.of.reference)
-        if node.for_update.skip_locked:
-            sql += " skip locked"
+    for lock in node.locks:
+        sql += " for " + lock.strength
+        if lock.of:
+            sql += " of " + ", ".join(_identifier(source.reference) for source in lock.of)
+        if lock.wait is not None:
+            sql += " " + lock.wait
     for compound in node.compounds:
         sql += f" {compound.operator} " + _compile_select(
             compound.query, dialect, parameters, outer_sources | cte_names
@@ -239,19 +238,28 @@ def _compile_node(
         case ValueNode(value):
             parameters.append(value)
             return dialect.placeholder if dialect.placeholder == "?" else f"${len(parameters)}"
-        case NowNode():
-            if not dialect.supports_temporal_arithmetic:
-                raise ValueError(f"{dialect.name} does not support now()")
-            return "now()"
+        case TemporalCurrentNode(kind):
+            return (
+                kind
+                if kind in {"current_date", "current_time", "local_time", "local_timestamp"}
+                else f"{kind}()"
+            )
         case BinaryNode(left, operator, right):
             return f"({_compile_node(left, dialect, parameters, outer_sources)} {operator} {_compile_node(right, dialect, parameters, outer_sources)})"
         case TemporalBinaryNode(left, operator, right):
-            if not dialect.supports_temporal_arithmetic:
-                raise ValueError(f"{dialect.name} does not support timestamp/duration arithmetic")
             right_sql = _compile_node(right, dialect, parameters, outer_sources)
             if isinstance(right, ValueNode):
                 right_sql += "::interval"
             return f"({_compile_node(left, dialect, parameters, outer_sources)} {operator} {right_sql})"
+        case TemporalFunctionNode(kind, arguments):
+            return (
+                f"{kind}("
+                + ", ".join(
+                    _compile_node(argument, dialect, parameters, outer_sources)
+                    for argument in arguments
+                )
+                + ")"
+            )
         case UnaryNode(operator, operand):
             return f"({_compile_node(operand, dialect, parameters, outer_sources)} {operator})"
         case FunctionNode(name, arguments):

@@ -7,14 +7,15 @@ import asyncpg
 import pytest
 from asyncpg import Connection
 from relq import (
+    Interval,
     cte,
     delete_from,
     excluded,
     insert_into,
-    now,
     scalar,
     select,
     subtract_interval,
+    transaction_timestamp,
     update,
 )
 from relq_postgres import PostgresDatabase
@@ -111,7 +112,8 @@ async def test_for_update_skip_locked_and_timestamp_duration_execute(
         .from_(users)
         .order_by(users.id.asc())
         .limit(1)
-        .for_update(of=users, skip_locked=True)
+        .for_update(users)
+        .skip_locked()
     )
     async with database.transaction() as first_worker:
         assert await first_worker.fetch_all(claim) == [(1,)]
@@ -127,7 +129,7 @@ async def test_for_update_skip_locked_and_timestamp_duration_execute(
             await connection.close()
 
     rows = await database.fetch_all(
-        select(subtract_interval(now(), datetime.timedelta(days=1))).from_(users).limit(1)
+        select(subtract_interval(transaction_timestamp(), Interval(days=1))).from_(users).limit(1)
     )
     assert len(rows) == 1
     assert isinstance(rows[0][0], datetime.datetime)

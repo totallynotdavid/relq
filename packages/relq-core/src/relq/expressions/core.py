@@ -17,15 +17,17 @@ from relq._ast import (
     FunctionNode,
     InNode,
     Node,
-    NowNode,
     NullableResultNode,
     ScalarSubqueryNode,
     TemporalBinaryNode,
+    TemporalCurrentNode,
+    TemporalFunctionNode,
     UnaryNode,
     ValueNode,
 )
 from relq._query import select_node
 from relq.expressions.ordering import Order
+from relq.rows import AwareDateTime, Interval, NaiveDateTime
 
 if TYPE_CHECKING:
     from relq.query import SelectQuery
@@ -174,17 +176,96 @@ def value[T](item: T) -> Expr[T]:
     return Expr(ValueNode(item))
 
 
-def now() -> Expr[datetime.datetime]:
-    """Return PostgreSQL's transaction timestamp.
-
-    SQLite compilation rejects this closed PostgreSQL-only expression.
-    """
-    return Expr(NowNode())
+def transaction_timestamp() -> Expr[AwareDateTime]:
+    return Expr(TemporalCurrentNode("transaction_timestamp"))
 
 
-def add_interval(
-    timestamp: Expr[datetime.datetime], delta: datetime.timedelta | Expr[datetime.timedelta]
-) -> Expr[datetime.datetime]:
+def statement_timestamp() -> Expr[AwareDateTime]:
+    return Expr(TemporalCurrentNode("statement_timestamp"))
+
+
+def clock_timestamp() -> Expr[AwareDateTime]:
+    return Expr(TemporalCurrentNode("clock_timestamp"))
+
+
+def make_date(
+    year: int | Expr[int], month: int | Expr[int], day: int | Expr[int]
+) -> Expr[datetime.date]:
+    return Expr(TemporalFunctionNode("make_date", (_node(year), _node(month), _node(day))))
+
+
+def make_time(
+    hour: int | Expr[int], minute: int | Expr[int], second: float | Expr[float]
+) -> Expr[datetime.time]:
+    return Expr(TemporalFunctionNode("make_time", (_node(hour), _node(minute), _node(second))))
+
+
+def make_timestamp(
+    year: int | Expr[int],
+    month: int | Expr[int],
+    day: int | Expr[int],
+    hour: int | Expr[int],
+    minute: int | Expr[int],
+    second: float | Expr[float],
+) -> Expr[NaiveDateTime]:
+    return Expr(
+        TemporalFunctionNode(
+            "make_timestamp",
+            tuple(_node(value) for value in (year, month, day, hour, minute, second)),
+        )
+    )
+
+
+def make_timestamptz(
+    year: int | Expr[int],
+    month: int | Expr[int],
+    day: int | Expr[int],
+    hour: int | Expr[int],
+    minute: int | Expr[int],
+    second: float | Expr[float],
+) -> Expr[AwareDateTime]:
+    return Expr(
+        TemporalFunctionNode(
+            "make_timestamptz",
+            tuple(_node(value) for value in (year, month, day, hour, minute, second)),
+        )
+    )
+
+
+def make_interval(
+    *, months: int | Expr[int] = 0, days: int | Expr[int] = 0, microseconds: int | Expr[int] = 0
+) -> Expr[Interval]:
+    return Expr(
+        TemporalFunctionNode("make_interval", (_node(months), _node(days), _node(microseconds)))
+    )
+
+
+def to_timestamp(seconds: float | Expr[float]) -> Expr[AwareDateTime]:
+    return Expr(TemporalFunctionNode("to_timestamp", (_node(seconds),)))
+
+
+def age(
+    left: Expr[NaiveDateTime] | Expr[AwareDateTime],
+    right: Expr[NaiveDateTime] | Expr[AwareDateTime],
+) -> Expr[Interval]:
+    return Expr(TemporalFunctionNode("age", (left.node(), right.node())))
+
+
+def justify_days(interval: Interval | Expr[Interval]) -> Expr[Interval]:
+    return Expr(TemporalFunctionNode("justify_days", (_node(interval),)))
+
+
+def justify_hours(interval: Interval | Expr[Interval]) -> Expr[Interval]:
+    return Expr(TemporalFunctionNode("justify_hours", (_node(interval),)))
+
+
+def justify_interval(interval: Interval | Expr[Interval]) -> Expr[Interval]:
+    return Expr(TemporalFunctionNode("justify_interval", (_node(interval),)))
+
+
+def add_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
+    timestamp: Expr[Timestamp], delta: Interval | Expr[Interval]
+) -> Expr[Timestamp]:
     """Add a PostgreSQL interval to a timestamp expression.
 
     SQLite compilation rejects this closed PostgreSQL-only operation.
@@ -192,9 +273,9 @@ def add_interval(
     return Expr(TemporalBinaryNode(timestamp.node(), "+", _node(delta)))
 
 
-def subtract_interval(
-    timestamp: Expr[datetime.datetime], delta: datetime.timedelta | Expr[datetime.timedelta]
-) -> Expr[datetime.datetime]:
+def subtract_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
+    timestamp: Expr[Timestamp], delta: Interval | Expr[Interval]
+) -> Expr[Timestamp]:
     """Subtract a PostgreSQL interval from a timestamp expression.
 
     SQLite compilation rejects this closed PostgreSQL-only operation.

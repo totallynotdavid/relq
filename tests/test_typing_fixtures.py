@@ -70,11 +70,10 @@ def test_bad_conditional_fixture_fails_for_closed_case_contracts() -> None:
     assert "reportArgumentType" in rules
 
 
-def test_bad_dialect_fixture_fails_for_the_dialect_contract() -> None:
+def test_dialect_legality_is_a_compiler_contract() -> None:
     returncode, diagnostics = _basedpyright(BAD_DIALECT)
-    rules = {diagnostic.get("rule") for diagnostic in diagnostics}
-    assert returncode != 0
-    assert "reportArgumentType" in rules
+    assert returncode == 0
+    assert diagnostics == []
 
 
 def test_generated_batch_helper_type_checks() -> None:
