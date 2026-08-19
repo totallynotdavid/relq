@@ -1,5 +1,6 @@
 """Typed SQL expressions, relation declarations, ordering, and analytics."""
 
+from relq._temporal import ExtractField, TruncUnit
 from relq.expressions.analytics import (
     AggregateExpr,
     FrameBoundary,
@@ -24,14 +25,10 @@ from relq.expressions.analytics import (
 from relq.expressions.core import (
     BooleanExpression,
     CaseWhen,
-    DatePart,
-    DateTruncUnit,
     Expr,
     Expression,
-    ExtractField,
     NullablePredicate,
     Predicate,
-    TruncUnit,
     add,
     add_interval,
     age,
@@ -67,10 +64,7 @@ from relq.expressions.core import (
     scalar,
     statement_timestamp,
     subtract,
-    subtract_dates,
     subtract_interval,
-    subtract_times,
-    subtract_timestamps,
     time_difference,
     timestamp_difference,
     to_timestamp,
@@ -95,8 +89,6 @@ __all__ = [
     "CaseWhen",
     "Column",
     "CteTable",
-    "DatePart",
-    "DateTruncUnit",
     "DerivedTable",
     "Expr",
     "Expression",
@@ -160,10 +152,7 @@ __all__ = [
     "scalar",
     "statement_timestamp",
     "subtract",
-    "subtract_dates",
     "subtract_interval",
-    "subtract_times",
-    "subtract_timestamps",
     "sum",
     "time_difference",
     "timestamp_difference",

@@ -44,9 +44,11 @@ from relq._ast import (
     TemporalMakeIntervalNode,
     TemporalMakeTimeNode,
     TemporalMakeTimestampNode,
+    TemporalMakeTimestamptzNode,
     TemporalOverlapsNode,
     TemporalTimezoneNode,
     TemporalTruncNode,
+    TemporalTruncTimestamptzNode,
     UnaryNode,
     UpdateNode,
     ValueNode,
@@ -269,13 +271,20 @@ def _compile_node(
             return _compile_temporal_call(
                 "make_time", (hour, minute, second), dialect, parameters, outer_sources
             )
-        case TemporalMakeTimestampNode(year, month, day, hour, minute, second, aware):
+        case TemporalMakeTimestampNode(year, month, day, hour, minute, second):
             return _compile_temporal_call(
-                "make_timestamptz" if aware else "make_timestamp",
+                "make_timestamp",
                 (year, month, day, hour, minute, second),
                 dialect,
                 parameters,
                 outer_sources,
+            )
+        case TemporalMakeTimestamptzNode(year, month, day, hour, minute, second, zone):
+            arguments = (year, month, day, hour, minute, second)
+            if zone is not None:
+                arguments += (zone,)
+            return _compile_temporal_call(
+                "make_timestamptz", arguments, dialect, parameters, outer_sources
             )
         case TemporalMakeIntervalNode(components):
             return (
@@ -320,14 +329,29 @@ def _compile_node(
                 f"extract({_sql_literal(field)} from "
                 f"{_compile_node(expression, dialect, parameters, outer_sources)})"
             )
-        case TemporalTruncNode(unit, expression, zone):
-            arguments = [
-                _sql_literal(unit),
-                _compile_node(expression, dialect, parameters, outer_sources),
-            ]
-            if zone is not None:
-                arguments.append(_compile_node(zone, dialect, parameters, outer_sources))
-            return "date_trunc(" + ", ".join(arguments) + ")"
+        case TemporalTruncNode(unit, expression):
+            return (
+                "date_trunc("
+                + ", ".join(
+                    (
+                        _sql_literal(unit),
+                        _compile_node(expression, dialect, parameters, outer_sources),
+                    )
+                )
+                + ")"
+            )
+        case TemporalTruncTimestamptzNode(unit, expression, zone):
+            return (
+                "date_trunc("
+                + ", ".join(
+                    (
+                        _sql_literal(unit),
+                        _compile_node(expression, dialect, parameters, outer_sources),
+                        _compile_node(zone, dialect, parameters, outer_sources),
+                    )
+                )
+                + ")"
+            )
         case TemporalBinNode(stride, expression, origin):
             stride_sql = _compile_node(stride, dialect, parameters, outer_sources)
             if isinstance(stride, ValueNode):

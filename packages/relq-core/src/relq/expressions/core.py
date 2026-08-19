@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime
 import decimal
-import enum
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, overload
@@ -34,13 +33,16 @@ from relq._ast import (
     TemporalMakeIntervalNode,
     TemporalMakeTimeNode,
     TemporalMakeTimestampNode,
+    TemporalMakeTimestamptzNode,
     TemporalOverlapsNode,
     TemporalTimezoneNode,
     TemporalTruncNode,
+    TemporalTruncTimestamptzNode,
     UnaryNode,
     ValueNode,
 )
 from relq._query import select_node
+from relq._temporal import ExtractField, TruncUnit
 from relq.expressions.ordering import Order
 from relq.rows import AwareDateTime, AwareTime, Interval, NaiveDateTime, NaiveTime
 
@@ -51,56 +53,6 @@ if TYPE_CHECKING:
 type DecimalDialectNumber = int | float | decimal.Decimal
 type AverageResult = float | decimal.Decimal | None
 T = TypeVar("T")
-
-
-class ExtractField(enum.StrEnum):
-    """The closed set of PostgreSQL fields accepted by ``extract``."""
-
-    CENTURY = "century"
-    DAY = "day"
-    DECADE = "decade"
-    DOW = "dow"
-    DOY = "doy"
-    EPOCH = "epoch"
-    HOUR = "hour"
-    ISODOW = "isodow"
-    ISOYEAR = "isoyear"
-    MICROSECONDS = "microseconds"
-    MILLENNIUM = "millennium"
-    MILLISECONDS = "milliseconds"
-    MINUTE = "minute"
-    MONTH = "month"
-    QUARTER = "quarter"
-    SECOND = "second"
-    TIMEZONE = "timezone"
-    TIMEZONE_HOUR = "timezone_hour"
-    TIMEZONE_MINUTE = "timezone_minute"
-    WEEK = "week"
-    YEAR = "year"
-
-
-class TruncUnit(enum.StrEnum):
-    """The closed set of PostgreSQL ``date_trunc`` units."""
-
-    MICROSECOND = "microseconds"
-    MILLISECOND = "milliseconds"
-    SECOND = "second"
-    MINUTE = "minute"
-    HOUR = "hour"
-    DAY = "day"
-    WEEK = "week"
-    MONTH = "month"
-    QUARTER = "quarter"
-    YEAR = "year"
-    DECADE = "decade"
-    CENTURY = "century"
-    MILLENNIUM = "millennium"
-
-
-# Descriptive aliases make the domain names discoverable without adding new
-# enum members or widening the accepted SQL vocabulary.
-DatePart = ExtractField
-DateTruncUnit = TruncUnit
 
 
 class Expression(Protocol):
@@ -308,16 +260,19 @@ def make_timestamptz(
     hour: int | Expr[int],
     minute: int | Expr[int],
     second: float | Expr[float],
+    zone: str | Expr[str] | None = None,
 ) -> Expr[AwareDateTime]:
+    if zone is not None and type(zone) is not str and not isinstance(zone, Expr):
+        raise TypeError("make_timestamptz time zone must be text or a SQL text expression")
     return Expr(
-        TemporalMakeTimestampNode(
+        TemporalMakeTimestamptzNode(
             _node(year),
             _node(month),
             _node(day),
             _node(hour),
             _node(minute),
             _node(second),
-            aware=True,
+            zone=None if zone is None else _node(zone),
         )
     )
 
@@ -436,12 +391,6 @@ def timestamp_difference(
     return Expr(TemporalDifferenceNode(left.node(), right.node()))
 
 
-# The verb form reads naturally beside add_interval()/subtract_interval().
-subtract_dates = date_difference
-subtract_times = time_difference
-subtract_timestamps = timestamp_difference
-
-
 def negate_interval(interval: Interval | Expr[Interval]) -> Expr[Interval]:
     return Expr(TemporalIntervalUnaryNode(_node(interval)))
 
@@ -466,9 +415,13 @@ def at_time_zone(expression: Expr[NaiveDateTime], zone: str | Expr[str]) -> Expr
 def at_time_zone(expression: Expr[AwareDateTime], zone: str | Expr[str]) -> Expr[NaiveDateTime]: ...
 
 
+@overload
+def at_time_zone(expression: Expr[AwareTime], zone: str | Expr[str]) -> Expr[AwareTime]: ...
+
+
 def at_time_zone(
     expression: object, zone: str | Expr[str]
-) -> Expr[NaiveDateTime] | Expr[AwareDateTime]:
+) -> Expr[NaiveDateTime] | Expr[AwareDateTime] | Expr[AwareTime]:
     if not isinstance(expression, Expr):
         raise TypeError("AT TIME ZONE requires a SQL temporal expression")
     if type(zone) is not str and not isinstance(zone, Expr):
@@ -532,9 +485,12 @@ def date_trunc(
         raise TypeError("date_trunc requires a TruncUnit")
     if zone is not None and type(zone) is not str and not isinstance(zone, Expr):
         raise TypeError("date_trunc time zone must be text or a SQL text expression")
-    return Expr(
-        TemporalTruncNode(unit.value, expression.node(), None if zone is None else _node(zone))
+    node = (
+        TemporalTruncNode(unit.value, expression.node())
+        if zone is None
+        else TemporalTruncTimestamptzNode(unit.value, expression.node(), _node(zone))
     )
+    return Expr(node)
 
 
 @overload
@@ -673,7 +629,9 @@ class CaseWhen[T](Protocol):
     relq's private AST nodes.
     """
 
-    def when(self, condition: BooleanExpression, then: T | Expr[T], /) -> CaseWhen[T]: ...
+    def when(
+        self, condition: Predicate | NullablePredicate, then: T | Expr[T], /
+    ) -> CaseWhen[T]: ...
 
     def else_(self, otherwise: T | Expr[T], /) -> Expr[T]: ...
 
@@ -688,7 +646,7 @@ class _CaseWhen[T]:
     def __init__(self, branches: tuple[tuple[Node, Node], ...]) -> None:
         self._branches = branches
 
-    def when(self, condition: BooleanExpression, then: T | Expr[T], /) -> CaseWhen[T]:
+    def when(self, condition: Predicate | NullablePredicate, then: T | Expr[T], /) -> CaseWhen[T]:
         """Return a new builder with one additional searched branch."""
         return _CaseWhen((*self._branches, (condition.node(), _node(then))))
 
@@ -701,7 +659,7 @@ class _CaseWhen[T]:
         return Expr(CaseNode(self._branches, ValueNode(None)))
 
 
-def case_when[T](condition: BooleanExpression, then: T | Expr[T], /) -> CaseWhen[T]:
+def case_when[T](condition: Predicate | NullablePredicate, then: T | Expr[T], /) -> CaseWhen[T]:
     """Start a closed, parameterized searched ``CASE`` expression.
 
     Call :meth:`CaseWhen.when` for more branches, then terminate with
@@ -852,7 +810,7 @@ def _numeric_binary(left: object, operator: str, right: object) -> Expr[object]:
     return Expr(BinaryNode(left.node(), operator, _node(right)))
 
 
-def _combine_truth(left: Node, operator: str, right: object) -> BooleanExpression:
+def _combine_truth(left: Node, operator: str, right: object) -> Predicate | NullablePredicate:
     if isinstance(right, Predicate):
         return Predicate(BinaryNode(left, operator, right.node()))
     if isinstance(right, NullablePredicate):

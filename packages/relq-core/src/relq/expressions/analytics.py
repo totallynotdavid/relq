@@ -27,7 +27,7 @@ from relq.expressions.ordering import Order
 @dataclass(frozen=True, slots=True)
 class AggregateExpr[T](Expr[T]):
     def filter(self, predicate: BooleanExpression) -> AggregateExpr[T]:
-        node = self.node()
+        node = self._node
         if not isinstance(node, AggregateNode):
             raise TypeError("AggregateExpr must contain an AggregateNode")
         filter_node = (
@@ -38,7 +38,7 @@ class AggregateExpr[T](Expr[T]):
         return AggregateExpr(replace(node, filter=filter_node))
 
     def over(self) -> WindowSpec[T]:
-        node = self.node()
+        node = self._node
         if not isinstance(node, AggregateNode):
             raise TypeError("AggregateExpr must contain an AggregateNode")
         return WindowSpec(WindowNode(node))

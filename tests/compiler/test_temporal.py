@@ -5,6 +5,7 @@ import datetime
 import pytest
 from relq import (
     AwareDateTime,
+    AwareTime,
     Column,
     CteTable,
     DerivedTable,
@@ -54,6 +55,12 @@ from relq import (
     transaction_timestamp,
     update,
 )
+from relq._ast import (
+    TemporalMakeTimestampNode,
+    TemporalMakeTimestamptzNode,
+    TemporalTruncNode,
+    TemporalTruncTimestamptzNode,
+)
 from relq._compiler import compile_postgres, compile_sqlite
 
 
@@ -63,10 +70,23 @@ class TemporalRows(Table):
     naive_value: Column[NaiveDateTime] = column(NaiveDateTime)
     aware_value: Column[AwareDateTime] = column(AwareDateTime)
     naive_time: Column[NaiveTime] = column(NaiveTime)
+    aware_time: Column[AwareTime] = column(AwareTime)
     interval_value: Column[Interval] = column(Interval)
 
 
 temporal_rows = TemporalRows("temporal_rows")
+
+
+def test_temporal_ast_has_only_valid_timestamp_and_truncation_shapes() -> None:
+    timestamp = make_timestamp(2026, 8, 19, 12, 30, 0.5)
+    timestamptz = make_timestamptz(2026, 8, 19, 12, 30, 0.5, "America/Lima")
+    truncation = date_trunc(TruncUnit.DAY, temporal_rows.naive_value)
+    zoned_truncation = date_trunc(TruncUnit.DAY, temporal_rows.aware_value, "America/Lima")
+
+    assert isinstance(timestamp.node(), TemporalMakeTimestampNode)
+    assert isinstance(timestamptz.node(), TemporalMakeTimestamptzNode)
+    assert isinstance(truncation.node(), TemporalTruncNode)
+    assert isinstance(zoned_truncation.node(), TemporalTruncTimestamptzNode)
 
 
 def test_temporal_nodes_cover_the_complete_closed_builder_surface() -> None:
@@ -105,6 +125,14 @@ def test_temporal_nodes_cover_the_complete_closed_builder_surface() -> None:
         "make_interval(years => $20, weeks => $21, hours => $22, mins => $23, secs => $24)"
         in constructor_sql.sql
     )
+    zoned_constructor = compile_postgres(
+        select(make_timestamptz(2026, 8, 19, 12, 30, 0.5, "America/Lima")).from_(temporal_rows)
+    )
+    assert (
+        zoned_constructor.sql
+        == 'select make_timestamptz($1, $2, $3, $4, $5, $6, $7) from "temporal_rows"'
+    )
+    assert zoned_constructor.parameters == (2026, 8, 19, 12, 30, 0.5, "America/Lima")
 
     intervals = select(
         justify_days(temporal_rows.interval_value),
@@ -161,7 +189,9 @@ def test_temporal_nodes_render_as_semantic_postgres_operations() -> None:
 
     calendar = select(
         at_time_zone(temporal_rows.naive_value, "America/Lima"),
+        at_time_zone(temporal_rows.aware_time, "UTC"),
         extract(ExtractField.YEAR, temporal_rows.naive_value),
+        extract(ExtractField.JULIAN, temporal_rows.naive_value),
         date_trunc(TruncUnit.DAY, temporal_rows.aware_value, "America/Lima"),
         date_bin(Interval(days=1), temporal_rows.naive_value, temporal_rows.naive_value),
         age(temporal_rows.naive_value, temporal_rows.naive_value),
@@ -176,9 +206,30 @@ def test_temporal_nodes_render_as_semantic_postgres_operations() -> None:
     assert "at time zone $1" in compiled.sql
     assert compiled.parameters == (
         "America/Lima",
+        "UTC",
         "America/Lima",
         Interval(days=1),
     )
+
+
+@pytest.mark.parametrize(
+    "stride",
+    (
+        Interval(months=1),
+        Interval(),
+        Interval(days=-1),
+        Interval(days=1, microseconds=-86_400_000_000),
+    ),
+)
+def test_date_bin_rejects_known_invalid_literal_strides(stride: Interval) -> None:
+    query = select(date_bin(stride, temporal_rows.naive_value, temporal_rows.naive_value)).from_(
+        temporal_rows
+    )
+    with pytest.raises(
+        ValueError,
+        match="date_bin stride must be positive and cannot contain month-or-larger units",
+    ):
+        compile_postgres(query)
 
 
 def test_sqlite_rejects_temporal_nodes_in_dml_and_nested_selects() -> None:

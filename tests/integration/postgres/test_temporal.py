@@ -11,10 +11,12 @@ from relq import (
     SelectQuery,
     add_interval,
     at_time_zone,
+    date_bin,
     insert_into,
     interval_decoder,
     make_interval,
     make_timestamp,
+    make_timestamptz,
     row_adapter,
     select,
 )
@@ -44,6 +46,28 @@ async def test_at_time_zone_preserves_dst_transition_semantics(
     assert row == (
         datetime.datetime(2024, 3, 10, 6, 30, tzinfo=datetime.UTC),
         datetime.datetime(2024, 3, 10, 7, 30, tzinfo=datetime.UTC),
+    )
+
+
+async def test_zoned_timestamp_construction_and_date_bin_use_postgres_semantics(
+    database: PostgresDatabase,
+) -> None:
+    await database.execute(insert_into(users).values(name="temporal constructor probe"))
+    row = await database.fetch_one(
+        select(
+            make_timestamptz(2024, 3, 10, 1, 30, 0.0, "America/New_York"),
+            date_bin(
+                Interval(microseconds=3_600_000_000),
+                make_timestamp(2024, 3, 10, 1, 44, 17.0),
+                make_timestamp(2001, 1, 1, 0, 0, 0.0),
+            ),
+        )
+        .from_(users)
+        .limit(1)
+    )
+    assert row == (
+        datetime.datetime(2024, 3, 10, 6, 30, tzinfo=datetime.UTC),
+        datetime.datetime.combine(datetime.date(2024, 3, 10), datetime.time(1, 0)),
     )
 
 

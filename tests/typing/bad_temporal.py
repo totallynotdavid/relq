@@ -39,6 +39,7 @@ date_difference(temporal.date_value, temporal.naive_value)
 time_difference(temporal.naive_time, temporal.aware_time)
 timestamp_difference(temporal.naive_value, temporal.aware_value)
 at_time_zone(temporal.date_value, "UTC")
+at_time_zone(temporal.naive_time, "UTC")
 date_trunc(TruncUnit.DAY, temporal.naive_value, "UTC")
 date_bin(Interval(days=1), temporal.naive_value, temporal.aware_value)
 overlaps(
