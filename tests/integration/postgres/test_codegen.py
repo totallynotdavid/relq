@@ -1,13 +1,15 @@
 """PostgreSQL catalog introspection and regenerated-module contracts."""
 
 import asyncio
+import datetime
+import decimal
 import os
 import sys
 from pathlib import Path
 
 import asyncpg
 import pytest
-from relq import select_model
+from relq import aware_datetime, naive_time, select_model
 from relq_codegen import (
     CodegenConfig,
     DirectType,
@@ -20,6 +22,13 @@ from relq_codegen.__main__ import main as codegen_main
 from relq_postgres import PostgresDatabase
 
 from tests.integration.postgres.support import configured_harness
+from tests.snapshots.postgres_schema import (
+    RelqCodegenValuesRow,
+    RelqIntegrationState,
+    insert_relq_codegen_values,
+    relq_codegen_values,
+    relq_codegen_values_row_adapter,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RELQ_TEST_POSTGRES_DSN") is None,
@@ -73,6 +82,45 @@ async def test_codegen_matches_committed_catalog_snapshot(
         )
         == (Path(__file__).parents[2] / "snapshots" / "postgres_schema.py").read_text()
     )
+
+
+async def test_generated_temporal_model_decodes_postgres_temporal_columns(
+    database: PostgresDatabase,
+) -> None:
+    occurred_at = aware_datetime(datetime.datetime(2026, 8, 19, 12, 30, tzinfo=datetime.UTC))
+    due_time = naive_time(datetime.time(8, 45, 30))
+    await database.execute(
+        insert_relq_codegen_values({"tenant": 1, "occurred_at": occurred_at, "due_time": due_time})
+    )
+    rows = await database.fetch_all(
+        select_model(
+            relq_codegen_values_row_adapter,
+            relq_codegen_values.id,
+            relq_codegen_values.tenant,
+            relq_codegen_values.identifier,
+            relq_codegen_values.states,
+            relq_codegen_values.price,
+            relq_codegen_values.occurred_at,
+            relq_codegen_values.due_time,
+            relq_codegen_values.payload,
+            relq_codegen_values.origin,
+            relq_codegen_values.computed,
+        ).from_(relq_codegen_values)
+    )
+    assert rows == [
+        RelqCodegenValuesRow(
+            id=1,
+            tenant=1,
+            identifier=None,
+            states=[RelqIntegrationState.NEW],
+            price=decimal.Decimal("0.00"),
+            occurred_at=occurred_at,
+            due_time=due_time,
+            payload=None,
+            origin=None,
+            computed=None,
+        )
+    ]
 
 
 async def test_codegen_cli_detects_changed_schema(

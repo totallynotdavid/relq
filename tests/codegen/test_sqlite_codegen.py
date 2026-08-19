@@ -69,6 +69,34 @@ def test_codegen_maps_richer_database_value_types() -> None:
     assert "payload: Column[object | None]" in generated
 
 
+def test_codegen_maps_postgres_temporal_catalog_spellings_to_branded_domains() -> None:
+    table = SchemaTable(
+        "temporal_values",
+        (
+            SchemaColumn(
+                "local_timestamp", BuiltinType("timestamp without time zone"), False, False
+            ),
+            SchemaColumn("instant", BuiltinType("timestamp with time zone"), False, False),
+            SchemaColumn("local_time", BuiltinType("time without time zone"), False, False),
+            SchemaColumn("zoned_time", BuiltinType("time with time zone"), False, False),
+            SchemaColumn("elapsed", BuiltinType("interval"), False, False),
+        ),
+    )
+    generated = render((table,))
+    assert "local_timestamp: Column[NaiveDateTime] = column(NaiveDateTime)" in generated
+    assert "instant: Column[AwareDateTime] = column(AwareDateTime)" in generated
+    assert "local_time: Column[NaiveTime] = column(NaiveTime)" in generated
+    assert "zoned_time: Column[AwareTime] = column(AwareTime)" in generated
+    assert "elapsed: Column[Interval] = column(Interval)" in generated
+    assert "naive_datetime_decoder()" in generated
+    assert "aware_datetime_decoder()" in generated
+    assert "naive_time_decoder()" in generated
+    assert "aware_time_decoder()" in generated
+    assert "interval_decoder()" in generated
+    namespace: dict[str, object] = {}
+    exec(generated, namespace)  # noqa: S102 - generated module must import.
+
+
 def test_codegen_single_field_row_adapter_remains_a_tuple() -> None:
     generated = render(
         (SchemaTable("single_value", (SchemaColumn("id", BuiltinType("int4"), False, True),)),)

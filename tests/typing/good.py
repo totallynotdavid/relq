@@ -1,3 +1,4 @@
+import datetime
 import decimal
 from dataclasses import dataclass
 from typing import Literal, assert_type
@@ -5,42 +6,74 @@ from typing import Literal, assert_type
 from relq import (
     AggregateExpr,
     AwareDateTime,
+    AwareTime,
     CaseWhen,
     Column,
     CteTable,
     DerivedTable,
     Expr,
+    ExtractField,
     InsertQuery,
     Interval,
     ModelInsertQuery,
     ModelSelectQuery,
+    NaiveDateTime,
+    NaiveTime,
     NullablePredicate,
     Order,
     Predicate,
     SelectQuery,
     Table,
+    TruncUnit,
     WindowExclusion,
     WindowSpec,
     add,
     add_interval,
+    age,
+    at_time_zone,
     case_when,
+    clock_timestamp,
     coalesce,
     column,
     count,
     cte,
     cume_dist,
+    current_date,
     current_row,
+    current_time,
+    date_bin,
+    date_difference,
+    date_trunc,
     divide,
+    divide_interval,
     excluded,
+    extract,
     insert_into,
+    justify_days,
+    justify_hours,
+    justify_interval,
+    local_time,
+    local_timestamp,
+    make_date,
+    make_interval,
+    make_time,
+    make_timestamp,
+    make_timestamptz,
+    multiply_interval,
+    negate_interval,
     output_column,
+    overlaps,
     percent_rank,
     row_number,
     scalar,
     select,
     select_model,
+    statement_timestamp,
     subtract_interval,
     sum,
+    time_difference,
+    timestamp_difference,
+    to_timestamp,
     transaction_timestamp,
 )
 from relq._compiler import compile_postgres
@@ -56,6 +89,82 @@ class Users(Table):
 users = Users("users")
 query = select(users.id, users.email).from_(users).where(users.active.is_true())
 rows: list[tuple[int, str]]
+
+
+class Temporal(Table):
+    date_value: Column[datetime.date] = column(datetime.date)
+    naive_value: Column[NaiveDateTime] = column(NaiveDateTime)
+    aware_value: Column[AwareDateTime] = column(AwareDateTime)
+    naive_time: Column[NaiveTime] = column(NaiveTime)
+    aware_time: Column[AwareTime] = column(AwareTime)
+    interval_value: Column[Interval] = column(Interval)
+
+
+temporal = Temporal("temporal")
+
+assert_type(transaction_timestamp(), Expr[AwareDateTime])
+assert_type(statement_timestamp(), Expr[AwareDateTime])
+assert_type(clock_timestamp(), Expr[AwareDateTime])
+assert_type(current_date(), Expr[datetime.date])
+assert_type(current_time(), Expr[AwareTime])
+assert_type(local_time(), Expr[NaiveTime])
+assert_type(local_timestamp(), Expr[NaiveDateTime])
+assert_type(make_date(2026, 8, 19), Expr[datetime.date])
+assert_type(make_time(12, 30, 0.0), Expr[NaiveTime])
+assert_type(make_timestamp(2026, 8, 19, 12, 30, 0.0), Expr[NaiveDateTime])
+assert_type(make_timestamptz(2026, 8, 19, 12, 30, 0.0), Expr[AwareDateTime])
+assert_type(make_interval(months=1, seconds=0.5), Expr[Interval])
+assert_type(to_timestamp(0.0), Expr[AwareDateTime])
+assert_type(age(temporal.naive_value, temporal.naive_value), Expr[Interval])
+assert_type(age(temporal.aware_value, temporal.aware_value), Expr[Interval])
+assert_type(justify_days(temporal.interval_value), Expr[Interval])
+assert_type(justify_hours(Interval(microseconds=3_600_000_000)), Expr[Interval])
+assert_type(justify_interval(temporal.interval_value), Expr[Interval])
+assert_type(add_interval(temporal.naive_value, Interval(days=1)), Expr[NaiveDateTime])
+assert_type(add_interval(transaction_timestamp(), Interval(days=1)), Expr[AwareDateTime])
+assert_type(subtract_interval(transaction_timestamp(), Interval(days=1)), Expr[AwareDateTime])
+assert_type(date_difference(temporal.date_value, temporal.date_value), Expr[int])
+assert_type(time_difference(temporal.naive_time, temporal.naive_time), Expr[Interval])
+assert_type(time_difference(temporal.aware_time, temporal.aware_time), Expr[Interval])
+assert_type(timestamp_difference(temporal.naive_value, temporal.naive_value), Expr[Interval])
+assert_type(timestamp_difference(temporal.aware_value, temporal.aware_value), Expr[Interval])
+assert_type(negate_interval(temporal.interval_value), Expr[Interval])
+assert_type(multiply_interval(temporal.interval_value, 2), Expr[Interval])
+assert_type(divide_interval(temporal.interval_value, 2), Expr[Interval])
+assert_type(at_time_zone(temporal.naive_value, "UTC"), Expr[AwareDateTime])
+assert_type(at_time_zone(temporal.aware_value, "UTC"), Expr[NaiveDateTime])
+assert_type(extract(ExtractField.YEAR, temporal.date_value), Expr[decimal.Decimal])
+assert_type(extract(ExtractField.HOUR, temporal.naive_time), Expr[decimal.Decimal])
+assert_type(date_trunc(TruncUnit.DAY, temporal.naive_value), Expr[NaiveDateTime])
+assert_type(date_trunc(TruncUnit.DAY, temporal.aware_value), Expr[AwareDateTime])
+assert_type(date_trunc(TruncUnit.DAY, temporal.aware_value, "UTC"), Expr[AwareDateTime])
+assert_type(date_trunc(TruncUnit.DAY, temporal.interval_value), Expr[Interval])
+assert_type(
+    date_bin(Interval(days=1), temporal.naive_value, temporal.naive_value),
+    Expr[NaiveDateTime],
+)
+assert_type(
+    date_bin(Interval(days=1), temporal.aware_value, temporal.aware_value),
+    Expr[AwareDateTime],
+)
+assert_type(
+    overlaps(
+        temporal.date_value,
+        temporal.date_value,
+        temporal.date_value,
+        temporal.date_value,
+    ),
+    NullablePredicate,
+)
+assert_type(
+    overlaps(
+        temporal.aware_time,
+        temporal.aware_time,
+        temporal.aware_time,
+        temporal.aware_time,
+    ),
+    NullablePredicate,
+)
 
 aggregate_query = select(users.active, count(), sum(users.id)).from_(users).group_by(users.active)
 aggregate_rows: list[tuple[bool, int, int | None]]
