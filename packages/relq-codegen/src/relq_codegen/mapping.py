@@ -151,6 +151,16 @@ def _resolve_builtin(sql_type: BuiltinType, config: CodegenConfig | None) -> Res
             Name("NaiveDateTime", frozenset({Import("relq", ("NaiveDateTime",))})),
             Call(relq_decoder("naive_datetime_decoder")),
         )
+    if normalized == "time without time zone":
+        return ResolvedType(
+            Name("NaiveTime", frozenset({Import("relq", ("NaiveTime",))})),
+            Call(relq_decoder("naive_time_decoder")),
+        )
+    if normalized in {"timetz", "time with time zone"}:
+        return ResolvedType(
+            Name("AwareTime", frozenset({Import("relq", ("AwareTime",))})),
+            Call(relq_decoder("aware_time_decoder")),
+        )
     if "timestamp" in normalized or "datetime" in normalized:
         return ResolvedType(
             _attribute("datetime", "datetime", Import("datetime")),
@@ -164,7 +174,7 @@ def _resolve_builtin(sql_type: BuiltinType, config: CodegenConfig | None) -> Res
         return ResolvedType(
             _attribute("datetime", "time", Import("datetime")), Call(relq_decoder("time_decoder"))
         )
-    if "interval" in normalized:
+    if normalized == "interval":
         return ResolvedType(
             Name("Interval", frozenset({Import("relq", ("Interval",))})),
             Call(relq_decoder("interval_decoder")),

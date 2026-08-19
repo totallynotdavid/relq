@@ -54,7 +54,7 @@ class ValueNode:
 
 
 @dataclass(frozen=True, slots=True)
-class TemporalCurrentNode:
+class TemporalClockNode:
     kind: Literal[
         "transaction_timestamp",
         "statement_timestamp",
@@ -74,32 +74,111 @@ class BinaryNode:
 
 
 @dataclass(frozen=True, slots=True)
-class TemporalBinaryNode:
-    """A closed PostgreSQL temporal operation."""
+class TemporalMakeDateNode:
+    year: Node
+    month: Node
+    day: Node
 
+
+@dataclass(frozen=True, slots=True)
+class TemporalMakeTimeNode:
+    hour: Node
+    minute: Node
+    second: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalMakeTimestampNode:
+    year: Node
+    month: Node
+    day: Node
+    hour: Node
+    minute: Node
+    second: Node
+    aware: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalMakeIntervalNode:
+    """Named PostgreSQL ``make_interval`` components."""
+
+    components: tuple[tuple[str, Node], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalEpochNode:
+    seconds: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalArithmeticNode:
+    timestamp: Node
+    operator: Literal["+", "-"]
+    interval: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalDifferenceNode:
     left: Node
-    operator: Literal["+", "-", "*", "/"]
     right: Node
 
 
 @dataclass(frozen=True, slots=True)
-class TemporalFunctionNode:
-    """A closed PostgreSQL temporal function; never constructed publicly by name."""
+class TemporalIntervalUnaryNode:
+    interval: Node
 
-    kind: Literal[
-        "make_date",
-        "make_time",
-        "make_timestamp",
-        "make_timestamptz",
-        "make_interval",
-        "to_timestamp",
-        "date_trunc",
-        "age",
-        "justify_days",
-        "justify_hours",
-        "justify_interval",
-    ]
-    arguments: tuple[Node, ...]
+
+@dataclass(frozen=True, slots=True)
+class TemporalIntervalScaleNode:
+    interval: Node
+    operator: Literal["*", "/"]
+    factor: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalTimezoneNode:
+    expression: Node
+    zone: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalExtractNode:
+    field: str
+    expression: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalTruncNode:
+    unit: str
+    expression: Node
+    zone: Node | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalBinNode:
+    stride: Node
+    expression: Node
+    origin: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalAgeNode:
+    left: Node
+    right: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalOverlapsNode:
+    left_start: Node
+    left_end: Node
+    right_start: Node
+    right_end: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalJustifyNode:
+    kind: Literal["justify_days", "justify_hours", "justify_interval"]
+    interval: Node
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,10 +419,24 @@ class DeleteNode:
 type Node = (
     ColumnNode
     | ValueNode
-    | TemporalCurrentNode
+    | TemporalClockNode
     | BinaryNode
-    | TemporalBinaryNode
-    | TemporalFunctionNode
+    | TemporalMakeDateNode
+    | TemporalMakeTimeNode
+    | TemporalMakeTimestampNode
+    | TemporalMakeIntervalNode
+    | TemporalEpochNode
+    | TemporalArithmeticNode
+    | TemporalDifferenceNode
+    | TemporalIntervalUnaryNode
+    | TemporalIntervalScaleNode
+    | TemporalTimezoneNode
+    | TemporalExtractNode
+    | TemporalTruncNode
+    | TemporalBinNode
+    | TemporalAgeNode
+    | TemporalOverlapsNode
+    | TemporalJustifyNode
     | UnaryNode
     | FunctionNode
     | CaseNode

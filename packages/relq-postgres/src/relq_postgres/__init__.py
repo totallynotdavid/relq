@@ -32,29 +32,40 @@ class PostgresDatabase:
     automatic prepared-statement cache does not survive that pooling mode.
     """
 
-    def __init__(self, connection: asyncpg.Connection | asyncpg.Pool) -> None:
+    def __init__(
+        self,
+        connection: asyncpg.Connection
+        | asyncpg.Pool
+        | asyncpg.pool.PoolConnectionProxy[asyncpg.Record],
+    ) -> None:
         self._connection: (
             asyncpg.Connection | asyncpg.Pool | asyncpg.pool.PoolConnectionProxy[asyncpg.Record]
         ) = connection
 
-    @classmethod
-    def _from_pool_connection(
-        cls, connection: asyncpg.pool.PoolConnectionProxy[asyncpg.Record]
-    ) -> PostgresDatabase:
-        database = object.__new__(cls)
-        database._connection = connection
-        return database
-
-    async def _configure_connection(self) -> None:
-        if isinstance(self._connection, asyncpg.Pool):
-            return
-        await self._connection.set_type_codec(
+    @staticmethod
+    async def _configure_connection(
+        connection: asyncpg.Connection | asyncpg.pool.PoolConnectionProxy[asyncpg.Record],
+    ) -> None:
+        await connection.set_type_codec(
             "interval",
             schema="pg_catalog",
             encoder=_encode_interval,
             decoder=_decode_interval,
             format="tuple",
         )
+
+    @asynccontextmanager
+    async def _connection_scope(
+        self,
+    ) -> AsyncGenerator[asyncpg.Connection | asyncpg.pool.PoolConnectionProxy[asyncpg.Record]]:
+        """Acquire and configure exactly one physical connection per operation."""
+        if isinstance(self._connection, asyncpg.Pool):
+            async with self._connection.acquire() as connection:
+                await self._configure_connection(connection)
+                yield connection
+            return
+        await self._configure_connection(self._connection)
+        yield self._connection
 
     @overload
     async def fetch_all[Row](self, query: RawResultQuery[Row]) -> list[Row]: ...
@@ -67,14 +78,8 @@ class PostgresDatabase:
         query: (RawResultQuery[object] | MappedResultQuery[object]),
     ) -> object:
         compiled = compile_postgres(query)
-        if isinstance(self._connection, asyncpg.Pool):
-            async with self._connection.acquire() as connection:
-                database = PostgresDatabase._from_pool_connection(connection)
-                await database._configure_connection()
-                records = await connection.fetch(compiled.sql, *compiled.parameters)
-        else:
-            await self._configure_connection()
-            records = await self._connection.fetch(compiled.sql, *compiled.parameters)
+        async with self._connection_scope() as connection:
+            records = await connection.fetch(compiled.sql, *compiled.parameters)
         return map_all(query, (tuple(record) for record in records))
 
     @overload
@@ -88,8 +93,8 @@ class PostgresDatabase:
         query: (RawResultQuery[object] | MappedResultQuery[object]),
     ) -> object:
         compiled = compile_postgres(query)
-        await self._configure_connection()
-        row = await self._connection.fetchrow(compiled.sql, *compiled.parameters)
+        async with self._connection_scope() as connection:
+            row = await connection.fetchrow(compiled.sql, *compiled.parameters)
         return map_one(query, None if row is None else tuple(row))
 
     async def fetch_all_as[Row, Model](
@@ -99,8 +104,8 @@ class PostgresDatabase:
         if extract_query(query).adapter is not None:
             raise TypeError("query already declares a result model; use fetch_all()")
         compiled = compile_postgres(query)
-        await self._configure_connection()
-        rows = await self._connection.fetch(compiled.sql, *compiled.parameters)
+        async with self._connection_scope() as connection:
+            rows = await connection.fetch(compiled.sql, *compiled.parameters)
         return [adapter.map(tuple(row)) for row in rows]
 
     async def fetch_one_as[Row, Model](
@@ -109,8 +114,8 @@ class PostgresDatabase:
         if extract_query(query).adapter is not None:
             raise TypeError("query already declares a result model; use fetch_one()")
         compiled = compile_postgres(query)
-        await self._configure_connection()
-        row = await self._connection.fetchrow(compiled.sql, *compiled.parameters)
+        async with self._connection_scope() as connection:
+            row = await connection.fetchrow(compiled.sql, *compiled.parameters)
         return None if row is None else adapter.map(tuple(row))
 
     @overload
@@ -136,40 +141,28 @@ class PostgresDatabase:
         that same scope.
         """
         compiled = compile_postgres(query)
-        if isinstance(self._connection, asyncpg.Pool):
-            async with self._connection.acquire() as connection:
-                database = PostgresDatabase._from_pool_connection(connection)
-                await database._configure_connection()
-                async with connection.transaction():
-                    yield _stream_rows(query, connection, compiled.sql, compiled.parameters)
-        else:
-            await self._configure_connection()
-            async with self._connection.transaction():
-                yield _stream_rows(query, self._connection, compiled.sql, compiled.parameters)
+        async with self._connection_scope() as connection, connection.transaction():
+            yield _stream_rows(query, connection, compiled.sql, compiled.parameters)
 
     async def execute[Row](self, query: Command[Row]) -> int:
         require_command(query)
         compiled = compile_postgres(query)
-        await self._configure_connection()
-        # execute() with bound parameters shares asyncpg's prepared-statement
-        # cache with fetch()/fetchrow() (both route through Connection._execute).
-        # Only zero-parameter calls (e.g. DEFAULT VALUES) skip it, via asyncpg's
-        # simple-query protocol.
-        status = await self._connection.execute(compiled.sql, *compiled.parameters)
+        async with self._connection_scope() as connection:
+            # execute() with bound parameters shares asyncpg's prepared-statement
+            # cache with fetch()/fetchrow() (both route through Connection._execute).
+            # Only zero-parameter calls (e.g. DEFAULT VALUES) skip it, via asyncpg's
+            # simple-query protocol.
+            status = await connection.execute(compiled.sql, *compiled.parameters)
         return _command_count(status)
 
     @asynccontextmanager
     async def transaction(self) -> AsyncGenerator[PostgresDatabase]:
-        if isinstance(self._connection, asyncpg.Pool):
-            async with self._connection.acquire() as connection:
-                database = PostgresDatabase._from_pool_connection(connection)
-                await database._configure_connection()
-                async with connection.transaction():
-                    yield database
-        else:
-            await self._configure_connection()
-            async with self._connection.transaction():
-                yield self
+        async with self._connection_scope() as connection, connection.transaction():
+            yield (
+                self
+                if not isinstance(self._connection, asyncpg.Pool)
+                else PostgresDatabase(connection)
+            )
 
 
 def _command_count(status: str) -> int:

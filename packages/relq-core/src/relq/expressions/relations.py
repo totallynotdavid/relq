@@ -1,5 +1,6 @@
 """Declared relation schemas and descriptor-backed columns."""
 
+from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass, replace
 from typing import Self, TypeForm, cast, overload
@@ -30,7 +31,7 @@ class Source:
 class Column[T](Expr[T]):
     """A declared table column, bound to a source when accessed."""
 
-    python_type: TypeForm[T]
+    python_type: TypeForm[T] | Callable[..., T]
     _name: str = ""
 
     def __set_name__(self, owner: type[Source], name: str) -> None:
@@ -105,7 +106,7 @@ class CteTable(DerivedTable):
         super().__init__(CteSourceNode(name), name)
 
 
-def output_column[T](python_type: TypeForm[T], *, name: str = "") -> Column[T]:
+def output_column[T](python_type: TypeForm[T] | Callable[..., T], *, name: str = "") -> Column[T]:
     """Declare a typed output column.
 
     Nullability belongs in ``T`` (for example ``Column[str | None]``), not in
@@ -115,7 +116,7 @@ def output_column[T](python_type: TypeForm[T], *, name: str = "") -> Column[T]:
 
 
 def column[T](
-    python_type: TypeForm[T],
+    python_type: TypeForm[T] | Callable[..., T],
     *,
     name: str = "",
 ) -> Column[T]:

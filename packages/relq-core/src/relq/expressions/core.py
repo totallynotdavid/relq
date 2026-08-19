@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import enum
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, overload
@@ -19,15 +20,29 @@ from relq._ast import (
     Node,
     NullableResultNode,
     ScalarSubqueryNode,
-    TemporalBinaryNode,
-    TemporalCurrentNode,
-    TemporalFunctionNode,
+    TemporalAgeNode,
+    TemporalArithmeticNode,
+    TemporalBinNode,
+    TemporalClockNode,
+    TemporalDifferenceNode,
+    TemporalEpochNode,
+    TemporalExtractNode,
+    TemporalIntervalScaleNode,
+    TemporalIntervalUnaryNode,
+    TemporalJustifyNode,
+    TemporalMakeDateNode,
+    TemporalMakeIntervalNode,
+    TemporalMakeTimeNode,
+    TemporalMakeTimestampNode,
+    TemporalOverlapsNode,
+    TemporalTimezoneNode,
+    TemporalTruncNode,
     UnaryNode,
     ValueNode,
 )
 from relq._query import select_node
 from relq.expressions.ordering import Order
-from relq.rows import AwareDateTime, Interval, NaiveDateTime
+from relq.rows import AwareDateTime, AwareTime, Interval, NaiveDateTime, NaiveTime
 
 if TYPE_CHECKING:
     from relq.query import SelectQuery
@@ -36,6 +51,56 @@ if TYPE_CHECKING:
 type DecimalDialectNumber = int | float | decimal.Decimal
 type AverageResult = float | decimal.Decimal | None
 T = TypeVar("T")
+
+
+class ExtractField(enum.StrEnum):
+    """The closed set of PostgreSQL fields accepted by ``extract``."""
+
+    CENTURY = "century"
+    DAY = "day"
+    DECADE = "decade"
+    DOW = "dow"
+    DOY = "doy"
+    EPOCH = "epoch"
+    HOUR = "hour"
+    ISODOW = "isodow"
+    ISOYEAR = "isoyear"
+    MICROSECONDS = "microseconds"
+    MILLENNIUM = "millennium"
+    MILLISECONDS = "milliseconds"
+    MINUTE = "minute"
+    MONTH = "month"
+    QUARTER = "quarter"
+    SECOND = "second"
+    TIMEZONE = "timezone"
+    TIMEZONE_HOUR = "timezone_hour"
+    TIMEZONE_MINUTE = "timezone_minute"
+    WEEK = "week"
+    YEAR = "year"
+
+
+class TruncUnit(enum.StrEnum):
+    """The closed set of PostgreSQL ``date_trunc`` units."""
+
+    MICROSECOND = "microseconds"
+    MILLISECOND = "milliseconds"
+    SECOND = "second"
+    MINUTE = "minute"
+    HOUR = "hour"
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+    QUARTER = "quarter"
+    YEAR = "year"
+    DECADE = "decade"
+    CENTURY = "century"
+    MILLENNIUM = "millennium"
+
+
+# Descriptive aliases make the domain names discoverable without adding new
+# enum members or widening the accepted SQL vocabulary.
+DatePart = ExtractField
+DateTruncUnit = TruncUnit
 
 
 class Expression(Protocol):
@@ -177,27 +242,43 @@ def value[T](item: T) -> Expr[T]:
 
 
 def transaction_timestamp() -> Expr[AwareDateTime]:
-    return Expr(TemporalCurrentNode("transaction_timestamp"))
+    return Expr(TemporalClockNode("transaction_timestamp"))
 
 
 def statement_timestamp() -> Expr[AwareDateTime]:
-    return Expr(TemporalCurrentNode("statement_timestamp"))
+    return Expr(TemporalClockNode("statement_timestamp"))
 
 
 def clock_timestamp() -> Expr[AwareDateTime]:
-    return Expr(TemporalCurrentNode("clock_timestamp"))
+    return Expr(TemporalClockNode("clock_timestamp"))
+
+
+def current_date() -> Expr[datetime.date]:
+    return Expr(TemporalClockNode("current_date"))
+
+
+def current_time() -> Expr[AwareTime]:
+    return Expr(TemporalClockNode("current_time"))
+
+
+def local_time() -> Expr[NaiveTime]:
+    return Expr(TemporalClockNode("local_time"))
+
+
+def local_timestamp() -> Expr[NaiveDateTime]:
+    return Expr(TemporalClockNode("local_timestamp"))
 
 
 def make_date(
     year: int | Expr[int], month: int | Expr[int], day: int | Expr[int]
 ) -> Expr[datetime.date]:
-    return Expr(TemporalFunctionNode("make_date", (_node(year), _node(month), _node(day))))
+    return Expr(TemporalMakeDateNode(_node(year), _node(month), _node(day)))
 
 
 def make_time(
     hour: int | Expr[int], minute: int | Expr[int], second: float | Expr[float]
-) -> Expr[datetime.time]:
-    return Expr(TemporalFunctionNode("make_time", (_node(hour), _node(minute), _node(second))))
+) -> Expr[NaiveTime]:
+    return Expr(TemporalMakeTimeNode(_node(hour), _node(minute), _node(second)))
 
 
 def make_timestamp(
@@ -209,9 +290,13 @@ def make_timestamp(
     second: float | Expr[float],
 ) -> Expr[NaiveDateTime]:
     return Expr(
-        TemporalFunctionNode(
-            "make_timestamp",
-            tuple(_node(value) for value in (year, month, day, hour, minute, second)),
+        TemporalMakeTimestampNode(
+            _node(year),
+            _node(month),
+            _node(day),
+            _node(hour),
+            _node(minute),
+            _node(second),
         )
     )
 
@@ -225,42 +310,72 @@ def make_timestamptz(
     second: float | Expr[float],
 ) -> Expr[AwareDateTime]:
     return Expr(
-        TemporalFunctionNode(
-            "make_timestamptz",
-            tuple(_node(value) for value in (year, month, day, hour, minute, second)),
+        TemporalMakeTimestampNode(
+            _node(year),
+            _node(month),
+            _node(day),
+            _node(hour),
+            _node(minute),
+            _node(second),
+            aware=True,
         )
     )
 
 
 def make_interval(
-    *, months: int | Expr[int] = 0, days: int | Expr[int] = 0, microseconds: int | Expr[int] = 0
+    *,
+    years: int | Expr[int] = 0,
+    months: int | Expr[int] = 0,
+    weeks: int | Expr[int] = 0,
+    days: int | Expr[int] = 0,
+    hours: int | Expr[int] = 0,
+    minutes: int | Expr[int] = 0,
+    seconds: float | Expr[float] = 0.0,
 ) -> Expr[Interval]:
-    return Expr(
-        TemporalFunctionNode("make_interval", (_node(months), _node(days), _node(microseconds)))
+    values = (
+        ("years", years),
+        ("months", months),
+        ("weeks", weeks),
+        ("days", days),
+        ("hours", hours),
+        ("mins", minutes),
+        ("secs", seconds),
     )
+    components = tuple(
+        (name, _node(value)) for name, value in values if isinstance(value, Expr) or value != 0
+    )
+    return Expr(TemporalMakeIntervalNode(components))
 
 
 def to_timestamp(seconds: float | Expr[float]) -> Expr[AwareDateTime]:
-    return Expr(TemporalFunctionNode("to_timestamp", (_node(seconds),)))
+    return Expr(TemporalEpochNode(_node(seconds)))
+
+
+@overload
+def age(left: Expr[NaiveDateTime], right: Expr[NaiveDateTime]) -> Expr[Interval]: ...
+
+
+@overload
+def age(left: Expr[AwareDateTime], right: Expr[AwareDateTime]) -> Expr[Interval]: ...
 
 
 def age(
     left: Expr[NaiveDateTime] | Expr[AwareDateTime],
     right: Expr[NaiveDateTime] | Expr[AwareDateTime],
 ) -> Expr[Interval]:
-    return Expr(TemporalFunctionNode("age", (left.node(), right.node())))
+    return Expr(TemporalAgeNode(left.node(), right.node()))
 
 
 def justify_days(interval: Interval | Expr[Interval]) -> Expr[Interval]:
-    return Expr(TemporalFunctionNode("justify_days", (_node(interval),)))
+    return Expr(TemporalJustifyNode("justify_days", _node(interval)))
 
 
 def justify_hours(interval: Interval | Expr[Interval]) -> Expr[Interval]:
-    return Expr(TemporalFunctionNode("justify_hours", (_node(interval),)))
+    return Expr(TemporalJustifyNode("justify_hours", _node(interval)))
 
 
 def justify_interval(interval: Interval | Expr[Interval]) -> Expr[Interval]:
-    return Expr(TemporalFunctionNode("justify_interval", (_node(interval),)))
+    return Expr(TemporalJustifyNode("justify_interval", _node(interval)))
 
 
 def add_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
@@ -270,7 +385,7 @@ def add_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
 
     SQLite compilation rejects this closed PostgreSQL-only operation.
     """
-    return Expr(TemporalBinaryNode(timestamp.node(), "+", _node(delta)))
+    return Expr(TemporalArithmeticNode(timestamp.node(), "+", _node(delta)))
 
 
 def subtract_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
@@ -280,7 +395,244 @@ def subtract_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
 
     SQLite compilation rejects this closed PostgreSQL-only operation.
     """
-    return Expr(TemporalBinaryNode(timestamp.node(), "-", _node(delta)))
+    return Expr(TemporalArithmeticNode(timestamp.node(), "-", _node(delta)))
+
+
+def date_difference(left: Expr[datetime.date], right: Expr[datetime.date]) -> Expr[int]:
+    """Return PostgreSQL's integral day difference between two dates."""
+    return Expr(TemporalDifferenceNode(left.node(), right.node()))
+
+
+@overload
+def time_difference(left: Expr[NaiveTime], right: Expr[NaiveTime]) -> Expr[Interval]: ...
+
+
+@overload
+def time_difference(left: Expr[AwareTime], right: Expr[AwareTime]) -> Expr[Interval]: ...
+
+
+def time_difference(
+    left: Expr[NaiveTime] | Expr[AwareTime], right: Expr[NaiveTime] | Expr[AwareTime]
+) -> Expr[Interval]:
+    return Expr(TemporalDifferenceNode(left.node(), right.node()))
+
+
+@overload
+def timestamp_difference(
+    left: Expr[NaiveDateTime], right: Expr[NaiveDateTime]
+) -> Expr[Interval]: ...
+
+
+@overload
+def timestamp_difference(
+    left: Expr[AwareDateTime], right: Expr[AwareDateTime]
+) -> Expr[Interval]: ...
+
+
+def timestamp_difference(
+    left: Expr[NaiveDateTime] | Expr[AwareDateTime],
+    right: Expr[NaiveDateTime] | Expr[AwareDateTime],
+) -> Expr[Interval]:
+    return Expr(TemporalDifferenceNode(left.node(), right.node()))
+
+
+# The verb form reads naturally beside add_interval()/subtract_interval().
+subtract_dates = date_difference
+subtract_times = time_difference
+subtract_timestamps = timestamp_difference
+
+
+def negate_interval(interval: Interval | Expr[Interval]) -> Expr[Interval]:
+    return Expr(TemporalIntervalUnaryNode(_node(interval)))
+
+
+def multiply_interval(
+    interval: Interval | Expr[Interval], factor: float | Expr[int] | Expr[float]
+) -> Expr[Interval]:
+    return Expr(TemporalIntervalScaleNode(_node(interval), "*", _node(factor)))
+
+
+def divide_interval(
+    interval: Interval | Expr[Interval], factor: float | Expr[int] | Expr[float]
+) -> Expr[Interval]:
+    return Expr(TemporalIntervalScaleNode(_node(interval), "/", _node(factor)))
+
+
+@overload
+def at_time_zone(expression: Expr[NaiveDateTime], zone: str | Expr[str]) -> Expr[AwareDateTime]: ...
+
+
+@overload
+def at_time_zone(expression: Expr[AwareDateTime], zone: str | Expr[str]) -> Expr[NaiveDateTime]: ...
+
+
+def at_time_zone(
+    expression: object, zone: str | Expr[str]
+) -> Expr[NaiveDateTime] | Expr[AwareDateTime]:
+    if not isinstance(expression, Expr):
+        raise TypeError("AT TIME ZONE requires a SQL temporal expression")
+    if type(zone) is not str and not isinstance(zone, Expr):
+        raise TypeError("AT TIME ZONE requires a text zone")
+    return Expr(TemporalTimezoneNode(expression.node(), _node(zone)))
+
+
+@overload
+def extract(field: ExtractField, expression: Expr[datetime.date]) -> Expr[decimal.Decimal]: ...
+
+
+@overload
+def extract(
+    field: ExtractField,
+    expression: Expr[NaiveDateTime]
+    | Expr[AwareDateTime]
+    | Expr[NaiveTime]
+    | Expr[AwareTime]
+    | Expr[Interval],
+) -> Expr[decimal.Decimal]: ...
+
+
+def extract(
+    field: ExtractField,
+    expression: Expr[datetime.date]
+    | Expr[NaiveDateTime]
+    | Expr[AwareDateTime]
+    | Expr[NaiveTime]
+    | Expr[AwareTime]
+    | Expr[Interval],
+) -> Expr[decimal.Decimal]:
+    if type(field) is not ExtractField:
+        raise TypeError("extract requires an ExtractField")
+    return Expr(TemporalExtractNode(field.value, expression.node()))
+
+
+@overload
+def date_trunc(unit: TruncUnit, expression: Expr[NaiveDateTime]) -> Expr[NaiveDateTime]: ...
+
+
+@overload
+def date_trunc(unit: TruncUnit, expression: Expr[AwareDateTime]) -> Expr[AwareDateTime]: ...
+
+
+@overload
+def date_trunc(unit: TruncUnit, expression: Expr[Interval]) -> Expr[Interval]: ...
+
+
+@overload
+def date_trunc(
+    unit: TruncUnit, expression: Expr[AwareDateTime], zone: str | Expr[str]
+) -> Expr[AwareDateTime]: ...
+
+
+def date_trunc(
+    unit: TruncUnit,
+    expression: Expr[NaiveDateTime] | Expr[AwareDateTime] | Expr[Interval],
+    zone: str | Expr[str] | None = None,
+) -> Expr[NaiveDateTime] | Expr[AwareDateTime] | Expr[Interval]:
+    if type(unit) is not TruncUnit:
+        raise TypeError("date_trunc requires a TruncUnit")
+    if zone is not None and type(zone) is not str and not isinstance(zone, Expr):
+        raise TypeError("date_trunc time zone must be text or a SQL text expression")
+    return Expr(
+        TemporalTruncNode(unit.value, expression.node(), None if zone is None else _node(zone))
+    )
+
+
+@overload
+def date_bin(
+    stride: Interval | Expr[Interval],
+    expression: Expr[NaiveDateTime],
+    origin: Expr[NaiveDateTime],
+) -> Expr[NaiveDateTime]: ...
+
+
+@overload
+def date_bin(
+    stride: Interval | Expr[Interval],
+    expression: Expr[AwareDateTime],
+    origin: Expr[AwareDateTime],
+) -> Expr[AwareDateTime]: ...
+
+
+def date_bin(
+    stride: Interval | Expr[Interval],
+    expression: Expr[NaiveDateTime] | Expr[AwareDateTime],
+    origin: Expr[NaiveDateTime] | Expr[AwareDateTime],
+) -> Expr[NaiveDateTime] | Expr[AwareDateTime]:
+    return Expr(TemporalBinNode(_node(stride), expression.node(), origin.node()))
+
+
+@overload
+def overlaps(
+    left_start: Expr[datetime.date],
+    left_end: Expr[datetime.date],
+    right_start: Expr[datetime.date],
+    right_end: Expr[datetime.date],
+) -> NullablePredicate: ...
+
+
+@overload
+def overlaps(
+    left_start: Expr[NaiveDateTime],
+    left_end: Expr[NaiveDateTime],
+    right_start: Expr[NaiveDateTime],
+    right_end: Expr[NaiveDateTime],
+) -> NullablePredicate: ...
+
+
+@overload
+def overlaps(
+    left_start: Expr[AwareDateTime],
+    left_end: Expr[AwareDateTime],
+    right_start: Expr[AwareDateTime],
+    right_end: Expr[AwareDateTime],
+) -> NullablePredicate: ...
+
+
+@overload
+def overlaps(
+    left_start: Expr[NaiveTime],
+    left_end: Expr[NaiveTime],
+    right_start: Expr[NaiveTime],
+    right_end: Expr[NaiveTime],
+) -> NullablePredicate: ...
+
+
+@overload
+def overlaps(
+    left_start: Expr[AwareTime],
+    left_end: Expr[AwareTime],
+    right_start: Expr[AwareTime],
+    right_end: Expr[AwareTime],
+) -> NullablePredicate: ...
+
+
+def overlaps(
+    left_start: Expr[datetime.date]
+    | Expr[NaiveDateTime]
+    | Expr[AwareDateTime]
+    | Expr[NaiveTime]
+    | Expr[AwareTime],
+    left_end: Expr[datetime.date]
+    | Expr[NaiveDateTime]
+    | Expr[AwareDateTime]
+    | Expr[NaiveTime]
+    | Expr[AwareTime],
+    right_start: Expr[datetime.date]
+    | Expr[NaiveDateTime]
+    | Expr[AwareDateTime]
+    | Expr[NaiveTime]
+    | Expr[AwareTime],
+    right_end: Expr[datetime.date]
+    | Expr[NaiveDateTime]
+    | Expr[AwareDateTime]
+    | Expr[NaiveTime]
+    | Expr[AwareTime],
+) -> NullablePredicate:
+    return NullablePredicate(
+        TemporalOverlapsNode(
+            left_start.node(), left_end.node(), right_start.node(), right_end.node()
+        )
+    )
 
 
 def scalar[T](query: SelectQuery[tuple[T]]) -> Expr[T | None]:

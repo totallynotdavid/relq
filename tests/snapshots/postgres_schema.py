@@ -3,6 +3,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from relq import AwareDateTime
 from relq import Column, InsertQuery, Table, UpdateQuery, column, insert_into, update
+from relq import NaiveTime
 from relq import aware_datetime_decoder
 from relq import bool_decoder
 from relq import decimal_decoder
@@ -11,13 +12,12 @@ from relq import inet_decoder
 from relq import int_decoder
 from relq import json_decoder
 from relq import list_decoder
+from relq import naive_time_decoder
 from relq import nullable
 from relq import row_adapter
 from relq import str_decoder
-from relq import time_decoder
 from relq import uuid_decoder
 from typing import Literal, NotRequired, Required, TypedDict
-import datetime
 import decimal
 import enum
 import ipaddress
@@ -35,7 +35,7 @@ class RelqCodegenValues(Table):
     states: Column[list[RelqIntegrationState]] = column(list[RelqIntegrationState])
     price: Column[decimal.Decimal] = column(decimal.Decimal)
     occurred_at: Column[AwareDateTime | None] = column(AwareDateTime)
-    due_time: Column[datetime.time | None] = column(datetime.time)
+    due_time: Column[NaiveTime | None] = column(NaiveTime)
     payload: Column[object | None] = column(object)
     origin: Column[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None] = column(ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface)
     computed: Column[int | None] = column(int)
@@ -49,7 +49,7 @@ class RelqCodegenValuesInsert(TypedDict):
     states: NotRequired[list[RelqIntegrationState]]
     price: NotRequired[decimal.Decimal]
     occurred_at: NotRequired[AwareDateTime | None]
-    due_time: NotRequired[datetime.time | None]
+    due_time: NotRequired[NaiveTime | None]
     payload: NotRequired[object | None]
     origin: NotRequired[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None]
 
@@ -60,7 +60,7 @@ class RelqCodegenValuesUpdate(TypedDict):
     states: NotRequired[list[RelqIntegrationState]]
     price: NotRequired[decimal.Decimal]
     occurred_at: NotRequired[AwareDateTime | None]
-    due_time: NotRequired[datetime.time | None]
+    due_time: NotRequired[NaiveTime | None]
     payload: NotRequired[object | None]
     origin: NotRequired[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None]
 
@@ -82,14 +82,14 @@ class RelqCodegenValuesRow:
     states: list[RelqIntegrationState]
     price: decimal.Decimal
     occurred_at: AwareDateTime | None
-    due_time: datetime.time | None
+    due_time: NaiveTime | None
     payload: object | None
     origin: ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None
     computed: int | None
 
 relq_codegen_values_row_adapter = row_adapter(
     RelqCodegenValuesRow,
-    decoders=(int_decoder(), int_decoder(), nullable(uuid_decoder()), list_decoder(enum_decoder(RelqIntegrationState)), decimal_decoder(), nullable(aware_datetime_decoder()), nullable(time_decoder()), nullable(json_decoder()), nullable(inet_decoder()), nullable(int_decoder())),
+    decoders=(int_decoder(), int_decoder(), nullable(uuid_decoder()), list_decoder(enum_decoder(RelqIntegrationState)), decimal_decoder(), nullable(aware_datetime_decoder()), nullable(naive_time_decoder()), nullable(json_decoder()), nullable(inet_decoder()), nullable(int_decoder())),
 )
 class RelqIntegrationArchive(Table):
     id: Column[int] = column(int)

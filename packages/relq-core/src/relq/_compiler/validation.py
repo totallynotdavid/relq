@@ -32,9 +32,23 @@ from relq._ast import (
     SelectNode,
     StarNode,
     TableSourceNode,
-    TemporalBinaryNode,
-    TemporalCurrentNode,
-    TemporalFunctionNode,
+    TemporalAgeNode,
+    TemporalArithmeticNode,
+    TemporalBinNode,
+    TemporalClockNode,
+    TemporalDifferenceNode,
+    TemporalEpochNode,
+    TemporalExtractNode,
+    TemporalIntervalScaleNode,
+    TemporalIntervalUnaryNode,
+    TemporalJustifyNode,
+    TemporalMakeDateNode,
+    TemporalMakeIntervalNode,
+    TemporalMakeTimeNode,
+    TemporalMakeTimestampNode,
+    TemporalOverlapsNode,
+    TemporalTimezoneNode,
+    TemporalTruncNode,
     UnaryNode,
     UpdateNode,
     ValueNode,
@@ -57,10 +71,12 @@ def validate_query(node: QueryNode, dialect: Dialect) -> None:
             if not node.bounded:
                 raise ValueError("UPDATE requires where() or explicit all_rows()")
             validate_dml_sources(node.table, node.where, node.values, node.returning)
+            _validate_dml_dialect(node, dialect)
         case DeleteNode():
             if not node.bounded:
                 raise ValueError("DELETE requires where() or explicit all_rows()")
             validate_dml_sources(node.table, node.where, (), node.returning)
+            _validate_dml_dialect(node, dialect)
 
 
 def _validate_select(
@@ -125,6 +141,7 @@ def _validate_insert(node: InsertNode, dialect: Dialect) -> None:
     if isinstance(node.source, DefaultValuesSourceNode) and node.conflict is not None:
         raise ValueError("INSERT DEFAULT VALUES cannot use ON CONFLICT")
     validate_insert(node)
+    _validate_insert_dialect(node, dialect)
 
 
 def validate_sources(node: SelectNode, outer_sources: frozenset[str] = frozenset()) -> None:
@@ -215,8 +232,6 @@ def validate_locks(node: SelectNode) -> None:
 
 
 def _validate_dialect_nodes(node: SelectNode, dialect: Dialect) -> None:
-    if dialect.name == "postgres":
-        return
     for expression in (
         *node.selections,
         node.where,
@@ -224,12 +239,139 @@ def _validate_dialect_nodes(node: SelectNode, dialect: Dialect) -> None:
         node.having,
         *(order.expression for order in node.order_by),
     ):
-        if expression is not None and any(
-            isinstance(item, (TemporalCurrentNode, TemporalBinaryNode)) for item in walk(expression)
-        ):
-            raise ValueError(f"{dialect.name} does not support PostgreSQL temporal expressions")
-    if node.locks:
+        if expression is not None:
+            _validate_expression_dialect(expression, dialect)
+    if node.locks and dialect.name != "postgres":
         raise ValueError(f"{dialect.name} does not support PostgreSQL row locking")
+
+
+def _validate_expression_dialect(expression: Node, dialect: Dialect) -> None:
+    temporal_types = (
+        TemporalClockNode,
+        TemporalMakeDateNode,
+        TemporalMakeTimeNode,
+        TemporalMakeTimestampNode,
+        TemporalMakeIntervalNode,
+        TemporalEpochNode,
+        TemporalArithmeticNode,
+        TemporalDifferenceNode,
+        TemporalIntervalUnaryNode,
+        TemporalIntervalScaleNode,
+        TemporalTimezoneNode,
+        TemporalExtractNode,
+        TemporalTruncNode,
+        TemporalBinNode,
+        TemporalAgeNode,
+        TemporalOverlapsNode,
+        TemporalJustifyNode,
+    )
+    for item in walk(expression):
+        if not isinstance(item, temporal_types):
+            continue
+        if dialect.name != "postgres":
+            raise ValueError(f"{dialect.name} does not support PostgreSQL temporal expressions")
+        _validate_temporal_node(item)
+
+
+def _validate_temporal_node(node: Node) -> None:
+    """Validate compiler-owned temporal tokens before dialect rendering."""
+    match node:
+        case TemporalClockNode(kind) if kind not in {
+            "transaction_timestamp",
+            "statement_timestamp",
+            "clock_timestamp",
+            "current_date",
+            "current_time",
+            "local_time",
+            "local_timestamp",
+        }:
+            raise ValueError(f"unsupported temporal clock: {kind!r}")
+        case TemporalMakeIntervalNode(components):
+            allowed = {"years", "months", "weeks", "days", "hours", "mins", "secs"}
+            names = tuple(name for name, _ in components)
+            if any(name not in allowed for name in names):
+                raise ValueError("unsupported make_interval component")
+            if len(names) != len(set(names)):
+                raise ValueError("make_interval components must be unique")
+        case TemporalExtractNode(field, _) if field not in {
+            "century",
+            "day",
+            "decade",
+            "dow",
+            "doy",
+            "epoch",
+            "hour",
+            "isodow",
+            "isoyear",
+            "microseconds",
+            "millennium",
+            "milliseconds",
+            "minute",
+            "month",
+            "quarter",
+            "second",
+            "timezone",
+            "timezone_hour",
+            "timezone_minute",
+            "week",
+            "year",
+        }:
+            raise ValueError(f"unsupported extract field: {field!r}")
+        case TemporalTruncNode(unit, _, _) if unit not in {
+            "microseconds",
+            "milliseconds",
+            "second",
+            "minute",
+            "hour",
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year",
+            "decade",
+            "century",
+            "millennium",
+        }:
+            raise ValueError(f"unsupported date_trunc unit: {unit!r}")
+        case TemporalArithmeticNode(_, operator, _) if operator not in {"+", "-"}:
+            raise ValueError(f"unsupported temporal arithmetic operator: {operator!r}")
+        case TemporalIntervalScaleNode(_, operator, _) if operator not in {"*", "/"}:
+            raise ValueError(f"unsupported interval scale operator: {operator!r}")
+        case TemporalJustifyNode(kind, _) if kind not in {
+            "justify_days",
+            "justify_hours",
+            "justify_interval",
+        }:
+            raise ValueError(f"unsupported interval justification: {kind!r}")
+        case _:
+            pass
+
+
+def _validate_dml_dialect(node: UpdateNode | DeleteNode, dialect: Dialect) -> None:
+    expressions: list[Node] = []
+    if node.where is not None:
+        expressions.append(node.where)
+    if isinstance(node, UpdateNode):
+        expressions.extend(value for _, value in node.values)
+    expressions.extend(node.returning)
+    for expression in expressions:
+        _validate_expression_dialect(expression, dialect)
+        _validate_nested_selects(expression, dialect, frozenset({node.table.reference}))
+
+
+def _validate_insert_dialect(node: InsertNode, dialect: Dialect) -> None:
+    if isinstance(node.source, InsertSelectSourceNode):
+        _validate_select(node.source.query, dialect)
+    expressions: list[Node] = [*node.returning]
+    if isinstance(node.source, InsertValuesSourceNode):
+        expressions.extend(value for _, value in node.source.values)
+    elif isinstance(node.source, InsertRowsSourceNode):
+        expressions.extend(value for row in node.source.rows for _, value in row)
+    if node.conflict is not None:
+        expressions.extend(value for _, value in node.conflict.update_values)
+    for expression in expressions:
+        _validate_expression_dialect(expression, dialect)
+        _validate_nested_selects(expression, dialect, frozenset({node.table.reference}))
 
 
 def _validate_nested_selects(
@@ -272,13 +414,65 @@ def _nullable_result_sources(node: Node) -> set[str]:
             return _nullable_result_sources(expression)
         case BinaryNode(left, operator, right) if operator in {"+", "-", "*", "/"}:
             return _nullable_result_sources(left) | _nullable_result_sources(right)
-        case TemporalBinaryNode(left, _, right):
+        case TemporalArithmeticNode(timestamp, _, interval):
+            return _nullable_result_sources(timestamp) | _nullable_result_sources(interval)
+        case TemporalDifferenceNode(left, right) | TemporalAgeNode(left, right):
             return _nullable_result_sources(left) | _nullable_result_sources(right)
-        case TemporalFunctionNode(_, arguments):
+        case TemporalMakeDateNode(year, month, day):
+            return (
+                _nullable_result_sources(year)
+                | _nullable_result_sources(month)
+                | _nullable_result_sources(day)
+            )
+        case TemporalMakeTimeNode(hour, minute, second):
+            return (
+                _nullable_result_sources(hour)
+                | _nullable_result_sources(minute)
+                | _nullable_result_sources(second)
+            )
+        case TemporalMakeTimestampNode(year, month, day, hour, minute, second):
+            return (
+                _nullable_result_sources(year)
+                | _nullable_result_sources(month)
+                | _nullable_result_sources(day)
+                | _nullable_result_sources(hour)
+                | _nullable_result_sources(minute)
+                | _nullable_result_sources(second)
+            )
+        case TemporalMakeIntervalNode(components):
             result: set[str] = set()
-            for argument in arguments:
+            for _, argument in components:
                 result.update(_nullable_result_sources(argument))
             return result
+        case (
+            TemporalEpochNode(seconds)
+            | TemporalIntervalUnaryNode(seconds)
+            | TemporalJustifyNode(_, seconds)
+        ):
+            return _nullable_result_sources(seconds)
+        case TemporalIntervalScaleNode(interval, _, factor):
+            return _nullable_result_sources(interval) | _nullable_result_sources(factor)
+        case TemporalTimezoneNode(expression, zone):
+            return _nullable_result_sources(expression) | _nullable_result_sources(zone)
+        case TemporalExtractNode(_, expression):
+            return _nullable_result_sources(expression)
+        case TemporalTruncNode(_, expression, zone):
+            return _nullable_result_sources(expression) | (
+                set() if zone is None else _nullable_result_sources(zone)
+            )
+        case TemporalBinNode(stride, expression, origin):
+            return (
+                _nullable_result_sources(stride)
+                | _nullable_result_sources(expression)
+                | _nullable_result_sources(origin)
+            )
+        case TemporalOverlapsNode(left_start, left_end, right_start, right_end):
+            return (
+                _nullable_result_sources(left_start)
+                | _nullable_result_sources(left_end)
+                | _nullable_result_sources(right_start)
+                | _nullable_result_sources(right_end)
+            )
         case CaseNode(branches, otherwise):
             result = _nullable_result_sources(otherwise)
             for _, value in branches:
@@ -286,7 +480,7 @@ def _nullable_result_sources(node: Node) -> set[str]:
             return result
         case (
             ValueNode()
-            | TemporalCurrentNode()
+            | TemporalClockNode()
             | UnaryNode()
             | FunctionNode()
             | AggregateNode()
