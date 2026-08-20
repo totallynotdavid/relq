@@ -1,0 +1,5 @@
+{
+  "extends": "../../pyproject.toml",
+  "include": ["bad_ast_boundary.py"],
+  "exclude": []
+}

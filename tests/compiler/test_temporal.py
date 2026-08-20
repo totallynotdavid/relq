@@ -62,6 +62,7 @@ from relq._ast import (
     TemporalTruncTimestamptzNode,
 )
 from relq._compiler import compile_postgres, compile_sqlite
+from relq._node_value import node_of
 
 
 class TemporalRows(Table):
@@ -83,10 +84,10 @@ def test_temporal_ast_has_only_valid_timestamp_and_truncation_shapes() -> None:
     truncation = date_trunc(TruncUnit.DAY, temporal_rows.naive_value)
     zoned_truncation = date_trunc(TruncUnit.DAY, temporal_rows.aware_value, "America/Lima")
 
-    assert isinstance(timestamp.node(), TemporalMakeTimestampNode)
-    assert isinstance(timestamptz.node(), TemporalMakeTimestamptzNode)
-    assert isinstance(truncation.node(), TemporalTruncNode)
-    assert isinstance(zoned_truncation.node(), TemporalTruncTimestamptzNode)
+    assert isinstance(node_of(timestamp), TemporalMakeTimestampNode)
+    assert isinstance(node_of(timestamptz), TemporalMakeTimestamptzNode)
+    assert isinstance(node_of(truncation), TemporalTruncNode)
+    assert isinstance(node_of(zoned_truncation), TemporalTruncTimestamptzNode)
 
 
 def test_temporal_nodes_cover_the_complete_closed_builder_surface() -> None:

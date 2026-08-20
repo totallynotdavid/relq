@@ -18,6 +18,7 @@ from relq._ast import (
     SelectNode,
     StarNode,
 )
+from relq._node_value import expression_node, node_of
 from relq._query import Query, extract_query, new_query, select_node
 from relq.expressions import (
     BooleanExpression,
@@ -29,6 +30,7 @@ from relq.expressions import (
     Source,
     Table,
 )
+from relq.expressions.relations import derived_table, source_node, table_node
 from relq.rows import RowAdapter, row_adapter
 
 Row_co = TypeVar("Row_co", covariant=True)
@@ -43,7 +45,7 @@ class _SelectQuery[Row_co](Query[Row_co]):
         node = select_node(self)
         if node.from_source is not None:
             raise ValueError("from_() can only be specified once")
-        return self._with_node(replace(node, from_source=source.node()))
+        return self._with_node(replace(node, from_source=source_node(source)))
 
     def inner_join(self, source: Source, *, on: BooleanExpression) -> Self:
         return self._join(source, on, "inner")
@@ -58,21 +60,21 @@ class _SelectQuery[Row_co](Query[Row_co]):
         return self._join(source, on, "full")
 
     def cross_join(self, source: Source) -> Self:
-        join = JoinNode(source.node(), StarNode(), "cross")
+        join = JoinNode(source_node(source), StarNode(), "cross")
         node = select_node(self)
         return self._with_node(replace(node, joins=(*node.joins, join)))
 
     def _join(self, source: Source, on: BooleanExpression, kind: str) -> Self:
-        join = JoinNode(source.node(), on.node(), kind)
+        join = JoinNode(source_node(source), node_of(on), kind)
         node = select_node(self)
         return self._with_node(replace(node, joins=(*node.joins, join)))
 
     def where(self, predicate: BooleanExpression) -> Self:
         query_node = select_node(self)
         node = (
-            predicate.node()
+            node_of(predicate)
             if query_node.where is None
-            else BinaryNode(query_node.where, "and", predicate.node())
+            else BinaryNode(query_node.where, "and", node_of(predicate))
         )
         return self._with_node(replace(query_node, where=node))
 
@@ -81,15 +83,15 @@ class _SelectQuery[Row_co](Query[Row_co]):
             raise ValueError("group_by requires at least one expression")
         node = select_node(self)
         return self._with_node(
-            replace(node, group_by=(*node.group_by, *(x.node() for x in expressions)))
+            replace(node, group_by=(*node.group_by, *(node_of(x) for x in expressions)))
         )
 
     def having(self, predicate: BooleanExpression) -> Self:
         query_node = select_node(self)
         node = (
-            predicate.node()
+            node_of(predicate)
             if query_node.having is None
-            else BinaryNode(query_node.having, "and", predicate.node())
+            else BinaryNode(query_node.having, "and", node_of(predicate))
         )
         return self._with_node(replace(query_node, having=node))
 
@@ -101,7 +103,7 @@ class _SelectQuery[Row_co](Query[Row_co]):
             raise ValueError("order_by requires at least one Order")
         node = select_node(self)
         return self._with_node(
-            replace(node, order_by=(*node.order_by, *(x.node() for x in orders)))
+            replace(node, order_by=(*node.order_by, *(node_of(x) for x in orders)))
         )
 
     def limit(self, amount: int) -> Self:
@@ -123,7 +125,7 @@ class _SelectQuery[Row_co](Query[Row_co]):
     def as_[Relation: DerivedTable](self, relation: type[Relation], alias: str) -> Relation:
         node = select_node(self)
         _validate_output_schema(node, relation.output_names())
-        return relation(DerivedSourceNode(node, alias), alias)
+        return derived_table(relation, DerivedSourceNode(node, alias), alias)
 
     def _compound(self, other: Self, operator: CompoundOperator) -> Self:
         _validate_compound_result_shape(self, other)
@@ -166,7 +168,7 @@ class _SelectQuery[Row_co](Query[Row_co]):
         strength: Literal["update", "no key update", "share", "key share"],
         tables: tuple[Table, ...],
     ) -> Self:
-        sources = tuple(table.node() for table in tables)
+        sources = tuple(table_node(table) for table in tables)
         node = select_node(self)
         return self._with_node(
             replace(node, locks=(*node.locks, LockClauseNode(strength, sources)))
@@ -300,9 +302,9 @@ def select(first: object, *rest: object, **named: object) -> object:
         )
     nodes: list[Node] = []
     for expression in expressions:
-        if not isinstance(expression, Expr):
+        if not isinstance(expression, Expression):
             raise TypeError("select accepts only SQL expressions")
-        nodes.append(expression.node())
+        nodes.append(expression_node(expression))
     result: SelectQuery[tuple[object, ...]] = new_query(SelectQuery, SelectNode(tuple(nodes)))
     return result
 
@@ -337,7 +339,7 @@ def select_model[Model](
         )
     return new_query(
         ModelSelectQuery,
-        SelectNode(tuple(expression.node() for expression in expressions)),
+        SelectNode(tuple(expression_node(expression) for expression in expressions)),
         adapter,
     )
 

@@ -323,7 +323,7 @@ class ExcludedNode:
 @dataclass(frozen=True, slots=True)
 class OrderNode:
     expression: Node
-    direction: str
+    direction: Literal["asc", "desc"]
     nulls: NullPlacement | None = None
 
 

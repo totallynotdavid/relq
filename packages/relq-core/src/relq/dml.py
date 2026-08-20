@@ -25,8 +25,10 @@ from relq._ast import (
     UpdateNode,
     ValueNode,
 )
+from relq._node_value import expression_node, node_of
 from relq._query import Query, extract_query, new_query, select_node
 from relq.expressions import BooleanExpression, Column, Expr, Expression, Table
+from relq.expressions.relations import table_node
 from relq.query import SelectQuery
 from relq.rows import RowAdapter, row_adapter
 
@@ -40,7 +42,7 @@ def _values(table: Table, entries: dict[str, object]) -> tuple[tuple[str, Node],
         names = ", ".join(sorted(unknown))
         raise ValueError(f"unknown column(s) for {table.table_name}: {names}")
     return tuple(
-        (name, item.node() if isinstance(item, Expr) else ValueNode(item))
+        (name, expression_node(item) if isinstance(item, Expression) else ValueNode(item))
         for name, item in entries.items()
     )
 
@@ -52,9 +54,10 @@ def _target_column_names(
         raise ValueError("insert-from-select requires at least one target column")
     names: list[str] = []
     for column in columns:
+        raw_column: object = column
         if not isinstance(column, Column):
             raise TypeError("target and conflict arguments must be table columns")
-        node = column.node()
+        node = expression_node(_expression(raw_column))
         if not isinstance(node, ColumnNode):
             raise TypeError("target and conflict arguments must be table columns")
         if node.source != table.reference or node.name not in table.column_names():
@@ -70,6 +73,12 @@ Returns = TypeVar("Returns", Literal[False], Literal[True])
 Bounded = TypeVar("Bounded", Literal[False], Literal[True])
 
 
+def _expression(value: object) -> Expression:
+    if not isinstance(value, Expression):
+        raise TypeError("expected a SQL expression")
+    return value
+
+
 def _model_returning[Model](
     model: type[Model] | RowAdapter[Model], expressions: tuple[Expression, ...]
 ) -> tuple[tuple[Node, ...], RowAdapter[Model]]:
@@ -81,7 +90,7 @@ def _model_returning[Model](
             f"{adapter.model_name} requires {adapter.arity} RETURNING expressions; "
             f"received {len(expressions)}"
         )
-    return tuple(expression.node() for expression in expressions), adapter
+    return tuple(expression_node(expression) for expression in expressions), adapter
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -229,9 +238,9 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
             raise ValueError("returning supports at most six expressions")
         nodes: list[Node] = []
         for expression in expressions:
-            if not isinstance(expression, Expr):
+            if not isinstance(expression, Expression):
                 raise TypeError("returning accepts only SQL expressions")
-            nodes.append(expression.node())
+            nodes.append(expression_node(expression))
         return new_query(
             InsertQuery, replace(self._node, returning=tuple(nodes)), table=self._table
         )
@@ -290,7 +299,7 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
     def where(self, predicate: BooleanExpression) -> UpdateQuery[Row_co, Returns, Literal[True]]:
         return new_query(
             UpdateQuery,
-            replace(self._node, where=predicate.node(), bounded=True),
+            replace(self._node, where=node_of(predicate), bounded=True),
             table=self._table,
         )
 
@@ -344,9 +353,9 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
             raise ValueError("returning supports at most six expressions")
         nodes: list[Node] = []
         for expression in expressions:
-            if not isinstance(expression, Expr):
+            if not isinstance(expression, Expression):
                 raise TypeError("returning accepts only SQL expressions")
-            nodes.append(expression.node())
+            nodes.append(expression_node(expression))
         return new_query(
             UpdateQuery, replace(self._node, returning=tuple(nodes)), table=self._table
         )
@@ -377,7 +386,7 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
     def where(self, predicate: BooleanExpression) -> DeleteQuery[Row_co, Returns, Literal[True]]:
         return new_query(
             DeleteQuery,
-            replace(self._node, where=predicate.node(), bounded=True),
+            replace(self._node, where=node_of(predicate), bounded=True),
             table=self._table,
         )
 
@@ -431,9 +440,9 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
             raise ValueError("returning supports at most six expressions")
         nodes: list[Node] = []
         for expression in expressions:
-            if not isinstance(expression, Expr):
+            if not isinstance(expression, Expression):
                 raise TypeError("returning accepts only SQL expressions")
-            nodes.append(expression.node())
+            nodes.append(expression_node(expression))
         return new_query(
             DeleteQuery, replace(self._node, returning=tuple(nodes)), table=self._table
         )
@@ -453,15 +462,15 @@ class ModelDeleteQuery[Model](Query[Model]):
 
 
 def insert_into(table: Table) -> InsertQuery[tuple[()], Literal[False]]:
-    return new_query(InsertQuery, InsertNode(table.node()), table=table)
+    return new_query(InsertQuery, InsertNode(table_node(table)), table=table)
 
 
 def update(table: Table) -> UpdateQuery[tuple[()], Literal[False], Literal[False]]:
-    return new_query(UpdateQuery, UpdateNode(table.node(), ()), table=table)
+    return new_query(UpdateQuery, UpdateNode(table_node(table), ()), table=table)
 
 
 def delete_from(table: Table) -> DeleteQuery[tuple[()], Literal[False], Literal[False]]:
-    return new_query(DeleteQuery, DeleteNode(table.node()), table=table)
+    return new_query(DeleteQuery, DeleteNode(table_node(table)), table=table)
 
 
 def _insert_node[Returns: (Literal[False], Literal[True])](

@@ -1,21 +1,15 @@
 """Closed ordering grammar shared by query and window clauses."""
 
-from dataclasses import dataclass, replace
 from typing import Literal
 
 from relq._ast import Node, OrderNode
+from relq._node_value import NodeValue, construction_token, initialize_node, node_of
 
 
-@dataclass(frozen=True, slots=True)
-class Order:
-    _node: OrderNode
+class Order(NodeValue[OrderNode]):
+    """A closed ordering value created from an expression."""
 
-    @classmethod
-    def from_expression(cls, expression: Node, direction: Literal["asc", "desc"]) -> Order:
-        return cls(OrderNode(expression, direction))
-
-    def node(self) -> OrderNode:
-        return self._node
+    __slots__ = ()
 
     def nulls_first(self) -> Order:
         return self._with_nulls("first")
@@ -24,6 +18,17 @@ class Order:
         return self._with_nulls("last")
 
     def _with_nulls(self, placement: Literal["first", "last"]) -> Order:
-        if self._node.nulls is not None:
+        node = node_of(self)
+        if node.nulls is not None:
             raise ValueError("an ORDER BY expression can have only one NULL placement")
-        return replace(self, _node=replace(self._node, nulls=placement))
+        return order_from_expression(node.expression, node.direction, placement)
+
+
+def order_from_expression(
+    expression: Node,
+    direction: Literal["asc", "desc"],
+    nulls: Literal["first", "last"] | None = None,
+) -> Order:
+    order = Order(construction_token())
+    initialize_node(order, OrderNode(expression, direction, nulls))
+    return order

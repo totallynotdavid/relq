@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 import decimal
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, overload
 
 from relq._ast import (
@@ -41,9 +40,16 @@ from relq._ast import (
     UnaryNode,
     ValueNode,
 )
+from relq._node_value import (
+    NodeValue,
+    construction_token,
+    expression_node,
+    initialize_node,
+    node_of,
+)
 from relq._query import select_node
 from relq._temporal import ExtractField, TruncUnit
-from relq.expressions.ordering import Order
+from relq.expressions.ordering import Order, order_from_expression
 from relq.rows import AwareDateTime, AwareTime, Interval, NaiveDateTime, NaiveTime
 
 if TYPE_CHECKING:
@@ -55,44 +61,40 @@ type AverageResult = float | decimal.Decimal | None
 T = TypeVar("T")
 
 
-class Expression(Protocol):
-    """Non-generic structural view used where a declared model owns shape."""
+class Expression(NodeValue[Node]):
+    """Nominal base for a closed SQL expression value."""
 
-    def node(self) -> Node: ...
+    __slots__ = ()
 
 
-class BooleanExpression(Protocol):
+class BooleanExpression(Expression):
     """A SQL truth value accepted by filtering clauses."""
 
-    def node(self) -> Node: ...
+    __slots__ = ()
 
 
-@dataclass(frozen=True, slots=True)
-class Expr(Generic[T]):  # noqa: UP046 -- expressions require an invariant value parameter.
+class Expr(Expression, Generic[T]):  # noqa: UP046 -- expressions require an invariant value parameter.
     """A SQL expression whose evaluated value has Python type ``T``."""
 
-    _node: Node
-
-    def node(self) -> Node:
-        return self._node
+    __slots__ = ()
 
     def eq(self, other: object) -> NullablePredicate:
-        return _comparison_node(self.node(), "=", other)
+        return _comparison_node(node_of(self), "=", other)
 
     def ne(self, other: object) -> NullablePredicate:
-        return _comparison_node(self.node(), "<>", other)
+        return _comparison_node(node_of(self), "<>", other)
 
     def lt(self, other: T | Expr[T]) -> NullablePredicate:
-        return NullablePredicate(BinaryNode(self.node(), "<", _node(other)))
+        return _nullable_predicate(BinaryNode(node_of(self), "<", _node(other)))
 
     def lte(self, other: T | Expr[T]) -> NullablePredicate:
-        return NullablePredicate(BinaryNode(self.node(), "<=", _node(other)))
+        return _nullable_predicate(BinaryNode(node_of(self), "<=", _node(other)))
 
     def gt(self, other: T | Expr[T]) -> NullablePredicate:
-        return NullablePredicate(BinaryNode(self.node(), ">", _node(other)))
+        return _nullable_predicate(BinaryNode(node_of(self), ">", _node(other)))
 
     def gte(self, other: T | Expr[T]) -> NullablePredicate:
-        return NullablePredicate(BinaryNode(self.node(), ">=", _node(other)))
+        return _nullable_predicate(BinaryNode(node_of(self), ">=", _node(other)))
 
     def in_(self, values: Iterable[T] | SelectQuery[tuple[T]]) -> NullablePredicate:
         return _membership(self, values, False)
@@ -101,50 +103,51 @@ class Expr(Generic[T]):  # noqa: UP046 -- expressions require an invariant value
         return _membership(self, values, True)
 
     def between(self, lower: T | Expr[T], upper: T | Expr[T]) -> NullablePredicate:
-        return NullablePredicate(BetweenNode(self.node(), _node(lower), _node(upper)))
+        return _nullable_predicate(BetweenNode(node_of(self), _node(lower), _node(upper)))
 
     def not_between(self, lower: T | Expr[T], upper: T | Expr[T]) -> NullablePredicate:
-        return NullablePredicate(BetweenNode(self.node(), _node(lower), _node(upper), negated=True))
+        return _nullable_predicate(
+            BetweenNode(node_of(self), _node(lower), _node(upper), negated=True)
+        )
 
     def is_null(self) -> Predicate:
-        return Predicate(UnaryNode("is null", self.node()))
+        return _predicate(UnaryNode("is null", node_of(self)))
 
     def is_not_null(self) -> Predicate:
-        return Predicate(UnaryNode("is not null", self.node()))
+        return _predicate(UnaryNode("is not null", node_of(self)))
 
     def is_true(self: Expr[bool] | Expr[bool | None]) -> Predicate:
-        return Predicate(UnaryNode("is true", self.node()))
+        return _predicate(UnaryNode("is true", node_of(self)))
 
     def is_false(self: Expr[bool] | Expr[bool | None]) -> Predicate:
-        return Predicate(UnaryNode("is false", self.node()))
+        return _predicate(UnaryNode("is false", node_of(self)))
 
     def is_not_true(self: Expr[bool] | Expr[bool | None]) -> Predicate:
-        return Predicate(UnaryNode("is not true", self.node()))
+        return _predicate(UnaryNode("is not true", node_of(self)))
 
     def is_not_false(self: Expr[bool] | Expr[bool | None]) -> Predicate:
-        return Predicate(UnaryNode("is not false", self.node()))
+        return _predicate(UnaryNode("is not false", node_of(self)))
 
     def asc(self) -> Order:
-        return Order.from_expression(self.node(), "asc")
+        return order_from_expression(node_of(self), "asc")
 
     def desc(self) -> Order:
-        return Order.from_expression(self.node(), "desc")
+        return order_from_expression(node_of(self), "desc")
 
     def as_(self, alias: str) -> Expr[T]:
         if not alias:
             raise ValueError("expression alias must not be empty")
-        return Expr(AliasNode(self.node(), alias))
+        return _expr(AliasNode(node_of(self), alias))
 
     def nullable(self) -> Expr[T | None]:
         """Declare that this selected result may be SQL ``NULL``."""
-        return Expr(NullableResultNode(self.node()))
+        return _expr(NullableResultNode(node_of(self)))
 
     def like(self: Expr[str], pattern: str | Expr[str]) -> NullablePredicate:
-        return NullablePredicate(BinaryNode(self.node(), "like", _node(pattern)))
+        return _nullable_predicate(BinaryNode(node_of(self), "like", _node(pattern)))
 
 
-@dataclass(frozen=True, slots=True)
-class Predicate(Expr[bool]):
+class Predicate(Expr[bool], BooleanExpression):
     """A total SQL truth value that projects as ``bool``."""
 
     def __bool__(self) -> bool:
@@ -157,7 +160,7 @@ class Predicate(Expr[bool]):
     def __and__(self, other: NullablePredicate) -> NullablePredicate: ...
 
     def __and__(self, other: object) -> object:
-        return _combine_truth(self.node(), "and", other)
+        return _combine_truth(node_of(self), "and", other)
 
     @overload
     def __or__(self, other: Predicate) -> Predicate: ...
@@ -166,71 +169,88 @@ class Predicate(Expr[bool]):
     def __or__(self, other: NullablePredicate) -> NullablePredicate: ...
 
     def __or__(self, other: object) -> object:
-        return _combine_truth(self.node(), "or", other)
+        return _combine_truth(node_of(self), "or", other)
 
     def __invert__(self) -> Predicate:
-        return Predicate(UnaryNode("not", self.node()))
+        return _predicate(UnaryNode("not", node_of(self)))
 
 
-@dataclass(frozen=True, slots=True)
-class NullablePredicate(Expr[bool | None]):
+class NullablePredicate(Expr[bool | None], BooleanExpression):
     """A SQL truth value that can become ``UNKNOWN`` and project as NULL."""
 
     def __bool__(self) -> bool:
         raise TypeError("SQL predicates cannot be used as Python booleans; pass them to where()")
 
     def __and__(self, other: BooleanExpression) -> NullablePredicate:
-        return NullablePredicate(BinaryNode(self.node(), "and", other.node()))
+        return _nullable_predicate(BinaryNode(node_of(self), "and", node_of(other)))
 
     def __or__(self, other: BooleanExpression) -> NullablePredicate:
-        return NullablePredicate(BinaryNode(self.node(), "or", other.node()))
+        return _nullable_predicate(BinaryNode(node_of(self), "or", node_of(other)))
 
     def __invert__(self) -> NullablePredicate:
-        return NullablePredicate(UnaryNode("not", self.node()))
+        return _nullable_predicate(UnaryNode("not", node_of(self)))
+
+
+def _expr[T](node: Node) -> Expr[T]:
+    expression = Expr[T](construction_token())
+    initialize_node(expression, node)
+    return expression
+
+
+def _predicate(node: Node) -> Predicate:
+    predicate = Predicate(construction_token())
+    initialize_node(predicate, node)
+    return predicate
+
+
+def _nullable_predicate(node: Node) -> NullablePredicate:
+    predicate = NullablePredicate(construction_token())
+    initialize_node(predicate, node)
+    return predicate
 
 
 def value[T](item: T) -> Expr[T]:
-    return Expr(ValueNode(item))
+    return _expr(ValueNode(item))
 
 
 def transaction_timestamp() -> Expr[AwareDateTime]:
-    return Expr(TemporalClockNode("transaction_timestamp"))
+    return _expr(TemporalClockNode("transaction_timestamp"))
 
 
 def statement_timestamp() -> Expr[AwareDateTime]:
-    return Expr(TemporalClockNode("statement_timestamp"))
+    return _expr(TemporalClockNode("statement_timestamp"))
 
 
 def clock_timestamp() -> Expr[AwareDateTime]:
-    return Expr(TemporalClockNode("clock_timestamp"))
+    return _expr(TemporalClockNode("clock_timestamp"))
 
 
 def current_date() -> Expr[datetime.date]:
-    return Expr(TemporalClockNode("current_date"))
+    return _expr(TemporalClockNode("current_date"))
 
 
 def current_time() -> Expr[AwareTime]:
-    return Expr(TemporalClockNode("current_time"))
+    return _expr(TemporalClockNode("current_time"))
 
 
 def local_time() -> Expr[NaiveTime]:
-    return Expr(TemporalClockNode("local_time"))
+    return _expr(TemporalClockNode("local_time"))
 
 
 def local_timestamp() -> Expr[NaiveDateTime]:
-    return Expr(TemporalClockNode("local_timestamp"))
+    return _expr(TemporalClockNode("local_timestamp"))
 
 
 def make_date(
     year: int | Expr[int], month: int | Expr[int], day: int | Expr[int]
 ) -> Expr[datetime.date]:
-    return Expr(TemporalMakeDateNode(_node(year), _node(month), _node(day)))
+    return _expr(TemporalMakeDateNode(_node(year), _node(month), _node(day)))
 
 
 def make_time(
     hour: int | Expr[int], minute: int | Expr[int], second: float | Expr[float]
 ) -> Expr[NaiveTime]:
-    return Expr(TemporalMakeTimeNode(_node(hour), _node(minute), _node(second)))
+    return _expr(TemporalMakeTimeNode(_node(hour), _node(minute), _node(second)))
 
 
 def make_timestamp(
@@ -241,7 +261,7 @@ def make_timestamp(
     minute: int | Expr[int],
     second: float | Expr[float],
 ) -> Expr[NaiveDateTime]:
-    return Expr(
+    return _expr(
         TemporalMakeTimestampNode(
             _node(year),
             _node(month),
@@ -264,7 +284,7 @@ def make_timestamptz(
 ) -> Expr[AwareDateTime]:
     if zone is not None and type(zone) is not str and not isinstance(zone, Expr):
         raise TypeError("make_timestamptz time zone must be text or a SQL text expression")
-    return Expr(
+    return _expr(
         TemporalMakeTimestamptzNode(
             _node(year),
             _node(month),
@@ -299,11 +319,11 @@ def make_interval(
     components = tuple(
         (name, _node(value)) for name, value in values if isinstance(value, Expr) or value != 0
     )
-    return Expr(TemporalMakeIntervalNode(components))
+    return _expr(TemporalMakeIntervalNode(components))
 
 
 def to_timestamp(seconds: float | Expr[float]) -> Expr[AwareDateTime]:
-    return Expr(TemporalEpochNode(_node(seconds)))
+    return _expr(TemporalEpochNode(_node(seconds)))
 
 
 @overload
@@ -318,19 +338,19 @@ def age(
     left: Expr[NaiveDateTime] | Expr[AwareDateTime],
     right: Expr[NaiveDateTime] | Expr[AwareDateTime],
 ) -> Expr[Interval]:
-    return Expr(TemporalAgeNode(left.node(), right.node()))
+    return _expr(TemporalAgeNode(node_of(left), node_of(right)))
 
 
 def justify_days(interval: Interval | Expr[Interval]) -> Expr[Interval]:
-    return Expr(TemporalJustifyNode("justify_days", _node(interval)))
+    return _expr(TemporalJustifyNode("justify_days", _node(interval)))
 
 
 def justify_hours(interval: Interval | Expr[Interval]) -> Expr[Interval]:
-    return Expr(TemporalJustifyNode("justify_hours", _node(interval)))
+    return _expr(TemporalJustifyNode("justify_hours", _node(interval)))
 
 
 def justify_interval(interval: Interval | Expr[Interval]) -> Expr[Interval]:
-    return Expr(TemporalJustifyNode("justify_interval", _node(interval)))
+    return _expr(TemporalJustifyNode("justify_interval", _node(interval)))
 
 
 def add_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
@@ -340,7 +360,7 @@ def add_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
 
     SQLite compilation rejects this closed PostgreSQL-only operation.
     """
-    return Expr(TemporalArithmeticNode(timestamp.node(), "+", _node(delta)))
+    return _expr(TemporalArithmeticNode(node_of(timestamp), "+", _node(delta)))
 
 
 def subtract_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
@@ -350,12 +370,12 @@ def subtract_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
 
     SQLite compilation rejects this closed PostgreSQL-only operation.
     """
-    return Expr(TemporalArithmeticNode(timestamp.node(), "-", _node(delta)))
+    return _expr(TemporalArithmeticNode(node_of(timestamp), "-", _node(delta)))
 
 
 def date_difference(left: Expr[datetime.date], right: Expr[datetime.date]) -> Expr[int]:
     """Return PostgreSQL's integral day difference between two dates."""
-    return Expr(TemporalDifferenceNode(left.node(), right.node()))
+    return _expr(TemporalDifferenceNode(node_of(left), node_of(right)))
 
 
 @overload
@@ -369,7 +389,7 @@ def time_difference(left: Expr[AwareTime], right: Expr[AwareTime]) -> Expr[Inter
 def time_difference(
     left: Expr[NaiveTime] | Expr[AwareTime], right: Expr[NaiveTime] | Expr[AwareTime]
 ) -> Expr[Interval]:
-    return Expr(TemporalDifferenceNode(left.node(), right.node()))
+    return _expr(TemporalDifferenceNode(node_of(left), node_of(right)))
 
 
 @overload
@@ -388,23 +408,23 @@ def timestamp_difference(
     left: Expr[NaiveDateTime] | Expr[AwareDateTime],
     right: Expr[NaiveDateTime] | Expr[AwareDateTime],
 ) -> Expr[Interval]:
-    return Expr(TemporalDifferenceNode(left.node(), right.node()))
+    return _expr(TemporalDifferenceNode(node_of(left), node_of(right)))
 
 
 def negate_interval(interval: Interval | Expr[Interval]) -> Expr[Interval]:
-    return Expr(TemporalIntervalUnaryNode(_node(interval)))
+    return _expr(TemporalIntervalUnaryNode(_node(interval)))
 
 
 def multiply_interval(
     interval: Interval | Expr[Interval], factor: float | Expr[int] | Expr[float]
 ) -> Expr[Interval]:
-    return Expr(TemporalIntervalScaleNode(_node(interval), "*", _node(factor)))
+    return _expr(TemporalIntervalScaleNode(_node(interval), "*", _node(factor)))
 
 
 def divide_interval(
     interval: Interval | Expr[Interval], factor: float | Expr[int] | Expr[float]
 ) -> Expr[Interval]:
-    return Expr(TemporalIntervalScaleNode(_node(interval), "/", _node(factor)))
+    return _expr(TemporalIntervalScaleNode(_node(interval), "/", _node(factor)))
 
 
 @overload
@@ -422,11 +442,11 @@ def at_time_zone(expression: Expr[AwareTime], zone: str | Expr[str]) -> Expr[Awa
 def at_time_zone(
     expression: object, zone: str | Expr[str]
 ) -> Expr[NaiveDateTime] | Expr[AwareDateTime] | Expr[AwareTime]:
-    if not isinstance(expression, Expr):
+    if not isinstance(expression, Expression):
         raise TypeError("AT TIME ZONE requires a SQL temporal expression")
     if type(zone) is not str and not isinstance(zone, Expr):
         raise TypeError("AT TIME ZONE requires a text zone")
-    return Expr(TemporalTimezoneNode(expression.node(), _node(zone)))
+    return _expr(TemporalTimezoneNode(expression_node(expression), _node(zone)))
 
 
 @overload
@@ -455,7 +475,7 @@ def extract(
 ) -> Expr[decimal.Decimal]:
     if type(field) is not ExtractField:
         raise TypeError("extract requires an ExtractField")
-    return Expr(TemporalExtractNode(field.value, expression.node()))
+    return _expr(TemporalExtractNode(field.value, node_of(expression)))
 
 
 @overload
@@ -486,11 +506,11 @@ def date_trunc(
     if zone is not None and type(zone) is not str and not isinstance(zone, Expr):
         raise TypeError("date_trunc time zone must be text or a SQL text expression")
     node = (
-        TemporalTruncNode(unit.value, expression.node())
+        TemporalTruncNode(unit.value, node_of(expression))
         if zone is None
-        else TemporalTruncTimestamptzNode(unit.value, expression.node(), _node(zone))
+        else TemporalTruncTimestamptzNode(unit.value, node_of(expression), _node(zone))
     )
-    return Expr(node)
+    return _expr(node)
 
 
 @overload
@@ -514,7 +534,7 @@ def date_bin(
     expression: Expr[NaiveDateTime] | Expr[AwareDateTime],
     origin: Expr[NaiveDateTime] | Expr[AwareDateTime],
 ) -> Expr[NaiveDateTime] | Expr[AwareDateTime]:
-    return Expr(TemporalBinNode(_node(stride), expression.node(), origin.node()))
+    return _expr(TemporalBinNode(_node(stride), node_of(expression), node_of(origin)))
 
 
 @overload
@@ -584,24 +604,24 @@ def overlaps(
     | Expr[NaiveTime]
     | Expr[AwareTime],
 ) -> NullablePredicate:
-    return NullablePredicate(
+    return _nullable_predicate(
         TemporalOverlapsNode(
-            left_start.node(), left_end.node(), right_start.node(), right_end.node()
+            node_of(left_start), node_of(left_end), node_of(right_start), node_of(right_end)
         )
     )
 
 
 def scalar[T](query: SelectQuery[tuple[T]]) -> Expr[T | None]:
     """Embed a one-column subquery whose empty result is SQL ``NULL``."""
-    return Expr(ScalarSubqueryNode(select_node(query)))
+    return _expr(ScalarSubqueryNode(select_node(query)))
 
 
 def exists[Row](query: SelectQuery[Row]) -> Predicate:
-    return Predicate(ExistsNode(select_node(query)))
+    return _predicate(ExistsNode(select_node(query)))
 
 
 def not_exists[Row](query: SelectQuery[Row]) -> Predicate:
-    return Predicate(ExistsNode(select_node(query), negated=True))
+    return _predicate(ExistsNode(select_node(query), negated=True))
 
 
 def coalesce[T](first: Expr[T], second: Expr[T], *rest: Expr[T]) -> Expr[T]:
@@ -611,14 +631,16 @@ def coalesce[T](first: Expr[T], second: Expr[T], *rest: Expr[T]) -> Expr[T]:
     result type; nullable output must be declared when every candidate can be
     NULL.
     """
-    return Expr(
-        FunctionNode("coalesce", (first.node(), second.node(), *(item.node() for item in rest)))
+    return _expr(
+        FunctionNode(
+            "coalesce", (node_of(first), node_of(second), *(node_of(item) for item in rest))
+        )
     )
 
 
 def nullif[T](left: Expr[T], right: T | Expr[T]) -> Expr[T | None]:
     """Return ``NULL`` when two values compare equal."""
-    return Expr(FunctionNode("nullif", (left.node(), _node(right))))
+    return _expr(FunctionNode("nullif", (node_of(left), _node(right))))
 
 
 class CaseWhen[T](Protocol):
@@ -648,15 +670,15 @@ class _CaseWhen[T]:
 
     def when(self, condition: Predicate | NullablePredicate, then: T | Expr[T], /) -> CaseWhen[T]:
         """Return a new builder with one additional searched branch."""
-        return _CaseWhen((*self._branches, (condition.node(), _node(then))))
+        return _CaseWhen[T]((*self._branches, (node_of(condition), _node(then))))
 
     def else_(self, otherwise: T | Expr[T], /) -> Expr[T]:
         """Close the expression with a same-typed fallback value."""
-        return Expr(CaseNode(self._branches, _node(otherwise)))
+        return _expr(CaseNode(self._branches, _node(otherwise)))
 
     def else_null(self) -> Expr[T | None]:
         """Close the expression with an explicit SQL ``NULL`` fallback."""
-        return Expr(CaseNode(self._branches, ValueNode(None)))
+        return _expr(CaseNode(self._branches, ValueNode(None)))
 
 
 def case_when[T](condition: Predicate | NullablePredicate, then: T | Expr[T], /) -> CaseWhen[T]:
@@ -665,15 +687,15 @@ def case_when[T](condition: Predicate | NullablePredicate, then: T | Expr[T], /)
     Call :meth:`CaseWhen.when` for more branches, then terminate with
     :meth:`CaseWhen.else_` or :meth:`CaseWhen.else_null`.
     """
-    return _CaseWhen(((condition.node(), _node(then)),))
+    return _CaseWhen[T](((node_of(condition), _node(then)),))
 
 
 def _comparison_node(expression: Node, operator: str, other: object) -> NullablePredicate:
     if other is None:
-        return NullablePredicate(
+        return _nullable_predicate(
             UnaryNode("is null" if operator == "=" else "is not null", expression)
         )
-    return NullablePredicate(BinaryNode(expression, operator, _node(other)))
+    return _nullable_predicate(BinaryNode(expression, operator, _node(other)))
 
 
 def _membership[T](
@@ -682,11 +704,11 @@ def _membership[T](
     from relq.query import SelectQuery
 
     if isinstance(values, SelectQuery):
-        return NullablePredicate(InNode(expression.node(), select_node(values), negated))
+        return _nullable_predicate(InNode(node_of(expression), select_node(values), negated))
     nodes = tuple(_node(item) for item in values)
     if not nodes:
-        return NullablePredicate(ValueNode(bool(negated)))
-    return NullablePredicate(InNode(expression.node(), nodes, negated))
+        return _nullable_predicate(ValueNode(bool(negated)))
+    return _nullable_predicate(InNode(node_of(expression), nodes, negated))
 
 
 @overload
@@ -805,20 +827,20 @@ def divide(left: object, right: object) -> object:
 
 
 def _numeric_binary(left: object, operator: str, right: object) -> Expr[object]:
-    if not isinstance(left, Expr):
+    if not isinstance(left, Expression):
         raise TypeError("numeric operations require a SQL expression as their left operand")
-    return Expr(BinaryNode(left.node(), operator, _node(right)))
+    return _expr(BinaryNode(expression_node(left), operator, _node(right)))
 
 
 def _combine_truth(left: Node, operator: str, right: object) -> Predicate | NullablePredicate:
     if isinstance(right, Predicate):
-        return Predicate(BinaryNode(left, operator, right.node()))
+        return _predicate(BinaryNode(left, operator, node_of(right)))
     if isinstance(right, NullablePredicate):
-        return NullablePredicate(BinaryNode(left, operator, right.node()))
+        return _nullable_predicate(BinaryNode(left, operator, node_of(right)))
     raise TypeError("SQL boolean operations require a SQL truth expression")
 
 
 def _node(item: object) -> Node:
-    if isinstance(item, Expr):
-        return item.node()
+    if isinstance(item, Expression):
+        return expression_node(item)
     return ValueNode(item)
