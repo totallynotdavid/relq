@@ -12,6 +12,7 @@ BAD_AST_BOUNDARY = ROOT / "tests" / "typing" / "bad_ast_boundary.json"
 BAD_COMPOUNDS = ROOT / "tests" / "typing" / "bad_compounds.json"
 BAD_CONDITIONAL = ROOT / "tests" / "typing" / "bad_conditional.json"
 BAD_DIALECT = ROOT / "tests" / "typing" / "bad_dialect.json"
+BAD_EXECUTION = ROOT / "tests" / "typing" / "bad_execution.json"
 BAD_TEMPORAL = ROOT / "tests" / "typing" / "bad_temporal.json"
 GENERATED = ROOT / "tests" / "typing" / "generated_batch.json"
 GENERATED_SCHEMA = ROOT / "tests" / "typing" / "generated_schema.py"
@@ -91,6 +92,13 @@ def test_dialect_legality_is_a_compiler_contract() -> None:
     returncode, diagnostics = _basedpyright(BAD_DIALECT)
     assert returncode == 0
     assert diagnostics == []
+
+
+def test_non_row_dml_is_not_fetchable() -> None:
+    returncode, diagnostics = _basedpyright(BAD_EXECUTION)
+    rules = {diagnostic.get("rule") for diagnostic in diagnostics}
+    assert returncode != 0
+    assert "reportCallIssue" in rules
 
 
 def test_generated_batch_helper_type_checks() -> None:

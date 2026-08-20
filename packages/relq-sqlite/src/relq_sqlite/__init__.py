@@ -3,17 +3,19 @@
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from types import TracebackType
-from typing import Protocol, Self
+from typing import Protocol, Self, overload
 
 from relq import RowAdapter
 from relq._compiler.api import compile_sqlite
 from relq._execution import (
     Command,
+    ReturningQuery,
     map_all,
     map_one,
     require_command,
 )
 from relq._query import Query, extract_query
+from relq.query import SelectQuery
 
 
 class _Cursor(Protocol):
@@ -45,15 +47,37 @@ class SQLiteDatabase:
     def __init__(self, connection: _Connection) -> None:
         self._connection = connection
 
+    @overload
+    def fetch_all[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> list[Row]: ...
+
+    @overload
+    def fetch_all[Row](self, query: ReturningQuery[Row]) -> list[Row]: ...
+
     def fetch_all[Row](self, query: Query[Row]) -> list[Row]:
         compiled = compile_sqlite(query)
         cursor = self._connection.execute(compiled.sql, compiled.parameters)
         return map_all(query, cursor.fetchall())
 
+    @overload
+    def fetch_one[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> Row | None: ...
+
+    @overload
+    def fetch_one[Row](self, query: ReturningQuery[Row]) -> Row | None: ...
+
     def fetch_one[Row](self, query: Query[Row]) -> Row | None:
         compiled = compile_sqlite(query)
         cursor = self._connection.execute(compiled.sql, compiled.parameters)
         return map_one(query, cursor.fetchone())
+
+    @overload
+    def fetch_all_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
+
+    @overload
+    def fetch_all_as[Row, Model](
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
 
     def fetch_all_as[Row, Model](
         self, query: Query[Row], adapter: RowAdapter[Model]
@@ -64,6 +88,16 @@ class SQLiteDatabase:
         compiled = compile_sqlite(query)
         cursor = self._connection.execute(compiled.sql, compiled.parameters)
         return [adapter.map(row) for row in cursor.fetchall()]
+
+    @overload
+    def fetch_one_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
+
+    @overload
+    def fetch_one_as[Row, Model](
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
 
     def fetch_one_as[Row, Model](
         self, query: Query[Row], adapter: RowAdapter[Model]

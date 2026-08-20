@@ -226,6 +226,31 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         sixth: Expr[F],
     ) -> InsertQuery[tuple[A, B, C, D, E, F], Literal[True]]: ...
 
+    @overload
+    def returning[A, B, C, D, E, F, G](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+    ) -> InsertQuery[tuple[A, B, C, D, E, F, G], Literal[True]]: ...
+
+    @overload
+    def returning[A, B, C, D, E, F, G, H](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+        eighth: Expr[H],
+    ) -> InsertQuery[tuple[A, B, C, D, E, F, G, H], Literal[True]]: ...
+
     def returning(
         self, first: object, *rest: object, **named: object
     ) -> InsertQuery[tuple[object, ...], Literal[True]]:
@@ -344,6 +369,31 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         sixth: Expr[F],
     ) -> UpdateQuery[tuple[A, B, C, D, E, F], Literal[True], Bounded]: ...
 
+    @overload
+    def returning[A, B, C, D, E, F, G](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+    ) -> UpdateQuery[tuple[A, B, C, D, E, F, G], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D, E, F, G, H](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+        eighth: Expr[H],
+    ) -> UpdateQuery[tuple[A, B, C, D, E, F, G, H], Literal[True], Bounded]: ...
+
     def returning(
         self, first: object, *rest: object, **named: object
     ) -> UpdateQuery[tuple[object, ...], Literal[True], Bounded]:
@@ -433,6 +483,31 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         fifth: Expr[E],
         sixth: Expr[F],
     ) -> DeleteQuery[tuple[A, B, C, D, E, F], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D, E, F, G](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+    ) -> DeleteQuery[tuple[A, B, C, D, E, F, G], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D, E, F, G, H](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+        eighth: Expr[H],
+    ) -> DeleteQuery[tuple[A, B, C, D, E, F, G, H], Literal[True], Bounded]: ...
 
     def returning(
         self, first: object, *rest: object, **named: object

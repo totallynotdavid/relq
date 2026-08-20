@@ -17,6 +17,12 @@ type Command[Row] = (
     | DeleteQuery[Row, Literal[False], Literal[True]]
 )
 
+type ReturningQuery[Row] = (
+    InsertQuery[Row, Literal[True]]
+    | UpdateQuery[Row, Literal[True], Literal[True]]
+    | DeleteQuery[Row, Literal[True], Literal[True]]
+)
+
 
 def require_command[Row](query: Query[Row]) -> None:
     """Reject queries that produce rows before an adapter executes them."""

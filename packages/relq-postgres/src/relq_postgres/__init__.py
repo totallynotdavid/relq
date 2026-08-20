@@ -1,19 +1,22 @@
 """Asynchronous asyncpg executor for relq."""
 
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import overload
 
 import asyncpg
 from relq import Interval, RowAdapter
 from relq._compiler.api import compile_postgres
 from relq._execution import (
     Command,
+    ReturningQuery,
     map_all,
     map_one,
     map_row,
     require_command,
 )
 from relq._query import Query, extract_query
+from relq.query import SelectQuery
 
 __all__ = ["PostgresDatabase"]
 
@@ -64,17 +67,39 @@ class PostgresDatabase:
         await self._configure_connection(self._connection)
         yield self._connection
 
+    @overload
+    async def fetch_all[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> list[Row]: ...
+
+    @overload
+    async def fetch_all[Row](self, query: ReturningQuery[Row]) -> list[Row]: ...
+
     async def fetch_all[Row](self, query: Query[Row]) -> list[Row]:
         compiled = compile_postgres(query)
         async with self._connection_scope() as connection:
             records = await connection.fetch(compiled.sql, *compiled.parameters)
         return map_all(query, (tuple(record) for record in records))
 
+    @overload
+    async def fetch_one[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> Row | None: ...
+
+    @overload
+    async def fetch_one[Row](self, query: ReturningQuery[Row]) -> Row | None: ...
+
     async def fetch_one[Row](self, query: Query[Row]) -> Row | None:
         compiled = compile_postgres(query)
         async with self._connection_scope() as connection:
             row = await connection.fetchrow(compiled.sql, *compiled.parameters)
         return map_one(query, None if row is None else tuple(row))
+
+    @overload
+    async def fetch_all_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
+
+    @overload
+    async def fetch_all_as[Row, Model](
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
 
     async def fetch_all_as[Row, Model](
         self, query: Query[Row], adapter: RowAdapter[Model]
@@ -87,6 +112,16 @@ class PostgresDatabase:
             rows = await connection.fetch(compiled.sql, *compiled.parameters)
         return [adapter.map(tuple(row)) for row in rows]
 
+    @overload
+    async def fetch_one_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
+
+    @overload
+    async def fetch_one_as[Row, Model](
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
+
     async def fetch_one_as[Row, Model](
         self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> Model | None:
@@ -96,6 +131,16 @@ class PostgresDatabase:
         async with self._connection_scope() as connection:
             row = await connection.fetchrow(compiled.sql, *compiled.parameters)
         return None if row is None else adapter.map(tuple(row))
+
+    @overload
+    def fetch_iter[SqlRow, Row](
+        self, query: SelectQuery[SqlRow, Row]
+    ) -> AbstractAsyncContextManager[AsyncIterator[Row]]: ...
+
+    @overload
+    def fetch_iter[Row](
+        self, query: ReturningQuery[Row]
+    ) -> AbstractAsyncContextManager[AsyncIterator[Row]]: ...
 
     @asynccontextmanager
     async def fetch_iter[Row](self, query: Query[Row]) -> AsyncGenerator[AsyncIterator[Row]]:

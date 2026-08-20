@@ -204,6 +204,13 @@ insert_query = (
     insert_into(users).values(id=1, email="a@example.com", active=True).returning(users.id)
 )
 assert_type(insert_query, InsertQuery[tuple[int], Literal[True]])
+assert_type(
+    insert_into(users)
+    .values(id=1, email="a@example.com", active=True)
+    .returning(users.id, users.id, users.id, users.id, users.id, users.id, users.id, users.id),
+    InsertQuery[tuple[int, int, int, int, int, int, int, int], Literal[True]],
+)
+
 
 copied = insert_into(users).from_select(
     select(users.id, users.email).from_(users), users.id, users.email
