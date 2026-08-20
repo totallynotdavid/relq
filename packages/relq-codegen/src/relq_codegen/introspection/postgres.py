@@ -129,4 +129,13 @@ def _postgres_named_or_builtin(kind: str | None, schema: str | None, name: str) 
         return NamedType("enum", TypeIdentity(schema, name))
     if kind == "d":
         return NamedType("domain", TypeIdentity(schema, name))
+    # pg_type.typname uses compact aliases.  Normalize the temporal aliases
+    # here so the renderer can keep SQLite's free-form timestamp/time policy
+    # separate from PostgreSQL's branded driver domains.
+    name = {
+        "timestamp": "timestamp without time zone",
+        "timestamptz": "timestamp with time zone",
+        "time": "time without time zone",
+        "timetz": "time with time zone",
+    }.get(name, name)
     return BuiltinType(name)

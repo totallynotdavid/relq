@@ -1,7 +1,7 @@
 """Immutable typed SELECT builder and relational composition."""
 
 from dataclasses import dataclass, replace
-from typing import Generic, Self, TypeVar, overload
+from typing import Literal, Self, TypeVar, overload
 
 from relq._ast import (
     AliasNode,
@@ -12,11 +12,13 @@ from relq._ast import (
     CteNode,
     DerivedSourceNode,
     JoinNode,
+    LockClauseNode,
     Node,
     NullableResultNode,
     SelectNode,
     StarNode,
 )
+from relq._node_value import expression_node, node_of
 from relq._query import Query, extract_query, new_query, select_node
 from relq.expressions import (
     BooleanExpression,
@@ -26,51 +28,55 @@ from relq.expressions import (
     Expression,
     Order,
     Source,
+    Table,
 )
+from relq.expressions.relations import derived_table, source_columns, source_node, table_node
 from relq.rows import RowAdapter, row_adapter
 
 Row_co = TypeVar("Row_co", covariant=True)
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
+class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
     def _with_node(self, node: SelectNode) -> Self:
         return new_query(type(self), node, extract_query(self).adapter)
 
-    def from_(self, source: Source) -> Self:
+    def from_(self, source: Source[object]) -> Self:
         node = select_node(self)
         if node.from_source is not None:
             raise ValueError("from_() can only be specified once")
-        return self._with_node(replace(node, from_source=source.node()))
+        return self._with_node(replace(node, from_source=source_node(source)))
 
-    def inner_join(self, source: Source, *, on: BooleanExpression) -> Self:
+    def inner_join(self, source: Source[object], *, on: BooleanExpression) -> Self:
         return self._join(source, on, "inner")
 
-    def left_join(self, source: Source, *, on: BooleanExpression) -> Self:
+    def left_join(self, source: Source[object], *, on: BooleanExpression) -> Self:
         return self._join(source, on, "left")
 
-    def right_join(self, source: Source, *, on: BooleanExpression) -> Self:
+    def right_join(self, source: Source[object], *, on: BooleanExpression) -> Self:
         return self._join(source, on, "right")
 
-    def full_join(self, source: Source, *, on: BooleanExpression) -> Self:
+    def full_join(self, source: Source[object], *, on: BooleanExpression) -> Self:
         return self._join(source, on, "full")
 
-    def cross_join(self, source: Source) -> Self:
-        join = JoinNode(source.node(), StarNode(), "cross")
+    def cross_join(self, source: Source[object]) -> Self:
         node = select_node(self)
+        _require_from_source(node)
+        join = JoinNode(source_node(source), StarNode(), "cross")
         return self._with_node(replace(node, joins=(*node.joins, join)))
 
-    def _join(self, source: Source, on: BooleanExpression, kind: str) -> Self:
-        join = JoinNode(source.node(), on.node(), kind)
+    def _join(self, source: Source[object], on: BooleanExpression, kind: str) -> Self:
         node = select_node(self)
+        _require_from_source(node)
+        join = JoinNode(source_node(source), node_of(on), kind)
         return self._with_node(replace(node, joins=(*node.joins, join)))
 
     def where(self, predicate: BooleanExpression) -> Self:
         query_node = select_node(self)
         node = (
-            predicate.node()
+            node_of(predicate)
             if query_node.where is None
-            else BinaryNode(query_node.where, "and", predicate.node())
+            else BinaryNode(query_node.where, "and", node_of(predicate))
         )
         return self._with_node(replace(query_node, where=node))
 
@@ -79,15 +85,15 @@ class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
             raise ValueError("group_by requires at least one expression")
         node = select_node(self)
         return self._with_node(
-            replace(node, group_by=(*node.group_by, *(x.node() for x in expressions)))
+            replace(node, group_by=(*node.group_by, *(node_of(x) for x in expressions)))
         )
 
     def having(self, predicate: BooleanExpression) -> Self:
         query_node = select_node(self)
         node = (
-            predicate.node()
+            node_of(predicate)
             if query_node.having is None
-            else BinaryNode(query_node.having, "and", predicate.node())
+            else BinaryNode(query_node.having, "and", node_of(predicate))
         )
         return self._with_node(replace(query_node, having=node))
 
@@ -99,7 +105,7 @@ class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
             raise ValueError("order_by requires at least one Order")
         node = select_node(self)
         return self._with_node(
-            replace(node, order_by=(*node.order_by, *(x.node() for x in orders)))
+            replace(node, order_by=(*node.order_by, *(node_of(x) for x in orders)))
         )
 
     def limit(self, amount: int) -> Self:
@@ -118,38 +124,44 @@ class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
             raise ValueError("offset must be non-negative")
         return self._with_node(replace(node, offset=amount))
 
-    def as_[Relation: DerivedTable](self, relation: type[Relation], alias: str) -> Relation:
+    def as_[Relation: DerivedTable[object]](self, relation: type[Relation], alias: str) -> Relation:
         node = select_node(self)
         _validate_output_schema(node, relation.output_names())
-        return relation(DerivedSourceNode(node, alias), alias)
+        return derived_table(relation, DerivedSourceNode(node, alias), alias)
 
-    def _compound(self, other: Self, operator: CompoundOperator) -> Self:
+    def _compound[OtherRow](
+        self, other: _SelectQuery[SqlRow, OtherRow], operator: CompoundOperator
+    ) -> Self:
         _validate_compound_result_shape(self, other)
         node = select_node(self)
         return self._with_node(
             replace(node, compounds=(*node.compounds, CompoundNode(operator, select_node(other))))
         )
 
-    def union(self, other: Self) -> Self:
+    def union[OtherRow](self, other: _SelectQuery[SqlRow, OtherRow]) -> Self:
         return self._compound(other, "union")
 
-    def union_all(self, other: Self) -> Self:
+    def union_all[OtherRow](self, other: _SelectQuery[SqlRow, OtherRow]) -> Self:
         return self._compound(other, "union all")
 
-    def intersect(self, other: Self) -> Self:
+    def intersect[OtherRow](self, other: _SelectQuery[SqlRow, OtherRow]) -> Self:
         return self._compound(other, "intersect")
 
-    def except_(self, other: Self) -> Self:
+    def except_[OtherRow](self, other: _SelectQuery[SqlRow, OtherRow]) -> Self:
         return self._compound(other, "except")
 
-    def with_[CteRow](self, source: CteTable, query: _SelectQuery[CteRow]) -> Self:
+    def with_[CteSqlRow, CteRow](
+        self, source: CteTable[object], query: _SelectQuery[CteSqlRow, CteRow]
+    ) -> Self:
         name = source.reference
         query_node = select_node(query)
         _validate_output_schema(query_node, source.output_names())
         node = select_node(self)
         return self._with_node(replace(node, ctes=(*node.ctes, CteNode(name, query_node))))
 
-    def with_recursive[CteRow](self, source: CteTable, query: _SelectQuery[CteRow]) -> Self:
+    def with_recursive[CteSqlRow, CteRow](
+        self, source: CteTable[object], query: _SelectQuery[CteSqlRow, CteRow]
+    ) -> Self:
         """Add a recursive CTE; its query may reference its own source name."""
         name = source.reference
         query_node = select_node(query)
@@ -159,18 +171,61 @@ class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
             replace(node, ctes=(*node.ctes, CteNode(name, query_node, recursive=True)))
         )
 
+    def _lock(
+        self,
+        strength: Literal["update", "no key update", "share", "key share"],
+        tables: tuple[Table[object], ...],
+    ) -> Self:
+        sources = tuple(table_node(table) for table in tables)
+        node = select_node(self)
+        return self._with_node(
+            replace(node, locks=(*node.locks, LockClauseNode(strength, sources)))
+        )
+
+    def _wait(self, wait: Literal["nowait", "skip locked"]) -> Self:
+        node = select_node(self)
+        if not node.locks:
+            raise ValueError(f"{wait.replace(' ', '_')}() requires a preceding lock clause")
+        latest = node.locks[-1]
+        if latest.wait is not None:
+            raise ValueError("a lock clause can have only one wait policy")
+        return self._with_node(replace(node, locks=(*node.locks[:-1], replace(latest, wait=wait))))
+
 
 @dataclass(frozen=True, slots=True, init=False)
-class SelectQuery[Row](_SelectQuery[Row]):
-    """A SELECT that exposes raw driver tuples."""
+class SelectQuery[SqlRow, Row = SqlRow](_SelectQuery[SqlRow, Row]):
+    """An immutable SELECT with an optional executor-only row decoder."""
+
+    def decode[Model](self, model: type[Model] | RowAdapter[Model]) -> SelectQuery[SqlRow, Model]:
+        """Attach an executor-only row decoder without changing SQL semantics."""
+        adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
+        if len(select_node(self).selections) != adapter.arity:
+            raise ValueError(
+                f"{adapter.model_name} requires {adapter.arity} result columns; "
+                f"query projects {len(select_node(self).selections)}"
+            )
+        return new_query(SelectQuery, select_node(self), adapter)
+
+    def for_update(self, *of: Table[object]) -> Self:
+        return self._lock("update", of)
+
+    def for_no_key_update(self, *of: Table[object]) -> Self:
+        return self._lock("no key update", of)
+
+    def for_share(self, *of: Table[object]) -> Self:
+        return self._lock("share", of)
+
+    def for_key_share(self, *of: Table[object]) -> Self:
+        return self._lock("key share", of)
+
+    def no_wait(self) -> Self:
+        return self._wait("nowait")
+
+    def skip_locked(self) -> Self:
+        return self._wait("skip locked")
 
 
-@dataclass(frozen=True, slots=True, init=False)
-class ModelSelectQuery[Model](_SelectQuery[Model]):
-    """A SELECT whose rows are decoded into one declared model."""
-
-
-def cte[Relation: CteTable](relation: type[Relation], name: str) -> Relation:
+def cte[Relation: CteTable[object]](relation: type[Relation], name: str) -> Relation:
     """Reference a CTE declared by :meth:`SelectQuery.with_`."""
     return relation(name)
 
@@ -235,53 +290,42 @@ def select[A, B, C, D, E, F, G, H](
 def select(first: object, *rest: object, **named: object) -> object:
     if named:
         raise TypeError("select expressions must be positional")
-    expressions = (first, *rest)
-    if len(expressions) > 8:
-        raise ValueError(
-            "select supports at most eight expressions; declare a DerivedTable and compose smaller projections"
-        )
-    nodes: list[Node] = []
-    for expression in expressions:
-        if not isinstance(expression, Expr):
-            raise TypeError("select accepts only SQL expressions")
-        nodes.append(expression.node())
-    result: SelectQuery[tuple[object, ...]] = new_query(SelectQuery, SelectNode(tuple(nodes)))
+    nodes = _selection_nodes((first, *rest), limit=8, context="select")
+    result: SelectQuery[tuple[object, ...]] = new_query(SelectQuery, SelectNode(nodes))
     return result
 
 
-@overload
-def select_model[Model](
-    model: type[Model], *expressions: Expression
-) -> ModelSelectQuery[Model]: ...
+def select_all_from[SqlRow](source: Source[SqlRow]) -> SelectQuery[SqlRow]:
+    """Project every declared column of one relation in its schema order."""
+    columns = source_columns(source)
+    if not columns:
+        raise ValueError("select_all_from requires a relation with declared columns")
+    return new_query(SelectQuery, SelectNode(tuple(expression_node(column) for column in columns)))
 
 
-@overload
-def select_model[Model](
-    model: RowAdapter[Model], *expressions: Expression
-) -> ModelSelectQuery[Model]: ...
-
-
-def select_model[Model](
-    model: type[Model] | RowAdapter[Model], *expressions: Expression
-) -> ModelSelectQuery[Model]:
-    """Select a declared row model, with no fixed projection-width limit.
-
-    The model is mapped by database executors and therefore makes the result
-    shape explicit. Use ordinary :func:`select` for fast tuple results.
-    """
-    adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
-    if not expressions:
-        raise ValueError("select_model requires at least one expression")
-    if len(expressions) != adapter.arity:
+def _selection_nodes(
+    expressions: tuple[object, ...], *, limit: int, context: str
+) -> tuple[Node, ...]:
+    if len(expressions) > limit:
         raise ValueError(
-            f"{adapter.model_name} requires {adapter.arity} selected expressions; "
-            f"received {len(expressions)}"
+            f"{context} supports at most {limit} expressions; "
+            "declare a DerivedTable and compose smaller projections"
         )
-    return new_query(
-        ModelSelectQuery,
-        SelectNode(tuple(expression.node() for expression in expressions)),
-        adapter,
-    )
+    return tuple(expression_node(expression) for expression in _expressions(expressions, context))
+
+
+def _expressions(expressions: tuple[object, ...], context: str) -> tuple[Expression, ...]:
+    typed: list[Expression] = []
+    for expression in expressions:
+        if not isinstance(expression, Expression):
+            raise TypeError(f"{context} accepts only SQL expressions")
+        typed.append(expression)
+    return tuple(typed)
+
+
+def _require_from_source(node: SelectNode) -> None:
+    if node.from_source is None:
+        raise ValueError("joins require a preceding from_(...) clause")
 
 
 def _validate_output_schema(node: SelectNode, expected: set[str]) -> None:
@@ -310,8 +354,8 @@ def _validate_output_schema(node: SelectNode, expected: set[str]) -> None:
         )
 
 
-def _validate_compound_result_shape(
-    left: _SelectQuery[object], right: _SelectQuery[object]
+def _validate_compound_result_shape[LeftSqlRow, LeftRow, RightSqlRow, RightRow](
+    left: _SelectQuery[LeftSqlRow, LeftRow], right: _SelectQuery[RightSqlRow, RightRow]
 ) -> None:
     """Keep the public result-type transition sound across a compound."""
     left_node = select_node(left)
@@ -320,16 +364,4 @@ def _validate_compound_result_shape(
         raise ValueError(
             "compound queries require equal projection widths: "
             f"left has {len(left_node.selections)}, right has {len(right_node.selections)}"
-        )
-    left_adapter = extract_query(left).adapter
-    right_adapter = extract_query(right).adapter
-    if (left_adapter is None) != (right_adapter is None):
-        raise ValueError("compound queries cannot combine tuple and declared-model result paths")
-    if (
-        left_adapter is not None
-        and right_adapter is not None
-        and not left_adapter.is_compatible_with(right_adapter)
-    ):
-        raise ValueError(
-            "compound queries require the same declared result model and decoder layout"
         )

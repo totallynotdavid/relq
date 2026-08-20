@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import pytest
 from relq import (
     Column,
+    Interval,
     SelectQuery,
     Table,
     add,
@@ -14,7 +15,9 @@ from relq import (
     nullif,
     row_adapter,
     select,
+    subtract_interval,
     sum,
+    transaction_timestamp,
 )
 from relq._compiler import compile_postgres, compile_sqlite
 from relq_sqlite import SQLiteDatabase
@@ -68,6 +71,57 @@ def test_postgres_placeholders_are_positional() -> None:
     assert "$1" in compiled.sql
     assert "$2" not in compiled.sql
     assert compiled.parameters == (7,)
+
+
+def test_postgres_row_locking_and_timestamp_arithmetic_are_closed_features() -> None:
+    manager = users.as_("manager")
+    locked = (
+        select(users.id)
+        .from_(users)
+        .inner_join(manager, on=users.id.eq(manager.id))
+        .where(users.active.is_true())
+        .order_by(users.id.asc())
+        .limit(1)
+        .for_update(users)
+        .skip_locked()
+    )
+    assert compile_postgres(locked).sql == (
+        'select "users"."id" from "users" inner join "users" as "manager" '
+        'on ("users"."id" = "manager"."id") where ("users"."active" is true) '
+        'order by "users"."id" asc limit 1 for update of "users" skip locked'
+    )
+    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL row locking"):
+        compile_sqlite(locked)
+
+    recent = (
+        select(users.id)
+        .from_(users)
+        .where(
+            users.id.gt(0)
+            & subtract_interval(transaction_timestamp(), Interval(days=7)).lt(
+                transaction_timestamp()
+            )
+        )
+    )
+    assert compile_postgres(recent).sql == (
+        'select "users"."id" from "users" where (("users"."id" > $1) and ((transaction_timestamp() - $2::interval) < transaction_timestamp()))'
+    )
+    assert compile_postgres(recent).parameters == (0, Interval(days=7))
+    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
+        compile_sqlite(recent)
+
+
+def test_for_update_rejects_non_lockable_query_shapes_and_unknown_tables() -> None:
+    class Accounts(Table):
+        id: Column[int] = column(int)
+
+    accounts = Accounts("accounts")
+    with pytest.raises(ValueError, match="DISTINCT"):
+        compile_postgres(select(users.id).from_(users).distinct().for_update())
+    with pytest.raises(ValueError, match="aggregate"):
+        compile_postgres(select(count()).from_(users).for_update())
+    with pytest.raises(ValueError, match="direct table"):
+        compile_postgres(select(users.id).from_(users).for_update(accounts))
 
 
 def test_grouped_aggregate_query_compiles_and_executes() -> None:

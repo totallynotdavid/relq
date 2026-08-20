@@ -24,6 +24,7 @@ from relq import (
     unbounded_preceding,
 )
 from relq._compiler import CompiledQuery, compile_postgres, compile_sqlite
+from relq._node_value import node_of
 from relq_sqlite import SQLiteDatabase
 
 from tests.compiler_fixtures import assert_compiles
@@ -157,7 +158,7 @@ def test_explicit_null_ordering_is_shared_by_queries_and_windows() -> None:
         assert [ranked_id for _, ranked_id in database.fetch_all(windowed)] == [
             ids.index(identifier) + 1 for identifier in (1, 2, 3)
         ]
-        assert f"nulls {order.node().nulls}" in compile_sqlite(query).sql
+        assert f"nulls {node_of(order).nulls}" in compile_sqlite(query).sql
         assert compile_postgres(query) == compile_sqlite(query)
     with pytest.raises(ValueError, match="only one NULL placement"):
         users.score.asc().nulls_first().nulls_last()

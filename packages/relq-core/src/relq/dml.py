@@ -25,8 +25,10 @@ from relq._ast import (
     UpdateNode,
     ValueNode,
 )
+from relq._node_value import expression_node, node_of
 from relq._query import Query, extract_query, new_query, select_node
 from relq.expressions import BooleanExpression, Column, Expr, Expression, Table
+from relq.expressions.relations import table_node
 from relq.query import SelectQuery
 from relq.rows import RowAdapter, row_adapter
 
@@ -40,7 +42,7 @@ def _values(table: Table, entries: dict[str, object]) -> tuple[tuple[str, Node],
         names = ", ".join(sorted(unknown))
         raise ValueError(f"unknown column(s) for {table.table_name}: {names}")
     return tuple(
-        (name, item.node() if isinstance(item, Expr) else ValueNode(item))
+        (name, expression_node(item) if isinstance(item, Expression) else ValueNode(item))
         for name, item in entries.items()
     )
 
@@ -52,9 +54,10 @@ def _target_column_names(
         raise ValueError("insert-from-select requires at least one target column")
     names: list[str] = []
     for column in columns:
+        raw_column: object = column
         if not isinstance(column, Column):
             raise TypeError("target and conflict arguments must be table columns")
-        node = column.node()
+        node = expression_node(_expression(raw_column))
         if not isinstance(node, ColumnNode):
             raise TypeError("target and conflict arguments must be table columns")
         if node.source != table.reference or node.name not in table.column_names():
@@ -70,23 +73,15 @@ Returns = TypeVar("Returns", Literal[False], Literal[True])
 Bounded = TypeVar("Bounded", Literal[False], Literal[True])
 
 
-def _model_returning[Model](
-    model: type[Model] | RowAdapter[Model], expressions: tuple[Expression, ...]
-) -> tuple[tuple[Node, ...], RowAdapter[Model]]:
-    adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
-    if not expressions:
-        raise ValueError("returning_model requires at least one expression")
-    if len(expressions) != adapter.arity:
-        raise ValueError(
-            f"{adapter.model_name} requires {adapter.arity} RETURNING expressions; "
-            f"received {len(expressions)}"
-        )
-    return tuple(expression.node() for expression in expressions), adapter
+def _expression(value: object) -> Expression:
+    if not isinstance(value, Expression):
+        raise TypeError("expected a SQL expression")
+    return value
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class _DmlQuery(Query[Row_co], Generic[Row_co]):
-    _table: Table
+    _table: Table[object]
 
     def with_node(self, node: InsertNode | UpdateNode | DeleteNode) -> Self:
         return new_query(type(self), node, extract_query(self).adapter, table=self._table)
@@ -122,19 +117,19 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         return self._with_source(InsertRowsSourceNode(prepared))
 
     @overload
-    def from_select[A](
-        self, query: SelectQuery[tuple[A]], first: Column[A], /
+    def from_select[A, Result](
+        self, query: SelectQuery[tuple[A], Result], first: Column[A], /
     ) -> InsertQuery[Row_co, Returns]: ...
 
     @overload
-    def from_select[A, B](
-        self, query: SelectQuery[tuple[A, B]], first: Column[A], second: Column[B], /
+    def from_select[A, B, Result](
+        self, query: SelectQuery[tuple[A, B], Result], first: Column[A], second: Column[B], /
     ) -> InsertQuery[Row_co, Returns]: ...
 
     @overload
-    def from_select[A, B, C](
+    def from_select[A, B, C, Result](
         self,
-        query: SelectQuery[tuple[A, B, C]],
+        query: SelectQuery[tuple[A, B, C], Result],
         first: Column[A],
         second: Column[B],
         third: Column[C],
@@ -142,9 +137,9 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
     ) -> InsertQuery[Row_co, Returns]: ...
 
     @overload
-    def from_select[A, B, C, D](
+    def from_select[A, B, C, D, Result](
         self,
-        query: SelectQuery[tuple[A, B, C, D]],
+        query: SelectQuery[tuple[A, B, C, D], Result],
         first: Column[A],
         second: Column[B],
         third: Column[C],
@@ -153,7 +148,7 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
     ) -> InsertQuery[Row_co, Returns]: ...
 
     def from_select(
-        self, query: SelectQuery[tuple[object, ...]], *columns: object
+        self, query: SelectQuery[tuple[object, ...], object], *columns: object
     ) -> InsertQuery[Row_co, Returns]:
         names = _target_column_names(self._table, columns)
         node = select_node(query)
@@ -217,6 +212,31 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         sixth: Expr[F],
     ) -> InsertQuery[tuple[A, B, C, D, E, F], Literal[True]]: ...
 
+    @overload
+    def returning[A, B, C, D, E, F, G](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+    ) -> InsertQuery[tuple[A, B, C, D, E, F, G], Literal[True]]: ...
+
+    @overload
+    def returning[A, B, C, D, E, F, G, H](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+        eighth: Expr[H],
+    ) -> InsertQuery[tuple[A, B, C, D, E, F, G, H], Literal[True]]: ...
+
     def returning(
         self, first: object, *rest: object, **named: object
     ) -> InsertQuery[tuple[object, ...], Literal[True]]:
@@ -225,29 +245,24 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         if named:
             raise TypeError("returning expressions must be positional")
         expressions = (first, *rest)
-        if len(expressions) > 6:
-            raise ValueError("returning supports at most six expressions")
+        if len(expressions) > 8:
+            raise ValueError("returning supports at most eight expressions")
         nodes: list[Node] = []
         for expression in expressions:
-            if not isinstance(expression, Expr):
+            if not isinstance(expression, Expression):
                 raise TypeError("returning accepts only SQL expressions")
-            nodes.append(expression.node())
+            nodes.append(expression_node(expression))
         return new_query(
             InsertQuery, replace(self._node, returning=tuple(nodes)), table=self._table
         )
 
-    def returning_model[Model](
-        self, model: type[Model] | RowAdapter[Model], *expressions: Expression
-    ) -> ModelInsertQuery[Model]:
-        if self._node.returning:
-            raise ValueError("returning_model() can only be specified once")
-        nodes, adapter = _model_returning(model, expressions)
-        return new_query(ModelInsertQuery, replace(self._node, returning=nodes), adapter)
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ModelInsertQuery[Model](Query[Model]):
-    """An INSERT RETURNING query decoded into one declared model."""
+    def decode[Model](
+        self: InsertQuery[Row_co, Literal[True]], model: type[Model] | RowAdapter[Model]
+    ) -> InsertQuery[Model, Literal[True]]:
+        adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
+        if len(self._node.returning) != adapter.arity:
+            raise ValueError(f"{adapter.model_name} does not match RETURNING width")
+        return new_query(InsertQuery, self._node, adapter, table=self._table)
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,13 +305,19 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
     def where(self, predicate: BooleanExpression) -> UpdateQuery[Row_co, Returns, Literal[True]]:
         return new_query(
             UpdateQuery,
-            replace(self._node, where=predicate.node(), bounded=True),
+            replace(self._node, where=node_of(predicate), bounded=True),
+            extract_query(self).adapter,
             table=self._table,
         )
 
     def all_rows(self) -> UpdateQuery[Row_co, Returns, Literal[True]]:
         """Explicitly authorize a full-table update."""
-        return new_query(UpdateQuery, replace(self._node, bounded=True), table=self._table)
+        return new_query(
+            UpdateQuery,
+            replace(self._node, bounded=True),
+            extract_query(self).adapter,
+            table=self._table,
+        )
 
     @overload
     def returning[A](self, first: Expr[A]) -> UpdateQuery[tuple[A], Literal[True], Bounded]: ...
@@ -332,6 +353,31 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         sixth: Expr[F],
     ) -> UpdateQuery[tuple[A, B, C, D, E, F], Literal[True], Bounded]: ...
 
+    @overload
+    def returning[A, B, C, D, E, F, G](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+    ) -> UpdateQuery[tuple[A, B, C, D, E, F, G], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D, E, F, G, H](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+        eighth: Expr[H],
+    ) -> UpdateQuery[tuple[A, B, C, D, E, F, G, H], Literal[True], Bounded]: ...
+
     def returning(
         self, first: object, *rest: object, **named: object
     ) -> UpdateQuery[tuple[object, ...], Literal[True], Bounded]:
@@ -340,29 +386,25 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         if named:
             raise TypeError("returning expressions must be positional")
         expressions = (first, *rest)
-        if len(expressions) > 6:
-            raise ValueError("returning supports at most six expressions")
+        if len(expressions) > 8:
+            raise ValueError("returning supports at most eight expressions")
         nodes: list[Node] = []
         for expression in expressions:
-            if not isinstance(expression, Expr):
+            if not isinstance(expression, Expression):
                 raise TypeError("returning accepts only SQL expressions")
-            nodes.append(expression.node())
+            nodes.append(expression_node(expression))
         return new_query(
             UpdateQuery, replace(self._node, returning=tuple(nodes)), table=self._table
         )
 
-    def returning_model[Model](
-        self, model: type[Model] | RowAdapter[Model], *expressions: Expression
-    ) -> ModelUpdateQuery[Model]:
-        if self._node.returning:
-            raise ValueError("returning_model() can only be specified once")
-        nodes, adapter = _model_returning(model, expressions)
-        return new_query(ModelUpdateQuery, replace(self._node, returning=nodes), adapter)
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ModelUpdateQuery[Model](Query[Model]):
-    """An UPDATE RETURNING query decoded into one declared model."""
+    def decode[Model](
+        self: UpdateQuery[Row_co, Literal[True], Bounded],
+        model: type[Model] | RowAdapter[Model],
+    ) -> UpdateQuery[Model, Literal[True], Bounded]:
+        adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
+        if len(self._node.returning) != adapter.arity:
+            raise ValueError(f"{adapter.model_name} does not match RETURNING width")
+        return new_query(UpdateQuery, self._node, adapter, table=self._table)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -377,13 +419,19 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
     def where(self, predicate: BooleanExpression) -> DeleteQuery[Row_co, Returns, Literal[True]]:
         return new_query(
             DeleteQuery,
-            replace(self._node, where=predicate.node(), bounded=True),
+            replace(self._node, where=node_of(predicate), bounded=True),
+            extract_query(self).adapter,
             table=self._table,
         )
 
     def all_rows(self) -> DeleteQuery[Row_co, Returns, Literal[True]]:
         """Explicitly authorize a full-table delete."""
-        return new_query(DeleteQuery, replace(self._node, bounded=True), table=self._table)
+        return new_query(
+            DeleteQuery,
+            replace(self._node, bounded=True),
+            extract_query(self).adapter,
+            table=self._table,
+        )
 
     @overload
     def returning[A](self, first: Expr[A]) -> DeleteQuery[tuple[A], Literal[True], Bounded]: ...
@@ -419,6 +467,31 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         sixth: Expr[F],
     ) -> DeleteQuery[tuple[A, B, C, D, E, F], Literal[True], Bounded]: ...
 
+    @overload
+    def returning[A, B, C, D, E, F, G](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+    ) -> DeleteQuery[tuple[A, B, C, D, E, F, G], Literal[True], Bounded]: ...
+
+    @overload
+    def returning[A, B, C, D, E, F, G, H](
+        self,
+        first: Expr[A],
+        second: Expr[B],
+        third: Expr[C],
+        fourth: Expr[D],
+        fifth: Expr[E],
+        sixth: Expr[F],
+        seventh: Expr[G],
+        eighth: Expr[H],
+    ) -> DeleteQuery[tuple[A, B, C, D, E, F, G, H], Literal[True], Bounded]: ...
+
     def returning(
         self, first: object, *rest: object, **named: object
     ) -> DeleteQuery[tuple[object, ...], Literal[True], Bounded]:
@@ -427,41 +500,37 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         if named:
             raise TypeError("returning expressions must be positional")
         expressions = (first, *rest)
-        if len(expressions) > 6:
-            raise ValueError("returning supports at most six expressions")
+        if len(expressions) > 8:
+            raise ValueError("returning supports at most eight expressions")
         nodes: list[Node] = []
         for expression in expressions:
-            if not isinstance(expression, Expr):
+            if not isinstance(expression, Expression):
                 raise TypeError("returning accepts only SQL expressions")
-            nodes.append(expression.node())
+            nodes.append(expression_node(expression))
         return new_query(
             DeleteQuery, replace(self._node, returning=tuple(nodes)), table=self._table
         )
 
-    def returning_model[Model](
-        self, model: type[Model] | RowAdapter[Model], *expressions: Expression
-    ) -> ModelDeleteQuery[Model]:
-        if self._node.returning:
-            raise ValueError("returning_model() can only be specified once")
-        nodes, adapter = _model_returning(model, expressions)
-        return new_query(ModelDeleteQuery, replace(self._node, returning=nodes), adapter)
+    def decode[Model](
+        self: DeleteQuery[Row_co, Literal[True], Bounded],
+        model: type[Model] | RowAdapter[Model],
+    ) -> DeleteQuery[Model, Literal[True], Bounded]:
+        adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
+        if len(self._node.returning) != adapter.arity:
+            raise ValueError(f"{adapter.model_name} does not match RETURNING width")
+        return new_query(DeleteQuery, self._node, adapter, table=self._table)
 
 
-@dataclass(frozen=True, slots=True, init=False)
-class ModelDeleteQuery[Model](Query[Model]):
-    """A DELETE RETURNING query decoded into one declared model."""
+def insert_into(table: Table[object]) -> InsertQuery[tuple[()], Literal[False]]:
+    return new_query(InsertQuery, InsertNode(table_node(table)), table=table)
 
 
-def insert_into(table: Table) -> InsertQuery[tuple[()], Literal[False]]:
-    return new_query(InsertQuery, InsertNode(table.node()), table=table)
+def update(table: Table[object]) -> UpdateQuery[tuple[()], Literal[False], Literal[False]]:
+    return new_query(UpdateQuery, UpdateNode(table_node(table), ()), table=table)
 
 
-def update(table: Table) -> UpdateQuery[tuple[()], Literal[False], Literal[False]]:
-    return new_query(UpdateQuery, UpdateNode(table.node(), ()), table=table)
-
-
-def delete_from(table: Table) -> DeleteQuery[tuple[()], Literal[False], Literal[False]]:
-    return new_query(DeleteQuery, DeleteNode(table.node()), table=table)
+def delete_from(table: Table[object]) -> DeleteQuery[tuple[()], Literal[False], Literal[False]]:
+    return new_query(DeleteQuery, DeleteNode(table_node(table)), table=table)
 
 
 def _insert_node[Returns: (Literal[False], Literal[True])](

@@ -18,7 +18,6 @@ from relq import (
     nullable,
     row_adapter,
     select,
-    select_model,
     str_decoder,
     uuid_decoder,
 )
@@ -85,14 +84,15 @@ def test_explicit_row_decoders_are_opt_in_and_diagnose_precisely() -> None:
         select(decoded_values.id, decoded_values.amount).from_(decoded_values)
     ) == [(str(identifier), "12.50")]
     assert database.fetch_one(
-        select_model(
-            adapter,
+        select(
             decoded_values.id,
             decoded_values.amount,
             decoded_values.occurred_at,
             decoded_values.payload,
             decoded_values.state,
-        ).from_(decoded_values)
+        )
+        .from_(decoded_values)
+        .decode(adapter)
     ) == DecodedRow(
         identifier,
         decimal.Decimal("12.50"),

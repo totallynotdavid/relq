@@ -54,10 +54,147 @@ class ValueNode:
 
 
 @dataclass(frozen=True, slots=True)
+class TemporalClockNode:
+    kind: Literal[
+        "transaction_timestamp",
+        "statement_timestamp",
+        "clock_timestamp",
+        "current_date",
+        "current_time",
+        "local_time",
+        "local_timestamp",
+    ]
+
+
+@dataclass(frozen=True, slots=True)
 class BinaryNode:
     left: Node
     operator: str
     right: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalMakeDateNode:
+    year: Node
+    month: Node
+    day: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalMakeTimeNode:
+    hour: Node
+    minute: Node
+    second: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalMakeTimestampNode:
+    year: Node
+    month: Node
+    day: Node
+    hour: Node
+    minute: Node
+    second: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalMakeTimestamptzNode:
+    year: Node
+    month: Node
+    day: Node
+    hour: Node
+    minute: Node
+    second: Node
+    zone: Node | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalMakeIntervalNode:
+    """Named PostgreSQL ``make_interval`` components."""
+
+    components: tuple[tuple[str, Node], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalEpochNode:
+    seconds: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalArithmeticNode:
+    timestamp: Node
+    operator: Literal["+", "-"]
+    interval: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalDifferenceNode:
+    left: Node
+    right: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalIntervalUnaryNode:
+    interval: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalIntervalScaleNode:
+    interval: Node
+    operator: Literal["*", "/"]
+    factor: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalTimezoneNode:
+    expression: Node
+    zone: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalExtractNode:
+    field: str
+    expression: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalTruncNode:
+    unit: str
+    expression: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalTruncTimestamptzNode:
+    unit: str
+    expression: Node
+    zone: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalBinNode:
+    stride: Node
+    expression: Node
+    origin: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalAgeNode:
+    left: Node
+    right: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalOverlapsNode:
+    left_start: Node
+    left_end: Node
+    right_start: Node
+    right_end: Node
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalJustifyNode:
+    kind: Literal["justify_days", "justify_hours", "justify_interval"]
+    interval: Node
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +323,7 @@ class ExcludedNode:
 @dataclass(frozen=True, slots=True)
 class OrderNode:
     expression: Node
-    direction: str
+    direction: Literal["asc", "desc"]
     nulls: NullPlacement | None = None
 
 
@@ -211,6 +348,13 @@ class CompoundNode:
 
 
 @dataclass(frozen=True, slots=True)
+class LockClauseNode:
+    strength: Literal["update", "no key update", "share", "key share"]
+    of: tuple[TableSourceNode, ...] = ()
+    wait: Literal["nowait", "skip locked"] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SelectNode:
     selections: tuple[Node, ...]
     from_source: SourceNode | None = None
@@ -224,6 +368,7 @@ class SelectNode:
     distinct: bool = False
     ctes: tuple[CteNode, ...] = ()
     compounds: tuple[CompoundNode, ...] = ()
+    locks: tuple[LockClauseNode, ...] = ()
 
 
 type CompoundOperator = Literal["union", "union all", "intersect", "except"]
@@ -290,7 +435,26 @@ class DeleteNode:
 type Node = (
     ColumnNode
     | ValueNode
+    | TemporalClockNode
     | BinaryNode
+    | TemporalMakeDateNode
+    | TemporalMakeTimeNode
+    | TemporalMakeTimestampNode
+    | TemporalMakeTimestamptzNode
+    | TemporalMakeIntervalNode
+    | TemporalEpochNode
+    | TemporalArithmeticNode
+    | TemporalDifferenceNode
+    | TemporalIntervalUnaryNode
+    | TemporalIntervalScaleNode
+    | TemporalTimezoneNode
+    | TemporalExtractNode
+    | TemporalTruncNode
+    | TemporalTruncTimestamptzNode
+    | TemporalBinNode
+    | TemporalAgeNode
+    | TemporalOverlapsNode
+    | TemporalJustifyNode
     | UnaryNode
     | FunctionNode
     | CaseNode

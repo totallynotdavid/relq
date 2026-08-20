@@ -10,6 +10,8 @@ class Dialect:
     name: str
     placeholder: str
     supports_returning: bool = True
+    supports_row_locking: bool = False
+    supports_temporal_arithmetic: bool = False
     max_parameters: int | None = None
 
 

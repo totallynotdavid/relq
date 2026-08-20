@@ -5,18 +5,18 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import overload
 
 import asyncpg
-from relq import RowAdapter
+from relq import Interval, RowAdapter
 from relq._compiler.api import compile_postgres
 from relq._execution import (
     Command,
-    MappedResultQuery,
-    RawResultQuery,
+    ReturningQuery,
     map_all,
     map_one,
     map_row,
     require_command,
 )
 from relq._query import Query, extract_query
+from relq.query import SelectQuery
 
 __all__ = ["PostgresDatabase"]
 
@@ -32,74 +32,118 @@ class PostgresDatabase:
     automatic prepared-statement cache does not survive that pooling mode.
     """
 
-    def __init__(self, connection: asyncpg.Connection | asyncpg.Pool) -> None:
+    def __init__(
+        self,
+        connection: asyncpg.Connection
+        | asyncpg.Pool
+        | asyncpg.pool.PoolConnectionProxy[asyncpg.Record],
+    ) -> None:
         self._connection: (
             asyncpg.Connection | asyncpg.Pool | asyncpg.pool.PoolConnectionProxy[asyncpg.Record]
         ) = connection
 
-    @classmethod
-    def _from_pool_connection(
-        cls, connection: asyncpg.pool.PoolConnectionProxy[asyncpg.Record]
-    ) -> PostgresDatabase:
-        database = object.__new__(cls)
-        database._connection = connection
-        return database
+    @staticmethod
+    async def _configure_connection(
+        connection: asyncpg.Connection | asyncpg.pool.PoolConnectionProxy[asyncpg.Record],
+    ) -> None:
+        await connection.set_type_codec(
+            "interval",
+            schema="pg_catalog",
+            encoder=_encode_interval,
+            decoder=_decode_interval,
+            format="tuple",
+        )
+
+    @asynccontextmanager
+    async def _connection_scope(
+        self,
+    ) -> AsyncGenerator[asyncpg.Connection | asyncpg.pool.PoolConnectionProxy[asyncpg.Record]]:
+        """Acquire and configure exactly one physical connection per operation."""
+        if isinstance(self._connection, asyncpg.Pool):
+            async with self._connection.acquire() as connection:
+                await self._configure_connection(connection)
+                yield connection
+            return
+        await self._configure_connection(self._connection)
+        yield self._connection
 
     @overload
-    async def fetch_all[Row](self, query: RawResultQuery[Row]) -> list[Row]: ...
+    async def fetch_all[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> list[Row]: ...
 
     @overload
-    async def fetch_all[Model](self, query: MappedResultQuery[Model]) -> list[Model]: ...
+    async def fetch_all[Row](self, query: ReturningQuery[Row]) -> list[Row]: ...
 
-    async def fetch_all(self, query: RawResultQuery[object] | MappedResultQuery[object]) -> object:
+    async def fetch_all[Row](self, query: Query[Row]) -> list[Row]:
         compiled = compile_postgres(query)
-        records = await self._connection.fetch(compiled.sql, *compiled.parameters)
+        async with self._connection_scope() as connection:
+            records = await connection.fetch(compiled.sql, *compiled.parameters)
         return map_all(query, (tuple(record) for record in records))
 
     @overload
-    async def fetch_one[Row](self, query: RawResultQuery[Row]) -> Row | None: ...
+    async def fetch_one[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> Row | None: ...
 
     @overload
-    async def fetch_one[Model](self, query: MappedResultQuery[Model]) -> Model | None: ...
+    async def fetch_one[Row](self, query: ReturningQuery[Row]) -> Row | None: ...
 
-    async def fetch_one(self, query: RawResultQuery[object] | MappedResultQuery[object]) -> object:
+    async def fetch_one[Row](self, query: Query[Row]) -> Row | None:
         compiled = compile_postgres(query)
-        row = await self._connection.fetchrow(compiled.sql, *compiled.parameters)
+        async with self._connection_scope() as connection:
+            row = await connection.fetchrow(compiled.sql, *compiled.parameters)
         return map_one(query, None if row is None else tuple(row))
 
+    @overload
+    async def fetch_all_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
+
+    @overload
     async def fetch_all_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
+
+    async def fetch_all_as[Row, Model](
+        self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> list[Model]:
         """Map result rows through an explicit, arity-validating adapter."""
         if extract_query(query).adapter is not None:
             raise TypeError("query already declares a result model; use fetch_all()")
         compiled = compile_postgres(query)
-        rows = await self._connection.fetch(compiled.sql, *compiled.parameters)
+        async with self._connection_scope() as connection:
+            rows = await connection.fetch(compiled.sql, *compiled.parameters)
         return [adapter.map(tuple(row)) for row in rows]
 
+    @overload
+    async def fetch_one_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
+
+    @overload
     async def fetch_one_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
+
+    async def fetch_one_as[Row, Model](
+        self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> Model | None:
         if extract_query(query).adapter is not None:
             raise TypeError("query already declares a result model; use fetch_one()")
         compiled = compile_postgres(query)
-        row = await self._connection.fetchrow(compiled.sql, *compiled.parameters)
+        async with self._connection_scope() as connection:
+            row = await connection.fetchrow(compiled.sql, *compiled.parameters)
         return None if row is None else adapter.map(tuple(row))
 
     @overload
-    def fetch_iter[Row](
-        self, query: RawResultQuery[Row]
+    def fetch_iter[SqlRow, Row](
+        self, query: SelectQuery[SqlRow, Row]
     ) -> AbstractAsyncContextManager[AsyncIterator[Row]]: ...
 
     @overload
-    def fetch_iter[Model](
-        self, query: MappedResultQuery[Model]
-    ) -> AbstractAsyncContextManager[AsyncIterator[Model]]: ...
+    def fetch_iter[Row](
+        self, query: ReturningQuery[Row]
+    ) -> AbstractAsyncContextManager[AsyncIterator[Row]]: ...
 
     @asynccontextmanager
-    async def fetch_iter(
-        self, query: RawResultQuery[object] | MappedResultQuery[object]
-    ) -> AsyncGenerator[AsyncIterator[object]]:
+    async def fetch_iter[Row](self, query: Query[Row]) -> AsyncGenerator[AsyncIterator[Row]]:
         """Stream rows through a server-side cursor instead of materializing them.
 
         PostgreSQL cursors are only valid inside a transaction, so this opens
@@ -108,31 +152,28 @@ class PostgresDatabase:
         that same scope.
         """
         compiled = compile_postgres(query)
-        if isinstance(self._connection, asyncpg.Pool):
-            async with self._connection.acquire() as connection, connection.transaction():
-                yield _stream_rows(query, connection, compiled.sql, compiled.parameters)
-        else:
-            async with self._connection.transaction():
-                yield _stream_rows(query, self._connection, compiled.sql, compiled.parameters)
+        async with self._connection_scope() as connection, connection.transaction():
+            yield _stream_rows(query, connection, compiled.sql, compiled.parameters)
 
     async def execute[Row](self, query: Command[Row]) -> int:
         require_command(query)
         compiled = compile_postgres(query)
-        # execute() with bound parameters shares asyncpg's prepared-statement
-        # cache with fetch()/fetchrow() (both route through Connection._execute).
-        # Only zero-parameter calls (e.g. DEFAULT VALUES) skip it, via asyncpg's
-        # simple-query protocol.
-        status = await self._connection.execute(compiled.sql, *compiled.parameters)
+        async with self._connection_scope() as connection:
+            # execute() with bound parameters shares asyncpg's prepared-statement
+            # cache with fetch()/fetchrow() (both route through Connection._execute).
+            # Only zero-parameter calls (e.g. DEFAULT VALUES) skip it, via asyncpg's
+            # simple-query protocol.
+            status = await connection.execute(compiled.sql, *compiled.parameters)
         return _command_count(status)
 
     @asynccontextmanager
     async def transaction(self) -> AsyncGenerator[PostgresDatabase]:
-        if isinstance(self._connection, asyncpg.Pool):
-            async with self._connection.acquire() as connection, connection.transaction():
-                yield PostgresDatabase._from_pool_connection(connection)
-        else:
-            async with self._connection.transaction():
-                yield self
+        async with self._connection_scope() as connection, connection.transaction():
+            yield (
+                self
+                if not isinstance(self._connection, asyncpg.Pool)
+                else PostgresDatabase(connection)
+            )
 
 
 def _command_count(status: str) -> int:
@@ -141,6 +182,17 @@ def _command_count(status: str) -> int:
     if not count.isdecimal():
         raise RuntimeError(f"asyncpg returned an invalid command status: {status!r}")
     return int(count)
+
+
+def _encode_interval(value: object) -> tuple[int, int, int]:
+    if not isinstance(value, Interval):
+        raise TypeError("PostgreSQL interval parameters must be relq.Interval values")
+    return (value.months, value.days, value.microseconds)
+
+
+def _decode_interval(value: tuple[int, int, int]) -> Interval:
+    months, days, microseconds = value
+    return Interval(months, days, microseconds)
 
 
 async def _stream_rows[Row](
