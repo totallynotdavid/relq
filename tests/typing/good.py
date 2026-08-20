@@ -65,7 +65,6 @@ from relq import (
     row_number,
     scalar,
     select,
-    select_model,
     statement_timestamp,
     subtract_interval,
     sum,
@@ -262,11 +261,12 @@ class OuterJoinResult:
 
 manager_for_result = users.as_("manager_for_result")
 outer_join_result = (
-    select_model(OuterJoinResult, users.id, manager_for_result.id.nullable())
+    select(users.id, manager_for_result.id.nullable())
+    .decode(OuterJoinResult)
     .from_(users)
     .left_join(manager_for_result, on=users.id.eq(manager_for_result.id))
 )
-assert_type(outer_join_result, SelectQuery[tuple[object, ...], OuterJoinResult])
+assert_type(outer_join_result, SelectQuery[tuple[int, int | None], OuterJoinResult])
 
 
 def assert_executor_result_types(database: SQLiteDatabase) -> None:
@@ -277,6 +277,7 @@ def assert_executor_result_types(database: SQLiteDatabase) -> None:
 model_insert = (
     insert_into(users)
     .values(id=3, email="lin@example.com", active=True)
-    .returning_model(OuterJoinResult, users.id, users.id)
+    .returning(users.id, users.id)
+    .decode(OuterJoinResult)
 )
 assert_type(model_insert, InsertQuery[OuterJoinResult, Literal[True]])

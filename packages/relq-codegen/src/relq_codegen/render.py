@@ -68,12 +68,24 @@ def render(
     for table in tables:
         class_name = _class_name(table.name)
         exported.append(class_name)
-        body.append(f"class {class_name}(Table):")
+        resolved_columns = tuple(
+            (field, resolve_type(field.sql_type, enum_types, config)) for field in table.columns
+        )
+        for _, resolved in resolved_columns:
+            imports.update(resolved.imports())
+        row_shape = ", ".join(
+            (
+                f"{resolved.annotation.render()} | None"
+                if field.nullable
+                else resolved.annotation.render()
+            )
+            for field, resolved in resolved_columns
+        )
+        table_shape = f"tuple[{row_shape}]" if row_shape else "tuple[()]"
+        body.append(f"class {class_name}(Table[{table_shape}]):")
         if not table.columns:
             body.append("    pass")
-        for field in table.columns:
-            resolved = resolve_type(field.sql_type, enum_types, config)
-            imports.update(resolved.imports())
+        for field, resolved in resolved_columns:
             annotation = (
                 f"{resolved.annotation.render()} | None"
                 if field.nullable

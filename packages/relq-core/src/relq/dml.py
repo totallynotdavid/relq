@@ -79,23 +79,9 @@ def _expression(value: object) -> Expression:
     return value
 
 
-def _model_returning[Model](
-    model: type[Model] | RowAdapter[Model], expressions: tuple[Expression, ...]
-) -> tuple[tuple[Node, ...], RowAdapter[Model]]:
-    adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
-    if not expressions:
-        raise ValueError("returning_model requires at least one expression")
-    if len(expressions) != adapter.arity:
-        raise ValueError(
-            f"{adapter.model_name} requires {adapter.arity} RETURNING expressions; "
-            f"received {len(expressions)}"
-        )
-    return tuple(expression_node(expression) for expression in expressions), adapter
-
-
 @dataclass(frozen=True, slots=True, init=False)
 class _DmlQuery(Query[Row_co], Generic[Row_co]):
-    _table: Table
+    _table: Table[object]
 
     def with_node(self, node: InsertNode | UpdateNode | DeleteNode) -> Self:
         return new_query(type(self), node, extract_query(self).adapter, table=self._table)
@@ -270,15 +256,13 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
             InsertQuery, replace(self._node, returning=tuple(nodes)), table=self._table
         )
 
-    def returning_model[Model](
-        self, model: type[Model] | RowAdapter[Model], *expressions: Expression
+    def decode[Model](
+        self: InsertQuery[Row_co, Literal[True]], model: type[Model] | RowAdapter[Model]
     ) -> InsertQuery[Model, Literal[True]]:
-        if self._node.returning:
-            raise ValueError("returning_model() can only be specified once")
-        nodes, adapter = _model_returning(model, expressions)
-        return new_query(
-            InsertQuery, replace(self._node, returning=nodes), adapter, table=self._table
-        )
+        adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
+        if len(self._node.returning) != adapter.arity:
+            raise ValueError(f"{adapter.model_name} does not match RETURNING width")
+        return new_query(InsertQuery, self._node, adapter, table=self._table)
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,15 +397,14 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
             UpdateQuery, replace(self._node, returning=tuple(nodes)), table=self._table
         )
 
-    def returning_model[Model](
-        self, model: type[Model] | RowAdapter[Model], *expressions: Expression
+    def decode[Model](
+        self: UpdateQuery[Row_co, Literal[True], Bounded],
+        model: type[Model] | RowAdapter[Model],
     ) -> UpdateQuery[Model, Literal[True], Bounded]:
-        if self._node.returning:
-            raise ValueError("returning_model() can only be specified once")
-        nodes, adapter = _model_returning(model, expressions)
-        return new_query(
-            UpdateQuery, replace(self._node, returning=nodes), adapter, table=self._table
-        )
+        adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
+        if len(self._node.returning) != adapter.arity:
+            raise ValueError(f"{adapter.model_name} does not match RETURNING width")
+        return new_query(UpdateQuery, self._node, adapter, table=self._table)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -528,26 +511,25 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
             DeleteQuery, replace(self._node, returning=tuple(nodes)), table=self._table
         )
 
-    def returning_model[Model](
-        self, model: type[Model] | RowAdapter[Model], *expressions: Expression
+    def decode[Model](
+        self: DeleteQuery[Row_co, Literal[True], Bounded],
+        model: type[Model] | RowAdapter[Model],
     ) -> DeleteQuery[Model, Literal[True], Bounded]:
-        if self._node.returning:
-            raise ValueError("returning_model() can only be specified once")
-        nodes, adapter = _model_returning(model, expressions)
-        return new_query(
-            DeleteQuery, replace(self._node, returning=nodes), adapter, table=self._table
-        )
+        adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
+        if len(self._node.returning) != adapter.arity:
+            raise ValueError(f"{adapter.model_name} does not match RETURNING width")
+        return new_query(DeleteQuery, self._node, adapter, table=self._table)
 
 
-def insert_into(table: Table) -> InsertQuery[tuple[()], Literal[False]]:
+def insert_into(table: Table[object]) -> InsertQuery[tuple[()], Literal[False]]:
     return new_query(InsertQuery, InsertNode(table_node(table)), table=table)
 
 
-def update(table: Table) -> UpdateQuery[tuple[()], Literal[False], Literal[False]]:
+def update(table: Table[object]) -> UpdateQuery[tuple[()], Literal[False], Literal[False]]:
     return new_query(UpdateQuery, UpdateNode(table_node(table), ()), table=table)
 
 
-def delete_from(table: Table) -> DeleteQuery[tuple[()], Literal[False], Literal[False]]:
+def delete_from(table: Table[object]) -> DeleteQuery[tuple[()], Literal[False], Literal[False]]:
     return new_query(DeleteQuery, DeleteNode(table_node(table)), table=table)
 
 

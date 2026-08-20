@@ -30,16 +30,19 @@ behind it.
 `select(...)` and `.returning(...)` are raw-result queries: `fetch_all` /
 `fetch_one` return the exact tuple type you selected, with the driver's own
 values (SQLite's `0`/`1` for booleans, text timestamps, and so on).
-`select_model(Model, ...)` and `.returning_model(Model, ...)` attach a declared
-decoder to the same SELECT or DML builder. They preserve every valid SQL
-composition operation, but `fetch_all` / `fetch_one` return the declared
-dataclass or `NamedTuple`. Decoding never changes what a query can mean in SQL.
+`.decode(Model)` attaches a declared decoder to the same SELECT or DML builder.
+It preserves the query's SQL projection and every valid composition operation,
+but `fetch_all` / `fetch_one` return the declared dataclass or `NamedTuple`.
+Decoding never changes what a query can mean in SQL.
 
 ```python
 @dataclass
 class UserEmail:
     id: int
     email: str
+
+
+decoded = select(users.id, users.email).from_(users).decode(UserEmail)
 
 
 rows = database.fetch_all_as(

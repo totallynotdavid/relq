@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from relq import Column, Table, column, select_model, value
+from relq import Column, Table, column, select, value
 from relq._ast import Node
 
 
@@ -26,4 +26,4 @@ users.id.asc().node()
 
 # Model projections accept relq's nominal expression values, not user-defined
 # structural lookalikes that could smuggle in an arbitrary AST node.
-select_model(UserRow, PretendExpression())
+select(PretendExpression()).decode(UserRow)

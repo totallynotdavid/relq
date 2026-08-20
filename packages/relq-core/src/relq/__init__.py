@@ -86,7 +86,7 @@ from relq.expressions import (
     unbounded_preceding,
     value,
 )
-from relq.query import SelectQuery, cte, select, select_model
+from relq.query import SelectQuery, cte, select, select_all_from
 from relq.rows import (
     AwareDateTime,
     AwareTime,
@@ -229,7 +229,7 @@ __all__ = [
     "row_number",
     "scalar",
     "select",
-    "select_model",
+    "select_all_from",
     "statement_timestamp",
     "str_decoder",
     "subtract",

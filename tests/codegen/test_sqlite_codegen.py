@@ -29,7 +29,7 @@ def test_sqlite_codegen_emits_nullable_and_primary_key_types() -> None:
         'create table "user-events" (id integer primary key, "display name" text, active boolean)'
     )
     generated = generate_sqlite(connection)
-    assert "class UserEvents(Table):" in generated
+    assert "class UserEvents(Table[tuple[int, str | None, bool | None]]):" in generated
     assert "id: Column[int] = column(int)" in generated
     assert "display_name: Column[str | None] = column(str, name='display name')" in generated
     namespace: dict[str, object] = {}

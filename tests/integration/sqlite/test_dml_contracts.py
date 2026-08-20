@@ -122,6 +122,7 @@ def test_declared_result_models_support_wide_projection_and_returning() -> None:
     assert database.fetch_one(
         update(employees)
         .values(salary=11)
-        .returning_model(EmployeeRow, employees.id, employees.name)
+        .returning(employees.id, employees.name)
+        .decode(EmployeeRow)
         .where(employees.id.eq(1))
     ) == EmployeeRow(1, "Ada")

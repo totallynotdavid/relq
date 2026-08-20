@@ -9,7 +9,7 @@ from pathlib import Path
 
 import asyncpg
 import pytest
-from relq import aware_datetime, naive_time, select_model
+from relq import aware_datetime, naive_time, select_all_from
 from relq_codegen import (
     CodegenConfig,
     DirectType,
@@ -68,7 +68,7 @@ async def test_codegen_preserves_type_identity_and_generated_batch_helpers(
         "origin: Column[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None]"
         in generated
     )
-    namespace: dict[str, object] = {"select_model": select_model}
+    namespace: dict[str, object] = {"select_all_from": select_all_from}
     exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
     assert "def insert_relq_codegen_values_many" in generated
 
@@ -93,19 +93,9 @@ async def test_generated_temporal_model_decodes_postgres_temporal_columns(
         insert_relq_codegen_values({"tenant": 1, "occurred_at": occurred_at, "due_time": due_time})
     )
     rows = await database.fetch_all(
-        select_model(
-            relq_codegen_values_row_adapter,
-            relq_codegen_values.id,
-            relq_codegen_values.tenant,
-            relq_codegen_values.identifier,
-            relq_codegen_values.states,
-            relq_codegen_values.price,
-            relq_codegen_values.occurred_at,
-            relq_codegen_values.due_time,
-            relq_codegen_values.payload,
-            relq_codegen_values.origin,
-            relq_codegen_values.computed,
-        ).from_(relq_codegen_values)
+        select_all_from(relq_codegen_values)
+        .from_(relq_codegen_values)
+        .decode(relq_codegen_values_row_adapter)
     )
     assert rows == [
         RelqCodegenValuesRow(

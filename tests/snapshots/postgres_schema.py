@@ -28,7 +28,7 @@ class RelqIntegrationState(enum.StrEnum):
     IN_PROGRESS = 'in-progress'
     DONE = 'done'
 
-class RelqCodegenValues(Table):
+class RelqCodegenValues(Table[tuple[int, int, uuid.UUID | None, list[RelqIntegrationState], decimal.Decimal, AwareDateTime | None, NaiveTime | None, object | None, ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None, int | None]]):
     id: Column[int] = column(int)
     tenant: Column[int] = column(int)
     identifier: Column[uuid.UUID | None] = column(uuid.UUID)
@@ -91,7 +91,7 @@ relq_codegen_values_row_adapter = row_adapter(
     RelqCodegenValuesRow,
     decoders=(int_decoder(), int_decoder(), nullable(uuid_decoder()), list_decoder(enum_decoder(RelqIntegrationState)), decimal_decoder(), nullable(aware_datetime_decoder()), nullable(naive_time_decoder()), nullable(json_decoder()), nullable(inet_decoder()), nullable(int_decoder())),
 )
-class RelqIntegrationArchive(Table):
+class RelqIntegrationArchive(Table[tuple[int, str]]):
     id: Column[int] = column(int)
     name: Column[str] = column(str)
 
@@ -124,7 +124,7 @@ relq_integration_archive_row_adapter = row_adapter(
     RelqIntegrationArchiveRow,
     decoders=(int_decoder(), str_decoder()),
 )
-class RelqIntegrationUsers(Table):
+class RelqIntegrationUsers(Table[tuple[int, int | None, str, bool, RelqIntegrationState, list[RelqIntegrationState], int | None]]):
     id: Column[int] = column(int)
     manager_id: Column[int | None] = column(int)
     name: Column[str] = column(str)

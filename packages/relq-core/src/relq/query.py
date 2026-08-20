@@ -30,7 +30,7 @@ from relq.expressions import (
     Source,
     Table,
 )
-from relq.expressions.relations import derived_table, source_node, table_node
+from relq.expressions.relations import derived_table, source_columns, source_node, table_node
 from relq.rows import RowAdapter, row_adapter
 
 Row_co = TypeVar("Row_co", covariant=True)
@@ -41,31 +41,31 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
     def _with_node(self, node: SelectNode) -> Self:
         return new_query(type(self), node, extract_query(self).adapter)
 
-    def from_(self, source: Source) -> Self:
+    def from_(self, source: Source[object]) -> Self:
         node = select_node(self)
         if node.from_source is not None:
             raise ValueError("from_() can only be specified once")
         return self._with_node(replace(node, from_source=source_node(source)))
 
-    def inner_join(self, source: Source, *, on: BooleanExpression) -> Self:
+    def inner_join(self, source: Source[object], *, on: BooleanExpression) -> Self:
         return self._join(source, on, "inner")
 
-    def left_join(self, source: Source, *, on: BooleanExpression) -> Self:
+    def left_join(self, source: Source[object], *, on: BooleanExpression) -> Self:
         return self._join(source, on, "left")
 
-    def right_join(self, source: Source, *, on: BooleanExpression) -> Self:
+    def right_join(self, source: Source[object], *, on: BooleanExpression) -> Self:
         return self._join(source, on, "right")
 
-    def full_join(self, source: Source, *, on: BooleanExpression) -> Self:
+    def full_join(self, source: Source[object], *, on: BooleanExpression) -> Self:
         return self._join(source, on, "full")
 
-    def cross_join(self, source: Source) -> Self:
+    def cross_join(self, source: Source[object]) -> Self:
         node = select_node(self)
         _require_from_source(node)
         join = JoinNode(source_node(source), StarNode(), "cross")
         return self._with_node(replace(node, joins=(*node.joins, join)))
 
-    def _join(self, source: Source, on: BooleanExpression, kind: str) -> Self:
+    def _join(self, source: Source[object], on: BooleanExpression, kind: str) -> Self:
         node = select_node(self)
         _require_from_source(node)
         join = JoinNode(source_node(source), node_of(on), kind)
@@ -124,7 +124,7 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
             raise ValueError("offset must be non-negative")
         return self._with_node(replace(node, offset=amount))
 
-    def as_[Relation: DerivedTable](self, relation: type[Relation], alias: str) -> Relation:
+    def as_[Relation: DerivedTable[object]](self, relation: type[Relation], alias: str) -> Relation:
         node = select_node(self)
         _validate_output_schema(node, relation.output_names())
         return derived_table(relation, DerivedSourceNode(node, alias), alias)
@@ -151,7 +151,7 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
         return self._compound(other, "except")
 
     def with_[CteSqlRow, CteRow](
-        self, source: CteTable, query: _SelectQuery[CteSqlRow, CteRow]
+        self, source: CteTable[object], query: _SelectQuery[CteSqlRow, CteRow]
     ) -> Self:
         name = source.reference
         query_node = select_node(query)
@@ -160,7 +160,7 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
         return self._with_node(replace(node, ctes=(*node.ctes, CteNode(name, query_node))))
 
     def with_recursive[CteSqlRow, CteRow](
-        self, source: CteTable, query: _SelectQuery[CteSqlRow, CteRow]
+        self, source: CteTable[object], query: _SelectQuery[CteSqlRow, CteRow]
     ) -> Self:
         """Add a recursive CTE; its query may reference its own source name."""
         name = source.reference
@@ -174,7 +174,7 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
     def _lock(
         self,
         strength: Literal["update", "no key update", "share", "key share"],
-        tables: tuple[Table, ...],
+        tables: tuple[Table[object], ...],
     ) -> Self:
         sources = tuple(table_node(table) for table in tables)
         node = select_node(self)
@@ -196,16 +196,26 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
 class SelectQuery[SqlRow, Row = SqlRow](_SelectQuery[SqlRow, Row]):
     """An immutable SELECT with an optional executor-only row decoder."""
 
-    def for_update(self, *of: Table) -> Self:
+    def decode[Model](self, model: type[Model] | RowAdapter[Model]) -> SelectQuery[SqlRow, Model]:
+        """Attach an executor-only row decoder without changing SQL semantics."""
+        adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
+        if len(select_node(self).selections) != adapter.arity:
+            raise ValueError(
+                f"{adapter.model_name} requires {adapter.arity} result columns; "
+                f"query projects {len(select_node(self).selections)}"
+            )
+        return new_query(SelectQuery, select_node(self), adapter)
+
+    def for_update(self, *of: Table[object]) -> Self:
         return self._lock("update", of)
 
-    def for_no_key_update(self, *of: Table) -> Self:
+    def for_no_key_update(self, *of: Table[object]) -> Self:
         return self._lock("no key update", of)
 
-    def for_share(self, *of: Table) -> Self:
+    def for_share(self, *of: Table[object]) -> Self:
         return self._lock("share", of)
 
-    def for_key_share(self, *of: Table) -> Self:
+    def for_key_share(self, *of: Table[object]) -> Self:
         return self._lock("key share", of)
 
     def no_wait(self) -> Self:
@@ -215,7 +225,7 @@ class SelectQuery[SqlRow, Row = SqlRow](_SelectQuery[SqlRow, Row]):
         return self._wait("skip locked")
 
 
-def cte[Relation: CteTable](relation: type[Relation], name: str) -> Relation:
+def cte[Relation: CteTable[object]](relation: type[Relation], name: str) -> Relation:
     """Reference a CTE declared by :meth:`SelectQuery.with_`."""
     return relation(name)
 
@@ -285,6 +295,14 @@ def select(first: object, *rest: object, **named: object) -> object:
     return result
 
 
+def select_all_from[SqlRow](source: Source[SqlRow]) -> SelectQuery[SqlRow]:
+    """Project every declared column of one relation in its schema order."""
+    columns = source_columns(source)
+    if not columns:
+        raise ValueError("select_all_from requires a relation with declared columns")
+    return new_query(SelectQuery, SelectNode(tuple(expression_node(column) for column in columns)))
+
+
 def _selection_nodes(
     expressions: tuple[object, ...], *, limit: int, context: str
 ) -> tuple[Node, ...]:
@@ -303,43 +321,6 @@ def _expressions(expressions: tuple[object, ...], context: str) -> tuple[Express
             raise TypeError(f"{context} accepts only SQL expressions")
         typed.append(expression)
     return tuple(typed)
-
-
-@overload
-def select_model[Model](
-    model: type[Model], *expressions: Expression
-) -> SelectQuery[tuple[object, ...], Model]: ...
-
-
-@overload
-def select_model[Model](
-    model: RowAdapter[Model], *expressions: Expression
-) -> SelectQuery[tuple[object, ...], Model]: ...
-
-
-def select_model[Model](
-    model: type[Model] | RowAdapter[Model], *expressions: Expression
-) -> SelectQuery[tuple[object, ...], Model]:
-    """Attach a declared decoder to a SELECT, with no model-width limit."""
-    return _select_model(model, expressions)
-
-
-def _select_model[Model](
-    model: type[Model] | RowAdapter[Model], expressions: tuple[Expression, ...]
-) -> SelectQuery[tuple[object, ...], Model]:
-    adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
-    if not expressions:
-        raise ValueError("select_model requires at least one expression")
-    if len(expressions) != adapter.arity:
-        raise ValueError(
-            f"{adapter.model_name} requires {adapter.arity} selected expressions; "
-            f"received {len(expressions)}"
-        )
-    return new_query(
-        SelectQuery,
-        SelectNode(tuple(expression_node(expression) for expression in expressions)),
-        adapter,
-    )
 
 
 def _require_from_source(node: SelectNode) -> None:
