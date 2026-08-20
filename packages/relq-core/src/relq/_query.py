@@ -9,15 +9,8 @@ from relq.rows import RowAdapter
 if TYPE_CHECKING:
     from typing import Literal
 
-    from relq.dml import (
-        DeleteQuery,
-        InsertQuery,
-        ModelDeleteQuery,
-        ModelInsertQuery,
-        ModelUpdateQuery,
-        UpdateQuery,
-    )
-    from relq.query import ModelSelectQuery, SelectQuery
+    from relq.dml import DeleteQuery, InsertQuery, UpdateQuery
+    from relq.query import SelectQuery
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,23 +32,13 @@ class Query[Row]:
 
 
 @overload
-def new_query[Row](
-    query_type: type[SelectQuery[Row]],
+def new_query[SqlRow, Row](
+    query_type: type[SelectQuery[SqlRow, Row]],
     node: QueryNode,
     adapter: RowAdapter[Row] | None = None,
     *,
     table: object | None = None,
-) -> SelectQuery[Row]: ...
-
-
-@overload
-def new_query[Model](
-    query_type: type[ModelSelectQuery[Model]],
-    node: QueryNode,
-    adapter: RowAdapter[Model] | None = None,
-    *,
-    table: object | None = None,
-) -> ModelSelectQuery[Model]: ...
+) -> SelectQuery[SqlRow, Row]: ...
 
 
 @overload
@@ -66,16 +49,6 @@ def new_query[Row, Returns: (Literal[True], Literal[False])](
     *,
     table: object | None = None,
 ) -> InsertQuery[Row, Returns]: ...
-
-
-@overload
-def new_query[Model](
-    query_type: type[ModelInsertQuery[Model]],
-    node: QueryNode,
-    adapter: RowAdapter[Model] | None = None,
-    *,
-    table: object | None = None,
-) -> ModelInsertQuery[Model]: ...
 
 
 @overload
@@ -93,16 +66,6 @@ def new_query[
 
 
 @overload
-def new_query[Model](
-    query_type: type[ModelUpdateQuery[Model]],
-    node: QueryNode,
-    adapter: RowAdapter[Model] | None = None,
-    *,
-    table: object | None = None,
-) -> ModelUpdateQuery[Model]: ...
-
-
-@overload
 def new_query[
     Row,
     Returns: (Literal[True], Literal[False]),
@@ -114,16 +77,6 @@ def new_query[
     *,
     table: object | None = None,
 ) -> DeleteQuery[Row, Returns, Bounded]: ...
-
-
-@overload
-def new_query[Model](
-    query_type: type[ModelDeleteQuery[Model]],
-    node: QueryNode,
-    adapter: RowAdapter[Model] | None = None,
-    *,
-    table: object | None = None,
-) -> ModelDeleteQuery[Model]: ...
 
 
 @overload

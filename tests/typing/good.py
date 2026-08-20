@@ -15,8 +15,6 @@ from relq import (
     ExtractField,
     InsertQuery,
     Interval,
-    ModelInsertQuery,
-    ModelSelectQuery,
     NaiveDateTime,
     NaiveTime,
     NullablePredicate,
@@ -261,7 +259,7 @@ outer_join_result = (
     .from_(users)
     .left_join(manager_for_result, on=users.id.eq(manager_for_result.id))
 )
-assert_type(outer_join_result, ModelSelectQuery[OuterJoinResult])
+assert_type(outer_join_result, SelectQuery[tuple[object, ...], OuterJoinResult])
 
 
 def assert_executor_result_types(database: SQLiteDatabase) -> None:
@@ -274,4 +272,4 @@ model_insert = (
     .values(id=3, email="lin@example.com", active=True)
     .returning_model(OuterJoinResult, users.id, users.id)
 )
-assert_type(model_insert, ModelInsertQuery[OuterJoinResult])
+assert_type(model_insert, InsertQuery[OuterJoinResult, Literal[True]])

@@ -8,25 +8,9 @@ from relq._query import Query, extract_query
 from relq.dml import (
     DeleteQuery,
     InsertQuery,
-    ModelDeleteQuery,
-    ModelInsertQuery,
-    ModelUpdateQuery,
     UpdateQuery,
 )
-from relq.query import ModelSelectQuery, SelectQuery
 
-type RawResultQuery[Row] = (
-    SelectQuery[Row]
-    | InsertQuery[Row, Literal[True]]
-    | UpdateQuery[Row, Literal[True], Literal[True]]
-    | DeleteQuery[Row, Literal[True], Literal[True]]
-)
-type MappedResultQuery[Model] = (
-    ModelSelectQuery[Model]
-    | ModelInsertQuery[Model]
-    | ModelUpdateQuery[Model]
-    | ModelDeleteQuery[Model]
-)
 type Command[Row] = (
     InsertQuery[Row, Literal[False]]
     | UpdateQuery[Row, Literal[False], Literal[True]]

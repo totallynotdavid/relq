@@ -70,7 +70,7 @@ insert_into(users).values(email="ada@example.com").returning(users.id, users.ema
 ```
 
 `.returning(...)` turns a DML builder into a row-producing query, so it goes to
-`fetch_all`/`fetch_one`, not `execute`. Tuple `returning` overloads stop at six
-expressions (`select` stops at eight); wider results use
+`fetch_all`/`fetch_one`, not `execute`. Tuple `returning` overloads stop at eight
+expressions, matching `select`; wider results use
 `returning_model(Model, ...)` / `select_model(Model, ...)`, which fix arity and
-executor mapping explicitly rather than degrading to `tuple[object, ...]`.
+attach executor-only decoding rather than degrading to `tuple[object, ...]`.

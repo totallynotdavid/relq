@@ -3,19 +3,17 @@
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from types import TracebackType
-from typing import Protocol, Self, overload
+from typing import Protocol, Self
 
 from relq import RowAdapter
 from relq._compiler.api import compile_sqlite
 from relq._execution import (
     Command,
-    MappedResultQuery,
-    RawResultQuery,
     map_all,
     map_one,
     require_command,
 )
-from relq._query import extract_query
+from relq._query import Query, extract_query
 
 
 class _Cursor(Protocol):
@@ -47,30 +45,18 @@ class SQLiteDatabase:
     def __init__(self, connection: _Connection) -> None:
         self._connection = connection
 
-    @overload
-    def fetch_all[Row](self, query: RawResultQuery[Row]) -> list[Row]: ...
-
-    @overload
-    def fetch_all[Model](self, query: MappedResultQuery[Model]) -> list[Model]: ...
-
-    def fetch_all(self, query: RawResultQuery[object] | MappedResultQuery[object]) -> object:
+    def fetch_all[Row](self, query: Query[Row]) -> list[Row]:
         compiled = compile_sqlite(query)
         cursor = self._connection.execute(compiled.sql, compiled.parameters)
         return map_all(query, cursor.fetchall())
 
-    @overload
-    def fetch_one[Row](self, query: RawResultQuery[Row]) -> Row | None: ...
-
-    @overload
-    def fetch_one[Model](self, query: MappedResultQuery[Model]) -> Model | None: ...
-
-    def fetch_one(self, query: RawResultQuery[object] | MappedResultQuery[object]) -> object:
+    def fetch_one[Row](self, query: Query[Row]) -> Row | None:
         compiled = compile_sqlite(query)
         cursor = self._connection.execute(compiled.sql, compiled.parameters)
         return map_one(query, cursor.fetchone())
 
     def fetch_all_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+        self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> list[Model]:
         """Map result rows through an explicit, arity-validating adapter."""
         if extract_query(query).adapter is not None:
@@ -80,7 +66,7 @@ class SQLiteDatabase:
         return [adapter.map(row) for row in cursor.fetchall()]
 
     def fetch_one_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+        self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> Model | None:
         if extract_query(query).adapter is not None:
             raise TypeError("query already declares a result model; use fetch_one()")

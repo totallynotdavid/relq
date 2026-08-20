@@ -3,9 +3,6 @@
 from relq.dml import (
     DeleteQuery,
     InsertQuery,
-    ModelDeleteQuery,
-    ModelInsertQuery,
-    ModelUpdateQuery,
     UpdateQuery,
     delete_from,
     insert_into,
@@ -89,7 +86,7 @@ from relq.expressions import (
     unbounded_preceding,
     value,
 )
-from relq.query import ModelSelectQuery, SelectQuery, cte, select, select_model
+from relq.query import SelectQuery, cte, select, select_model
 from relq.rows import (
     AwareDateTime,
     AwareTime,
@@ -144,10 +141,6 @@ __all__ = [
     "FrameBoundary",
     "InsertQuery",
     "Interval",
-    "ModelDeleteQuery",
-    "ModelInsertQuery",
-    "ModelSelectQuery",
-    "ModelUpdateQuery",
     "NaiveDateTime",
     "NaiveTime",
     "NullablePredicate",

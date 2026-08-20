@@ -131,19 +131,19 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         return self._with_source(InsertRowsSourceNode(prepared))
 
     @overload
-    def from_select[A](
-        self, query: SelectQuery[tuple[A]], first: Column[A], /
+    def from_select[A, Result](
+        self, query: SelectQuery[tuple[A], Result], first: Column[A], /
     ) -> InsertQuery[Row_co, Returns]: ...
 
     @overload
-    def from_select[A, B](
-        self, query: SelectQuery[tuple[A, B]], first: Column[A], second: Column[B], /
+    def from_select[A, B, Result](
+        self, query: SelectQuery[tuple[A, B], Result], first: Column[A], second: Column[B], /
     ) -> InsertQuery[Row_co, Returns]: ...
 
     @overload
-    def from_select[A, B, C](
+    def from_select[A, B, C, Result](
         self,
-        query: SelectQuery[tuple[A, B, C]],
+        query: SelectQuery[tuple[A, B, C], Result],
         first: Column[A],
         second: Column[B],
         third: Column[C],
@@ -151,9 +151,9 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
     ) -> InsertQuery[Row_co, Returns]: ...
 
     @overload
-    def from_select[A, B, C, D](
+    def from_select[A, B, C, D, Result](
         self,
-        query: SelectQuery[tuple[A, B, C, D]],
+        query: SelectQuery[tuple[A, B, C, D], Result],
         first: Column[A],
         second: Column[B],
         third: Column[C],
@@ -162,7 +162,7 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
     ) -> InsertQuery[Row_co, Returns]: ...
 
     def from_select(
-        self, query: SelectQuery[tuple[object, ...]], *columns: object
+        self, query: SelectQuery[tuple[object, ...], object], *columns: object
     ) -> InsertQuery[Row_co, Returns]:
         names = _target_column_names(self._table, columns)
         node = select_node(query)
@@ -234,8 +234,8 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         if named:
             raise TypeError("returning expressions must be positional")
         expressions = (first, *rest)
-        if len(expressions) > 6:
-            raise ValueError("returning supports at most six expressions")
+        if len(expressions) > 8:
+            raise ValueError("returning supports at most eight expressions")
         nodes: list[Node] = []
         for expression in expressions:
             if not isinstance(expression, Expression):
@@ -247,16 +247,13 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
 
     def returning_model[Model](
         self, model: type[Model] | RowAdapter[Model], *expressions: Expression
-    ) -> ModelInsertQuery[Model]:
+    ) -> InsertQuery[Model, Literal[True]]:
         if self._node.returning:
             raise ValueError("returning_model() can only be specified once")
         nodes, adapter = _model_returning(model, expressions)
-        return new_query(ModelInsertQuery, replace(self._node, returning=nodes), adapter)
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ModelInsertQuery[Model](Query[Model]):
-    """An INSERT RETURNING query decoded into one declared model."""
+        return new_query(
+            InsertQuery, replace(self._node, returning=nodes), adapter, table=self._table
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,12 +297,18 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         return new_query(
             UpdateQuery,
             replace(self._node, where=node_of(predicate), bounded=True),
+            extract_query(self).adapter,
             table=self._table,
         )
 
     def all_rows(self) -> UpdateQuery[Row_co, Returns, Literal[True]]:
         """Explicitly authorize a full-table update."""
-        return new_query(UpdateQuery, replace(self._node, bounded=True), table=self._table)
+        return new_query(
+            UpdateQuery,
+            replace(self._node, bounded=True),
+            extract_query(self).adapter,
+            table=self._table,
+        )
 
     @overload
     def returning[A](self, first: Expr[A]) -> UpdateQuery[tuple[A], Literal[True], Bounded]: ...
@@ -349,8 +352,8 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         if named:
             raise TypeError("returning expressions must be positional")
         expressions = (first, *rest)
-        if len(expressions) > 6:
-            raise ValueError("returning supports at most six expressions")
+        if len(expressions) > 8:
+            raise ValueError("returning supports at most eight expressions")
         nodes: list[Node] = []
         for expression in expressions:
             if not isinstance(expression, Expression):
@@ -362,16 +365,13 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
 
     def returning_model[Model](
         self, model: type[Model] | RowAdapter[Model], *expressions: Expression
-    ) -> ModelUpdateQuery[Model]:
+    ) -> UpdateQuery[Model, Literal[True], Bounded]:
         if self._node.returning:
             raise ValueError("returning_model() can only be specified once")
         nodes, adapter = _model_returning(model, expressions)
-        return new_query(ModelUpdateQuery, replace(self._node, returning=nodes), adapter)
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ModelUpdateQuery[Model](Query[Model]):
-    """An UPDATE RETURNING query decoded into one declared model."""
+        return new_query(
+            UpdateQuery, replace(self._node, returning=nodes), adapter, table=self._table
+        )
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -387,12 +387,18 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         return new_query(
             DeleteQuery,
             replace(self._node, where=node_of(predicate), bounded=True),
+            extract_query(self).adapter,
             table=self._table,
         )
 
     def all_rows(self) -> DeleteQuery[Row_co, Returns, Literal[True]]:
         """Explicitly authorize a full-table delete."""
-        return new_query(DeleteQuery, replace(self._node, bounded=True), table=self._table)
+        return new_query(
+            DeleteQuery,
+            replace(self._node, bounded=True),
+            extract_query(self).adapter,
+            table=self._table,
+        )
 
     @overload
     def returning[A](self, first: Expr[A]) -> DeleteQuery[tuple[A], Literal[True], Bounded]: ...
@@ -436,8 +442,8 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         if named:
             raise TypeError("returning expressions must be positional")
         expressions = (first, *rest)
-        if len(expressions) > 6:
-            raise ValueError("returning supports at most six expressions")
+        if len(expressions) > 8:
+            raise ValueError("returning supports at most eight expressions")
         nodes: list[Node] = []
         for expression in expressions:
             if not isinstance(expression, Expression):
@@ -449,16 +455,13 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
 
     def returning_model[Model](
         self, model: type[Model] | RowAdapter[Model], *expressions: Expression
-    ) -> ModelDeleteQuery[Model]:
+    ) -> DeleteQuery[Model, Literal[True], Bounded]:
         if self._node.returning:
             raise ValueError("returning_model() can only be specified once")
         nodes, adapter = _model_returning(model, expressions)
-        return new_query(ModelDeleteQuery, replace(self._node, returning=nodes), adapter)
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ModelDeleteQuery[Model](Query[Model]):
-    """A DELETE RETURNING query decoded into one declared model."""
+        return new_query(
+            DeleteQuery, replace(self._node, returning=nodes), adapter, table=self._table
+        )
 
 
 def insert_into(table: Table) -> InsertQuery[tuple[()], Literal[False]]:

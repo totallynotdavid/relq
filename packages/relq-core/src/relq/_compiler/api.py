@@ -1,20 +1,9 @@
 """Fixed-dialect compilation entry points."""
 
-from typing import Literal
-
 from relq._compiler._model import CompiledQuery, Dialect
 from relq._compiler._render import render_query
 from relq._compiler.validation import validate_query
 from relq._query import Query, extract_query
-from relq.dml import (
-    DeleteQuery,
-    InsertQuery,
-    ModelDeleteQuery,
-    ModelInsertQuery,
-    ModelUpdateQuery,
-    UpdateQuery,
-)
-from relq.query import ModelSelectQuery, SelectQuery
 
 _SQLITE = Dialect("sqlite", "?", max_parameters=999)
 _POSTGRES = Dialect(
@@ -26,35 +15,11 @@ _POSTGRES = Dialect(
 )
 
 
-type CompilableQuery[
-    Row,
-    Returns: (Literal[True], Literal[False]),
-    Bounded: (Literal[True], Literal[False]),
-] = (
-    SelectQuery[Row]
-    | ModelSelectQuery[Row]
-    | InsertQuery[Row, Returns]
-    | ModelInsertQuery[Row]
-    | UpdateQuery[Row, Returns, Bounded]
-    | ModelUpdateQuery[Row]
-    | DeleteQuery[Row, Returns, Bounded]
-    | ModelDeleteQuery[Row]
-)
-
-
-def compile_sqlite[
-    Row,
-    Returns: (Literal[True], Literal[False]),
-    Bounded: (Literal[True], Literal[False]),
-](query: CompilableQuery[Row, Returns, Bounded]) -> CompiledQuery:
+def compile_sqlite[Row](query: Query[Row]) -> CompiledQuery:
     return _compile(query, _SQLITE)
 
 
-def compile_postgres[
-    Row,
-    Returns: (Literal[True], Literal[False]),
-    Bounded: (Literal[True], Literal[False]),
-](query: CompilableQuery[Row, Returns, Bounded]) -> CompiledQuery:
+def compile_postgres[Row](query: Query[Row]) -> CompiledQuery:
     return _compile(query, _POSTGRES)
 
 

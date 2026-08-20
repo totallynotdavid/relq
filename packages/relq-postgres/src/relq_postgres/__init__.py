@@ -1,16 +1,13 @@
 """Asynchronous asyncpg executor for relq."""
 
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import overload
+from contextlib import asynccontextmanager
 
 import asyncpg
 from relq import Interval, RowAdapter
 from relq._compiler.api import compile_postgres
 from relq._execution import (
     Command,
-    MappedResultQuery,
-    RawResultQuery,
     map_all,
     map_one,
     map_row,
@@ -67,38 +64,20 @@ class PostgresDatabase:
         await self._configure_connection(self._connection)
         yield self._connection
 
-    @overload
-    async def fetch_all[Row](self, query: RawResultQuery[Row]) -> list[Row]: ...
-
-    @overload
-    async def fetch_all[Model](self, query: MappedResultQuery[Model]) -> list[Model]: ...
-
-    async def fetch_all(
-        self,
-        query: (RawResultQuery[object] | MappedResultQuery[object]),
-    ) -> object:
+    async def fetch_all[Row](self, query: Query[Row]) -> list[Row]:
         compiled = compile_postgres(query)
         async with self._connection_scope() as connection:
             records = await connection.fetch(compiled.sql, *compiled.parameters)
         return map_all(query, (tuple(record) for record in records))
 
-    @overload
-    async def fetch_one[Row](self, query: RawResultQuery[Row]) -> Row | None: ...
-
-    @overload
-    async def fetch_one[Model](self, query: MappedResultQuery[Model]) -> Model | None: ...
-
-    async def fetch_one(
-        self,
-        query: (RawResultQuery[object] | MappedResultQuery[object]),
-    ) -> object:
+    async def fetch_one[Row](self, query: Query[Row]) -> Row | None:
         compiled = compile_postgres(query)
         async with self._connection_scope() as connection:
             row = await connection.fetchrow(compiled.sql, *compiled.parameters)
         return map_one(query, None if row is None else tuple(row))
 
     async def fetch_all_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+        self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> list[Model]:
         """Map result rows through an explicit, arity-validating adapter."""
         if extract_query(query).adapter is not None:
@@ -109,7 +88,7 @@ class PostgresDatabase:
         return [adapter.map(tuple(row)) for row in rows]
 
     async def fetch_one_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+        self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> Model | None:
         if extract_query(query).adapter is not None:
             raise TypeError("query already declares a result model; use fetch_one()")
@@ -118,21 +97,8 @@ class PostgresDatabase:
             row = await connection.fetchrow(compiled.sql, *compiled.parameters)
         return None if row is None else adapter.map(tuple(row))
 
-    @overload
-    def fetch_iter[Row](
-        self, query: RawResultQuery[Row]
-    ) -> AbstractAsyncContextManager[AsyncIterator[Row]]: ...
-
-    @overload
-    def fetch_iter[Model](
-        self, query: MappedResultQuery[Model]
-    ) -> AbstractAsyncContextManager[AsyncIterator[Model]]: ...
-
     @asynccontextmanager
-    async def fetch_iter(
-        self,
-        query: (RawResultQuery[object] | MappedResultQuery[object]),
-    ) -> AsyncGenerator[AsyncIterator[object]]:
+    async def fetch_iter[Row](self, query: Query[Row]) -> AsyncGenerator[AsyncIterator[Row]]:
         """Stream rows through a server-side cursor instead of materializing them.
 
         PostgreSQL cursors are only valid inside a transaction, so this opens

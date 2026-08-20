@@ -2,13 +2,12 @@
 
 import decimal
 from dataclasses import dataclass
-from typing import Protocol, overload
+from typing import Protocol
 
 from relq import (
     Column,
     CteTable,
     DerivedTable,
-    ModelSelectQuery,
     SelectQuery,
     Table,
     add,
@@ -33,11 +32,7 @@ from relq import (
 
 
 class MatrixDatabase(Protocol):
-    @overload
-    async def fetch_all[Row](self, query: SelectQuery[Row]) -> list[Row]: ...
-
-    @overload
-    async def fetch_all[Model](self, query: ModelSelectQuery[Model]) -> list[Model]: ...
+    async def fetch_all[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> list[Row]: ...
 
 
 class MatrixLeft(Table):

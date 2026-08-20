@@ -1,10 +1,9 @@
-from relq import Column, CteTable, cte, output_column, select, select_model
+from relq import Column, CteTable, cte, output_column, select
 
 from .good import users
 
-# Compound arms must preserve one exact result shape and mapping contract.
+# Compound arms must preserve one exact SQL result shape. Decoders are ignored.
 select(users.id).from_(users).union_all(select(users.email).from_(users))
-select(users.id).from_(users).union(select_model(tuple, users.id).from_(users))
 
 
 class Recursive(CteTable):
