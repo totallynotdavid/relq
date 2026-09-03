@@ -163,8 +163,35 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         """Insert one row using the table's declared defaults."""
         return self._with_source(DefaultValuesSourceNode())
 
-    def on_conflict[T](self, *columns: Column[T]) -> ConflictBuilder[Row_co, Returns]:
-        """Start an SQLite/PostgreSQL ``ON CONFLICT`` clause."""
+    @overload
+    def on_conflict(self) -> ConflictBuilder[Row_co, Returns]: ...
+
+    @overload
+    def on_conflict[A](self, first: Column[A], /) -> ConflictBuilder[Row_co, Returns]: ...
+
+    @overload
+    def on_conflict[A, B](
+        self, first: Column[A], second: Column[B], /
+    ) -> ConflictBuilder[Row_co, Returns]: ...
+
+    @overload
+    def on_conflict[A, B, C](
+        self, first: Column[A], second: Column[B], third: Column[C], /
+    ) -> ConflictBuilder[Row_co, Returns]: ...
+
+    @overload
+    def on_conflict[A, B, C, D](
+        self, first: Column[A], second: Column[B], third: Column[C], fourth: Column[D], /
+    ) -> ConflictBuilder[Row_co, Returns]: ...
+
+    def on_conflict(self, *columns: object) -> ConflictBuilder[Row_co, Returns]:
+        """Start an SQLite/PostgreSQL ``ON CONFLICT`` clause.
+
+        One type parameter per position, like ``from_select``: a composite
+        conflict target routinely mixes nullable and non-nullable columns, and
+        ``Column`` is invariant, so a single shared parameter could not
+        describe ``(queue, dedupe_key)``.
+        """
         if self._node.source is None:
             raise ValueError("on_conflict requires values() or from_select() first")
         match self._node.source:
@@ -272,19 +299,71 @@ class ConflictBuilder(Generic[Row_co, Returns]):
     _query: InsertQuery[Row_co, Returns]
     _columns: tuple[str, ...]
     _table: Table
+    _target_where: Node | None = None
+
+    def where(self, predicate: BooleanExpression) -> ConflictBuilder[Row_co, Returns]:
+        """Match a partial unique index by repeating its own index predicate.
+
+        This is the arbiter's ``WHERE``, not the action's: it selects which
+        unique index PostgreSQL infers, and is required when that index is
+        partial.  ``do_update(...).where(...)`` is the separate predicate that
+        decides whether the update runs.
+        """
+        if not self._columns:
+            raise ValueError("ON CONFLICT ... WHERE requires at least one conflict target column")
+        if self._target_where is not None:
+            raise ValueError("on_conflict().where() can only be specified once")
+        return replace(self, _target_where=node_of(predicate))
 
     def do_nothing(self) -> InsertQuery[Row_co, Returns]:
         node = _insert_node(self._query)
-        return self._query.with_node(replace(node, conflict=ConflictNode(self._columns, "nothing")))
+        return self._query.with_node(
+            replace(
+                node,
+                conflict=ConflictNode(self._columns, "nothing", target_where=self._target_where),
+            )
+        )
 
-    def do_update(self, **entries: object) -> InsertQuery[Row_co, Returns]:
+    def do_update(self, **entries: object) -> ConflictUpdateQuery[Row_co, Returns]:
         if not self._columns:
             raise ValueError("ON CONFLICT DO UPDATE requires at least one conflict target column")
         node = _insert_node(self._query)
-        return self._query.with_node(
+        return new_query(
+            ConflictUpdateQuery,
             replace(
-                node, conflict=ConflictNode(self._columns, "update", _values(self._table, entries))
-            )
+                node,
+                conflict=ConflictNode(
+                    self._columns,
+                    "update",
+                    _values(self._table, entries),
+                    target_where=self._target_where,
+                ),
+            ),
+            extract_query(self._query).adapter,
+            table=self._table,
+        )
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ConflictUpdateQuery(InsertQuery[Row_co, Returns], Generic[Row_co, Returns]):
+    """A complete INSERT whose ``DO UPDATE`` can still be narrowed by a predicate.
+
+    It is already executable; ``where()`` is the optional compare-and-swap
+    step, and must come before ``returning()`` because the wider builder
+    methods deliberately return a plain ``InsertQuery``.
+    """
+
+    def where(self, predicate: BooleanExpression) -> InsertQuery[Row_co, Returns]:
+        """Run the conflicting row's update only where ``predicate`` holds."""
+        node = self._node
+        conflict = node.conflict
+        if conflict is None:  # pragma: no cover - construction invariant
+            raise TypeError("expected an INSERT carrying a conflict clause")
+        return new_query(
+            InsertQuery,
+            replace(node, conflict=replace(conflict, update_where=node_of(predicate))),
+            extract_query(self).adapter,
+            table=self._table,
         )
 
 

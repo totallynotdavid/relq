@@ -410,9 +410,19 @@ class InsertNode:
 
 @dataclass(frozen=True, slots=True)
 class ConflictNode:
+    """An ``ON CONFLICT`` clause and its two independent predicate slots.
+
+    ``target_where`` is the arbiter's index predicate, matching a partial
+    unique index; ``update_where`` narrows the ``DO UPDATE`` action itself.
+    They are separate SQL clauses in separate positions, so they are separate
+    fields rather than one conflated predicate.
+    """
+
     columns: tuple[str, ...]
     action: str
     update_values: tuple[tuple[str, Node], ...] = ()
+    target_where: Node | None = None
+    update_where: Node | None = None
 
 
 @dataclass(frozen=True, slots=True)

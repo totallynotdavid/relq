@@ -13,6 +13,7 @@ from relq._ast import (
     BinaryNode,
     CaseNode,
     ColumnNode,
+    ConflictNode,
     CteSourceNode,
     DefaultValuesSourceNode,
     DeleteNode,
@@ -74,12 +75,12 @@ def validate_query(node: QueryNode, dialect: Dialect) -> None:
                 raise ValueError("UPDATE requires at least one value")
             if not node.bounded:
                 raise ValueError("UPDATE requires where() or explicit all_rows()")
-            validate_dml_sources(node.table, node.where, node.values, node.returning)
+            validate_dml_sources(node.table, (node.where,), node.values, node.returning)
             _validate_dml_dialect(node, dialect)
         case DeleteNode():
             if not node.bounded:
                 raise ValueError("DELETE requires where() or explicit all_rows()")
-            validate_dml_sources(node.table, node.where, (), node.returning)
+            validate_dml_sources(node.table, (node.where,), (), node.returning)
             _validate_dml_dialect(node, dialect)
 
 
@@ -346,6 +347,10 @@ def _validate_insert_dialect(node: InsertNode, dialect: Dialect) -> None:
         expressions.extend(value for row in node.source.rows for _, value in row)
     if node.conflict is not None:
         expressions.extend(value for _, value in node.conflict.update_values)
+        predicates = _conflict_predicates(node.conflict)
+        if predicates and not dialect.supports_conflict_predicates:
+            raise ValueError(f"{dialect.name} does not support ON CONFLICT predicates")
+        expressions.extend(predicates)
     for expression in expressions:
         _validate_expression_dialect(expression, dialect)
         _validate_nested_selects(expression, dialect, frozenset({node.table.reference}))
@@ -552,11 +557,13 @@ def _add_source(reference: str, available: set[str], local: set[str]) -> None:
 
 def validate_dml_sources(
     table: TableSourceNode,
-    where: Node | None,
+    predicates: tuple[Node | None, ...],
     values: tuple[tuple[str, Node], ...],
     returning: tuple[Node, ...],
 ) -> None:
-    references = referenced_sources(where)
+    references: set[str] = set()
+    for predicate in predicates:
+        references.update(referenced_sources(predicate))
     for _, value in values:
         references.update(referenced_sources(value))
     for value in returning:
@@ -573,18 +580,40 @@ def validate_insert(node: InsertNode) -> None:
         values = node.source.values
     elif isinstance(node.source, InsertRowsSourceNode):
         values = tuple(value for row in node.source.rows for value in row)
-    if node.conflict is not None:
-        values = (*values, *node.conflict.update_values)
-    validate_dml_sources(node.table, None, values, node.returning)
+    conflict = node.conflict
+    target_where = None if conflict is None else conflict.target_where
+    update_where = None if conflict is None else conflict.update_where
+    if conflict is not None:
+        values = (*values, *conflict.update_values)
+        if target_where is not None and not conflict.columns:
+            raise ValueError("ON CONFLICT ... WHERE requires at least one conflict target column")
+        if update_where is not None and conflict.action != "update":
+            raise ValueError("a conflict action predicate requires ON CONFLICT DO UPDATE")
+    validate_dml_sources(node.table, (target_where, update_where), values, node.returning)
+    if target_where is not None and _excluded_sources(target_where):
+        raise ValueError(
+            "excluded() cannot appear in a conflict-target predicate; the arbiter matches a "
+            "unique index over stored rows, not the proposed row"
+        )
     excluded_sources: set[str] = set()
     for _, value in values:
         excluded_sources.update(_excluded_sources(value))
+    if update_where is not None:
+        excluded_sources.update(_excluded_sources(update_where))
     if excluded_sources:
-        if node.conflict is None or node.conflict.action != "update":
+        if conflict is None or conflict.action != "update":
             raise ValueError("excluded() can only be used in ON CONFLICT DO UPDATE assignments")
         if excluded_sources != {node.table.reference}:
             names = ", ".join(sorted(excluded_sources - {node.table.reference}))
             raise ValueError(f"excluded() columns must belong to the INSERT table: {names}")
+
+
+def _conflict_predicates(conflict: ConflictNode) -> tuple[Node, ...]:
+    return tuple(
+        predicate
+        for predicate in (conflict.target_where, conflict.update_where)
+        if predicate is not None
+    )
 
 
 def _excluded_sources(node: Node) -> set[str]:

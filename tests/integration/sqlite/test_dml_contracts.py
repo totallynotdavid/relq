@@ -126,3 +126,84 @@ def test_declared_result_models_support_wide_projection_and_returning() -> None:
         .decode(EmployeeRow)
         .where(employees.id.eq(1))
     ) == EmployeeRow(1, "Ada")
+
+
+def test_conflict_predicates_are_rejected_outside_their_valid_shapes() -> None:
+    postgres_only = (
+        insert_into(employees)
+        .values(id=1, name="Ada")
+        .on_conflict(employees.name)
+        .do_update(salary=excluded(employees.salary))
+        .where(employees.salary.lt(100))
+    )
+    assert 'do update set "salary" = excluded."salary" where ("employees"."salary" < $3)' in (
+        compile_postgres(postgres_only).sql
+    )
+    with pytest.raises(ValueError, match="sqlite does not support ON CONFLICT predicates"):
+        compile_sqlite(postgres_only)
+
+    with pytest.raises(ValueError, match="at least one conflict target column"):
+        insert_into(employees).values(id=1).on_conflict().where(employees.id.eq(1))
+    with pytest.raises(ValueError, match=r"where\(\) can only be specified once"):
+        (
+            insert_into(employees)
+            .values(id=1)
+            .on_conflict(employees.id)
+            .where(employees.id.eq(1))
+            .where(employees.id.eq(2))
+        )
+    # The action predicate is applied once by construction: do_update().where()
+    # hands back a plain InsertQuery, so a second where() is not expressible.
+    narrowed = (
+        insert_into(employees)
+        .values(id=1)
+        .on_conflict(employees.id)
+        .do_update(name="Ada")
+        .where(employees.id.eq(1))
+    )
+    assert not hasattr(narrowed, "where")
+
+
+def test_conflict_target_predicates_inline_constants_and_stay_closed() -> None:
+    inlined = (
+        insert_into(employees)
+        .values(id=1, name="Ada")
+        .on_conflict(employees.name)
+        .where(employees.manager_id.is_not_null() & employees.salary.in_((10, 20)))
+        .do_nothing()
+    )
+    compiled = compile_postgres(inlined)
+    assert (
+        'on conflict ("name") where (("employees"."manager_id" is not null) '
+        'and ("employees"."salary" in (10, 20))) do nothing' in compiled.sql
+    )
+    assert compiled.parameters == (1, "Ada")
+
+    quoted = (
+        insert_into(employees)
+        .values(id=1)
+        .on_conflict(employees.id)
+        .where(employees.name.eq("O'Hara\\x"))
+        .do_nothing()
+    )
+    assert "E'O''Hara\\\\x'" in compile_postgres(quoted).sql
+
+    unsupported = (
+        insert_into(employees)
+        .values(id=1)
+        .on_conflict(employees.id)
+        .where(employees.name.like("a%"))
+        .do_nothing()
+    )
+    with pytest.raises(ValueError, match="must repeat a partial index predicate"):
+        compile_postgres(unsupported)
+
+    excluded_target = (
+        insert_into(employees)
+        .values(id=1)
+        .on_conflict(employees.id)
+        .where(excluded(employees.id).eq(1))
+        .do_nothing()
+    )
+    with pytest.raises(ValueError, match="excluded\\(\\) cannot appear in a conflict-target"):
+        compile_postgres(excluded_target)
