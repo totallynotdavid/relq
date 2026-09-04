@@ -1,5 +1,7 @@
 """Recursive SQL rendering from immutable query nodes."""
 
+from typing import Final
+
 from relq._ast import (
     AggregateNode,
     AliasNode,
@@ -186,7 +188,13 @@ def _compile_conflict(conflict: ConflictNode, dialect: Dialect, parameters: list
         if not conflict.columns
         else " (" + ", ".join(_identifier(column) for column in conflict.columns) + ")"
     )
+    if conflict.target_where is not None:
+        if not conflict.columns:  # pragma: no cover - established by validate_query()
+            raise AssertionError("a conflict arbiter predicate requires target columns")
+        target += " where " + _compile_index_predicate(conflict.target_where)
     if conflict.action == "nothing":
+        if conflict.update_where is not None:  # pragma: no cover - builder invariant
+            raise AssertionError("ON CONFLICT DO NOTHING cannot carry an update predicate")
         return " on conflict" + target + " do nothing"
     if conflict.action == "update":
         if not conflict.update_values:
@@ -195,8 +203,80 @@ def _compile_conflict(conflict: ConflictNode, dialect: Dialect, parameters: list
             f"{_identifier(column)} = {_compile_node(value, dialect, parameters)}"
             for column, value in conflict.update_values
         )
-        return " on conflict" + target + " do update set " + assignments
+        sql = " on conflict" + target + " do update set " + assignments
+        if conflict.update_where is not None:
+            sql += " where " + _compile_node(conflict.update_where, dialect, parameters)
+        return sql
     raise ValueError(f"unsupported conflict action: {conflict.action!r}")
+
+
+_INDEX_PREDICATE_BINARY: Final = frozenset({"=", "<>", "<", "<=", ">", ">=", "and", "or"})
+_INDEX_PREDICATE_UNARY: Final = frozenset(
+    {"is null", "is not null", "is true", "is false", "is not true", "is not false"}
+)
+
+
+def _compile_index_predicate(node: Node) -> str:
+    """Render a conflict arbiter's predicate with constants, never parameters.
+
+    PostgreSQL infers the arbiter index by proving the index's own stored
+    predicate from this one, and that proof compares parsed expression trees.
+    A cached generic plan leaves ``$n`` parameters unfolded, so a parameterized
+    arbiter predicate matches while the plan is custom and then stops matching
+    once PostgreSQL switches to a generic plan -- the statement starts raising
+    "no unique or exclusion constraint matching the ON CONFLICT specification"
+    partway through a process's life.  Constants keep inference stable.
+
+    The accepted node set is closed and narrower than ``_compile_node``: it is
+    roughly what PostgreSQL itself allows in an index predicate, so an
+    expression that could never match one is rejected here instead of at the
+    database.
+    """
+    match node:
+        case ColumnNode(source, name):
+            return f"{_identifier(source)}.{_identifier(name)}"
+        case ValueNode(value):
+            return _constant(value)
+        case BinaryNode(left, operator, right) if operator in _INDEX_PREDICATE_BINARY:
+            return (
+                f"({_compile_index_predicate(left)} {operator} {_compile_index_predicate(right)})"
+            )
+        case UnaryNode(operator, operand) if operator in _INDEX_PREDICATE_UNARY:
+            return f"({_compile_index_predicate(operand)} {operator})"
+        case InNode(expression, values, negated) if not isinstance(values, SelectNode):
+            operator = "not in" if negated else "in"
+            items = ", ".join(_compile_index_predicate(value) for value in values)
+            return f"({_compile_index_predicate(expression)} {operator} ({items}))"
+        case BetweenNode(expression, lower, upper, negated):
+            operator = "not between" if negated else "between"
+            return (
+                f"({_compile_index_predicate(expression)} {operator} "
+                f"{_compile_index_predicate(lower)} and {_compile_index_predicate(upper)})"
+            )
+        case _:
+            raise ValueError(
+                "a conflict-target predicate must repeat a partial index predicate using only "
+                "columns, text/integer/boolean/NULL constants, comparisons, IN, BETWEEN, "
+                f"IS checks, AND, and OR: {node!r}"
+            )
+
+
+def _constant(value: object) -> str:
+    """Render one inlined index-predicate constant from a closed set of types."""
+    match value:
+        case None:
+            return "null"
+        case bool():
+            return "true" if value else "false"
+        case int():
+            return str(value)
+        case str():
+            return "E'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+        case _:
+            raise ValueError(
+                "a conflict-target predicate constant must be text, an integer, a boolean, "
+                f"or None: {value!r}"
+            )
 
 
 def _compile_update(node: UpdateNode, dialect: Dialect, parameters: list[object]) -> str:

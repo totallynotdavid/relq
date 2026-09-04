@@ -9,6 +9,7 @@ from relq import (
     AwareTime,
     CaseWhen,
     Column,
+    ConflictUpdateQuery,
     CteTable,
     DerivedTable,
     Expr,
@@ -231,7 +232,17 @@ upsert = (
     .on_conflict(users.email)
     .do_update(email=excluded(users.email))
 )
-assert_type(upsert, InsertQuery[tuple[()], Literal[False]])
+assert_type(upsert, ConflictUpdateQuery[tuple[()], Literal[False]])
+guarded = (
+    insert_into(users)
+    .values(id=1, email="a@example.com", active=True)
+    .on_conflict(users.email)
+    .where(users.active.is_true())
+    .do_update(email=excluded(users.email))
+    .where(users.active.is_true())
+)
+assert_type(guarded, InsertQuery[tuple[()], Literal[False]])
+assert_type(guarded.returning(users.id), InsertQuery[tuple[int], Literal[True]])
 
 
 class Totals(DerivedTable):

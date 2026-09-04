@@ -11,6 +11,7 @@ _POSTGRES = Dialect(
     "$",
     supports_row_locking=True,
     supports_temporal_arithmetic=True,
+    supports_conflict_predicates=True,
     max_parameters=65_535,
 )
 

@@ -35,6 +35,6 @@ something needs them:
 - Multi-schema generated modules: needs an explicit module/import and collision
   design first.
 - Migrations, raw SQL, generic function builders, and custom dialects/plugins.
-- Conflict predicates, named constraints, and PostgreSQL's `DO UPDATE ... WHERE`
-  on `on_conflict`.
+- Named constraints as an `on_conflict` target, and conflict predicates on
+  SQLite (PostgreSQL has both; see [DML](./dml.md)).
 - Named windows.

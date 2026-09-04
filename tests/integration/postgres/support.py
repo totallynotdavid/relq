@@ -3,7 +3,7 @@
 import enum
 from dataclasses import dataclass
 
-from relq import Column, CteTable, Table, column, output_column
+from relq import AwareDateTime, Column, CteTable, Table, column, output_column
 
 from tests.postgres_harness import PostgresHarness, postgres_harness_from_environment
 
@@ -33,6 +33,33 @@ class IntegrationArchive(Table):
 
 
 archive = IntegrationArchive("relq_integration_archive")
+
+
+class IntegrationJobs(Table):
+    """A partial-unique-index dedupe table, mirroring rqueue's ``jobs``."""
+
+    id: Column[int] = column(int)
+    queue: Column[str] = column(str)
+    dedupe_key: Column[str | None] = column(str)
+    state: Column[str] = column(str)
+    updated_at: Column[int] = column(int)
+
+
+jobs = IntegrationJobs("relq_integration_jobs")
+
+
+class IntegrationSlots(Table):
+    """A lease table whose upsert must stay a compare-and-swap."""
+
+    key: Column[str] = column(str)
+    job_id: Column[int] = column(int)
+    lease_token: Column[str] = column(str)
+    worker_id: Column[str] = column(str)
+    acquired_at: Column[AwareDateTime] = column(AwareDateTime)
+    leased_until: Column[AwareDateTime] = column(AwareDateTime)
+
+
+slots = IntegrationSlots("relq_integration_slots")
 
 
 class Active(CteTable):

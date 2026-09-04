@@ -47,9 +47,37 @@ upsert = (
 
 `on_conflict(...)` is shared by SQLite and PostgreSQL and must be completed with
 `.do_nothing()` or `.do_update(...)`; `excluded(column)` refers to the proposed
-row. Conflict predicates, named constraints, and PostgreSQL's
-`DO UPDATE ... WHERE` aren't part of this cross-dialect surface yet. See
+row. Named constraints as a conflict target aren't part of this surface yet. See
 [Design boundaries](./design-boundaries.md).
+
+### Conflict predicates (PostgreSQL only)
+
+Both of SQL's `ON CONFLICT` predicates are spelled `.where(...)`, in the same
+positions the SQL clauses occupy:
+
+```python
+(
+    insert_into(jobs)
+    .values(queue="emails", dedupe_key="welcome:7", state="pending")
+    .on_conflict(jobs.queue, jobs.dedupe_key)
+    .where(jobs.dedupe_key.is_not_null() & jobs.state.in_(("pending", "leased")))
+    .do_update(updated_at=jobs.updated_at)
+    .where(jobs.state.eq("pending"))
+)
+```
+
+The first `.where(...)` is the *arbiter* predicate: it repeats a partial unique
+index's own predicate so PostgreSQL can infer that index, and it is required
+whenever the unique index is partial. The second is the *action* predicate: the
+conflicting row is updated only where it holds, which makes `do_update` a
+compare-and-swap rather than an unconditional overwrite.
+
+`.do_update(...)` returns a `ConflictUpdateQuery`, which is already executable;
+its `.where(...)` must come before `.returning(...)`, matching SQL's own order.
+`excluded(column)` is allowed in the action predicate and rejected in the
+arbiter predicate, which describes stored rows rather than the proposed one.
+Compiling either predicate for SQLite raises: relq only emits them for
+PostgreSQL.
 
 ## Update and delete
 
