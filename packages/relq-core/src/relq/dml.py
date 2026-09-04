@@ -27,7 +27,14 @@ from relq._ast import (
 )
 from relq._node_value import expression_node, node_of
 from relq._query import Query, extract_query, new_query, select_node
-from relq.expressions import BooleanExpression, Column, Expr, Expression, Table
+from relq.expressions import (
+    BooleanExpression,
+    Column,
+    ConflictTarget,
+    Expr,
+    Expression,
+    Table,
+)
 from relq.expressions.relations import table_node
 from relq.query import SelectQuery
 from relq.rows import RowAdapter, row_adapter
@@ -163,34 +170,18 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         """Insert one row using the table's declared defaults."""
         return self._with_source(DefaultValuesSourceNode())
 
-    @overload
-    def on_conflict(self) -> ConflictBuilder[Row_co, Returns]: ...
-
-    @overload
-    def on_conflict[A](self, first: Column[A], /) -> ConflictBuilder[Row_co, Returns]: ...
-
-    @overload
-    def on_conflict[A, B](
-        self, first: Column[A], second: Column[B], /
-    ) -> ConflictBuilder[Row_co, Returns]: ...
-
-    @overload
-    def on_conflict[A, B, C](
-        self, first: Column[A], second: Column[B], third: Column[C], /
-    ) -> ConflictBuilder[Row_co, Returns]: ...
-
-    @overload
-    def on_conflict[A, B, C, D](
-        self, first: Column[A], second: Column[B], third: Column[C], fourth: Column[D], /
-    ) -> ConflictBuilder[Row_co, Returns]: ...
-
-    def on_conflict(self, *columns: object) -> ConflictBuilder[Row_co, Returns]:
+    def on_conflict(self, *columns: ConflictTarget) -> ConflictBuilder[Row_co, Returns]:
         """Start an SQLite/PostgreSQL ``ON CONFLICT`` clause.
 
-        One type parameter per position, like ``from_select``: a composite
-        conflict target routinely mixes nullable and non-nullable columns, and
-        ``Column`` is invariant, so a single shared parameter could not
-        describe ``(queue, dedupe_key)``.
+        Unlike ``from_select``, this takes any number of columns and no
+        per-position type parameter: a conflict target is read for its
+        identity alone, never related to the projection or to the returned
+        rows, so ``ConflictTarget`` -- a covariant base that ``Column``
+        inherits -- widens each column's value type away and a composite target
+        may mix nullable and non-nullable columns freely.  It is a nominal base
+        inside the ``Expression`` family rather than a ``Protocol``, so it
+        carries the same construction seal as every other relq value and this
+        signature admits what ``_target_column_names`` admits.
         """
         if self._node.source is None:
             raise ValueError("on_conflict requires values() or from_select() first")

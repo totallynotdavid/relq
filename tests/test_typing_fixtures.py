@@ -11,6 +11,7 @@ BAD = ROOT / "tests" / "typing" / "bad_window.json"
 BAD_AST_BOUNDARY = ROOT / "tests" / "typing" / "bad_ast_boundary.json"
 BAD_COMPOUNDS = ROOT / "tests" / "typing" / "bad_compounds.json"
 BAD_CONDITIONAL = ROOT / "tests" / "typing" / "bad_conditional.json"
+BAD_CONFLICT_TARGET = ROOT / "tests" / "typing" / "bad_conflict_target.json"
 BAD_DIALECT = ROOT / "tests" / "typing" / "bad_dialect.json"
 BAD_EXECUTION = ROOT / "tests" / "typing" / "bad_execution.json"
 BAD_TEMPORAL = ROOT / "tests" / "typing" / "bad_temporal.json"
@@ -79,6 +80,17 @@ def test_bad_conditional_fixture_fails_for_closed_case_contracts() -> None:
     rules = {diagnostic.get("rule") for diagnostic in diagnostics}
     assert returncode != 0
     assert "reportArgumentType" in rules
+
+
+def test_conflict_targets_must_still_be_columns() -> None:
+    returncode, diagnostics = _basedpyright(BAD_CONFLICT_TARGET)
+    rules = {diagnostic.get("rule") for diagnostic in diagnostics}
+    assert returncode != 0
+    # Non-columns and structural lookalikes are rejected by the parameter type;
+    # the base and its subclasses cannot be constructed without relq's private
+    # token, so inheriting it is not a way around that either.
+    assert "reportArgumentType" in rules
+    assert "reportCallIssue" in rules
 
 
 def test_bad_temporal_fixture_fails_for_temporal_domains() -> None:

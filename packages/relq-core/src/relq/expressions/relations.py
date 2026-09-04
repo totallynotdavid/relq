@@ -15,7 +15,7 @@ from relq._ast import (
     ValueNode,
 )
 from relq._node_value import NodeValue, construction_token, initialize_node, node_of
-from relq.expressions.core import Expr
+from relq.expressions.core import Expr, Expression
 
 
 class Source[SqlRow_co = object](NodeValue[SourceNode]):
@@ -28,8 +28,32 @@ class Source[SqlRow_co = object](NodeValue[SourceNode]):
         raise NotImplementedError
 
 
+class ConflictTarget[T_co = object](Expression):
+    """A column usable as an ``ON CONFLICT`` target, with its value type widened.
+
+    ``Expr`` -- and so ``Column`` -- is deliberately invariant in its value
+    type, which means one shared type parameter cannot describe a composite
+    conflict target: ``Column[str]`` and ``Column[str | None]`` never unify.  A
+    conflict target is only ever read for its identity, though, so this base
+    contributes a second, covariant parameter that every ``Column[X]`` widens
+    to ``ConflictTarget[object]`` through.  ``on_conflict`` names it
+    unparameterized and accepts any number of columns of any value types.
+
+    It sits inside the ``Expression`` family rather than beside it so that it
+    inherits the same seal every other relq value has: ``NodeValue.__init__``
+    demands a private construction token that only relq's own builders hold, so
+    ``ConflictTarget()`` and any subclass that constructs normally both raise
+    ``TypeError``.  That is a stronger guarantee than a ``Protocol`` (which
+    admitted any lookalike) or a bare abstract class (which admitted anything
+    willing to implement its abstract members), and it is the mechanism relq
+    already uses everywhere else rather than a second one invented here.
+    """
+
+    __slots__ = ()
+
+
 @dataclass(frozen=True, slots=True, init=False)
-class Column[T](Expr[T]):
+class Column[T](ConflictTarget[T], Expr[T]):
     """A declared table column, bound to a source when accessed."""
 
     python_type: TypeForm[T] | Callable[..., T]

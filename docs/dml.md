@@ -50,6 +50,21 @@ upsert = (
 row. Named constraints as a conflict target aren't part of this surface yet. See
 [Design boundaries](./design-boundaries.md).
 
+A conflict target takes **any number of columns**, and they need not share a
+value type: a composite target such as `(queue, dedupe_key)` mixes `Column[str]`
+with `Column[str | None]` and still type-checks. This is the one place the
+builder deliberately drops the per-position type parameters that `from_select`
+uses. `from_select` needs them, because each target column is checked against
+the expression the projection supplies for it; a conflict target is never
+related to a projection or to the returned rows, only read for its identity, so
+its value type is widened away on the way in, through `ConflictTarget`, the
+covariant base `Column` inherits. That leaves no arity ceiling to document, and
+no need to spell every supported width as an overload. `ConflictTarget` is a
+nominal base inside the `Expression` family rather than a protocol, so
+`on_conflict` still accepts only real columns: a lookalike that doesn't inherit
+it is a type error, and the base and its subclasses carry relq's usual
+construction seal, so they can't be built outside relq to be passed.
+
 ### Conflict predicates (PostgreSQL only)
 
 Both of SQL's `ON CONFLICT` predicates are spelled `.where(...)`, in the same
