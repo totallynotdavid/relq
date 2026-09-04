@@ -7,7 +7,7 @@ from relq import delete_from, excluded, insert_into, select, update
 from relq._compiler import compile_postgres, compile_sqlite
 from relq_sqlite import SQLiteDatabase
 
-from tests.fixtures import EmployeeRow, employee_archive, employees
+from tests.fixtures import EmployeeRow, decoded_values, employee_archive, employees
 
 
 def test_dml_returning_and_execution() -> None:
@@ -126,6 +126,29 @@ def test_declared_result_models_support_wide_projection_and_returning() -> None:
         .decode(EmployeeRow)
         .where(employees.id.eq(1))
     ) == EmployeeRow(1, "Ada")
+
+
+def test_conflict_targets_have_no_arity_ceiling() -> None:
+    # A composite conflict target is typed by ConflictTarget, the covariant
+    # base Column inherits, not by one type parameter per position, so arity is
+    # unbounded and nullable and non-nullable columns mix freely.
+    wide = (
+        insert_into(decoded_values)
+        .values(id="a", amount="1", occurred_at="now", payload=None, state="active")
+        .on_conflict(
+            decoded_values.id,
+            decoded_values.amount,
+            decoded_values.occurred_at,
+            decoded_values.payload,
+            decoded_values.state,
+        )
+        .do_nothing()
+    )
+    assert 'on conflict ("id", "amount", "occurred_at", "payload", "state") do nothing' in (
+        compile_sqlite(wide).sql
+    )
+    with pytest.raises(TypeError, match="must be table columns"):
+        insert_into(employees).values(id=1).on_conflict("id")  # pyright: ignore[reportArgumentType]
 
 
 def test_conflict_predicates_are_rejected_outside_their_valid_shapes() -> None:

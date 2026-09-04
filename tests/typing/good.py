@@ -245,6 +245,42 @@ assert_type(guarded, InsertQuery[tuple[()], Literal[False]])
 assert_type(guarded.returning(users.id), InsertQuery[tuple[int], Literal[True]])
 
 
+class Jobs(Table):
+    queue: Column[str] = column(str)
+    dedupe_key: Column[str | None] = column(str)
+    attempts: Column[int] = column(int)
+    leased: Column[bool] = column(bool)
+    weight: Column[float] = column(float)
+    payload: Column[bytes | None] = column(bytes)
+
+
+jobs = Jobs("jobs")
+# A composite conflict target mixes nullable and non-nullable columns, which a
+# single invariant Column[T] parameter could never unify.
+composite = (
+    insert_into(jobs)
+    .values(queue="emails", dedupe_key="welcome:7", attempts=0)
+    .on_conflict(jobs.queue, jobs.dedupe_key)
+    .do_nothing()
+)
+assert_type(composite, InsertQuery[tuple[()], Literal[False]])
+# Conflict-target arity is unbounded: six heterogeneous columns, no overload ladder.
+wide_target = (
+    insert_into(jobs)
+    .values(queue="emails", dedupe_key="welcome:7", attempts=0)
+    .on_conflict(
+        jobs.queue,
+        jobs.dedupe_key,
+        jobs.attempts,
+        jobs.leased,
+        jobs.weight,
+        jobs.payload,
+    )
+    .do_update(attempts=jobs.attempts)
+)
+assert_type(wide_target, ConflictUpdateQuery[tuple[()], Literal[False]])
+
+
 class Totals(DerivedTable):
     user_id: Column[int] = output_column(int)
     total: Column[int] = output_column(int)

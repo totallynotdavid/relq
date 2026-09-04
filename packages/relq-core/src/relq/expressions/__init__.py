@@ -74,6 +74,7 @@ from relq.expressions.core import (
 from relq.expressions.ordering import Order
 from relq.expressions.relations import (
     Column,
+    ConflictTarget,
     CteTable,
     DerivedTable,
     Source,
@@ -88,6 +89,7 @@ __all__ = [
     "BooleanExpression",
     "CaseWhen",
     "Column",
+    "ConflictTarget",
     "CteTable",
     "DerivedTable",
     "Expr",
