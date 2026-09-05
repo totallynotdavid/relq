@@ -1,5 +1,7 @@
 """Portable aggregates, window functions, and closed frame grammar."""
 
+from __future__ import annotations
+
 import decimal
 from dataclasses import replace
 from enum import StrEnum

@@ -1,9 +1,10 @@
 [project]
 name = "relq"
 version = "0.0.1"
-description = "Type-safe SQL query builder core for Python 3.15+"
+description = "Type-safe SQL query builder core for Python 3.13+"
 readme = "readme.md"
-requires-python = ">=3.15"
+requires-python = ">=3.13"
+dependencies = ["typing-extensions>=4.16.0"]
 
 [project.optional-dependencies]
 sqlite = ["relq-sqlite==0.0.1"]

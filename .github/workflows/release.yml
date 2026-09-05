@@ -8,8 +8,17 @@ permissions:
   contents: read
 
 jobs:
-  verify-and-build:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest and newest of each supported minor, plus the rc.  The oldest
+        # entries are load-bearing, not decoration: 3.13.0 and 3.14.0 each
+        # carry a dataclasses bug that later patches fixed, so a bare "3.13" /
+        # "3.14" (which resolve to the newest patch) would let the workarounds
+        # in _node_value.py and relations.py be deleted without CI noticing.
+        python-version: ["3.13.0", "3.13", "3.14.0", "3.14", "3.15.0-rc.1"]
     services:
       postgres:
         image: postgres:18
@@ -24,15 +33,39 @@ jobs:
           --health-timeout 5s --health-retries 10
     env:
       RELQ_TEST_POSTGRES_DSN: postgresql://relq:relq@localhost:5432/relq
-      RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
+        id: python
         with:
-          python-version: "3.15.0-rc.1"
+          python-version: ${{ matrix.python-version }}
           allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --locked --all-packages
+        env:
+          UV_PYTHON: ${{ steps.python.outputs.python-path }}
+      - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync basedpyright
+      - run: uv run --no-sync pytest
+
+  verify-and-build:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      # The distributions are interpreter-independent, so they are built once,
+      # on the floor the metadata declares.
+      - uses: actions/setup-python@v7
+        id: python
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --all-packages
+        env:
+          UV_PYTHON: ${{ steps.python.outputs.python-path }}
       - name: Verify the release tag and all distribution versions agree
         run: >-
           uv run --no-sync python -c 'from importlib.metadata import version;
@@ -40,10 +73,6 @@ jobs:
           {version(name) for name in ("relq", "relq-sqlite", "relq-postgres",
           "relq-codegen")}; assert versions == {tag}, f"tag {tag!r} does not
           match distribution versions {versions!r}"'
-      - run: uv run --no-sync ruff format --check .
-      - run: uv run --no-sync ruff check .
-      - run: uv run --no-sync basedpyright
-      - run: uv run --no-sync pytest
       - run: uv build --package relq --clear --out-dir dist
       - run: uv build --package relq-sqlite --out-dir dist
       - run: uv build --package relq-postgres --out-dir dist

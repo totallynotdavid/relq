@@ -10,10 +10,11 @@ uv add "relq[postgres]"
 uv add "relq[sqlite,postgres]"
 ```
 
-`relq` itself has no dependencies. The `sqlite` extra pins `relq-sqlite`, which
-wraps the standard library's `sqlite3`. The `postgres` extra pins
-`relq-postgres`, which wraps `asyncpg`. Both extras pin an exact version of
-their executor.
+`relq` itself depends only on `typing-extensions`, which backports the typing
+constructs its column declarations are annotated with. The `sqlite` extra pins
+`relq-sqlite`, which wraps the standard library's `sqlite3`. The `postgres`
+extra pins `relq-postgres`, which wraps `asyncpg`. Both extras pin an exact
+version of their executor.
 
 Schema generation is a separate, independent development tool. Run it with
 `uv tool run` from the application repository, not from a checkout of relq:
@@ -27,4 +28,4 @@ uv tool run "relq-codegen[postgres]" postgres "$DATABASE_URL" src/my_app/db_sche
 imports `asyncpg` only when the `postgres` extra is installed and used. See
 [Code generation](./codegen.md).
 
-relq targets Python 3.15+ only.
+relq targets Python 3.13+ only.
