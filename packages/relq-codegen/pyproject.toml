@@ -2,7 +2,7 @@
 name = "relq-codegen"
 version = "0.0.1"
 description = "Schema generator for relq SQLite and PostgreSQL declarations"
-requires-python = ">=3.15"
+requires-python = ">=3.13"
 
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.31"]

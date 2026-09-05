@@ -1,5 +1,7 @@
 """Immutable typed SELECT builder and relational composition."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, replace
 from typing import Literal, Self, TypeVar, overload
 

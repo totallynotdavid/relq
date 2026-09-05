@@ -1,9 +1,13 @@
 """Declared relation schemas and descriptor-backed columns."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
-from typing import Self, TypeForm, cast, overload
+from typing import Self, cast, overload
+
+from typing_extensions import TypeForm
 
 from relq._ast import (
     ColumnNode,
@@ -62,7 +66,15 @@ class Column[T](ConflictTarget[T], Expr[T]):
     def __init__(
         self, token: object, python_type: TypeForm[T] | Callable[..., T], name: str = ""
     ) -> None:
-        super().__init__(token)
+        # ``slots=True`` rebuilds the class the same way, and on CPython 3.13.0
+        # through 3.13.13 the methods carried over kept a ``__class__`` cell
+        # pointing at the discarded original, so the zero-argument ``super()``
+        # here raised ``TypeError`` -- declaring any relq column failed.  This
+        # window is narrower than the one ``NodeValue`` documents: the cell was
+        # repaired in 3.13.14 and no 3.14 release is affected.  Naming the class
+        # explicitly resolves against the class that survives and walks the same
+        # MRO on every supported version.
+        super(Column, self).__init__(token)
         object.__setattr__(self, "python_type", python_type)
         object.__setattr__(self, "_name", name)
 

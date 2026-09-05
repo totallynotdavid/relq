@@ -1,7 +1,7 @@
 import datetime
 import decimal
 from dataclasses import dataclass
-from typing import Literal, assert_type
+from typing import Literal, TypedDict, assert_type
 
 from relq import (
     AggregateExpr,
@@ -328,3 +328,27 @@ model_insert = (
     .decode(OuterJoinResult)
 )
 assert_type(model_insert, InsertQuery[OuterJoinResult, Literal[True]])
+
+
+class Coordinates(TypedDict):
+    latitude: float
+    longitude: float
+
+
+class Readings(Table):
+    samples: Column[list[int]] = column(list[int])
+    place: Column[Coordinates] = column(Coordinates)
+
+
+# ``column`` and ``output_column`` take a type expression, not only a class
+# object.  A subscripted generic and a ``TypedDict`` are both rejected by the
+# narrower ``type[T]`` spelling, so these declarations are what holds the
+# parameter at ``TypeForm[T]``; ``Temporal`` above pins the ``NewType`` forms.
+assert_type(column(list[int]), Column[list[int]])
+assert_type(column(Coordinates), Column[Coordinates])
+assert_type(output_column(Coordinates), Column[Coordinates])
+readings = Readings("readings")
+assert_type(
+    select(readings.samples, readings.place).from_(readings),
+    SelectQuery[tuple[list[int], Coordinates], tuple[list[int], Coordinates]],
+)
