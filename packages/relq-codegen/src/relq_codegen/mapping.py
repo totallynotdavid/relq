@@ -5,6 +5,7 @@ from __future__ import annotations
 import keyword
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast, get_args
 
 from relq_codegen.model import (
     ArrayType,
@@ -12,6 +13,7 @@ from relq_codegen.model import (
     BuiltinType,
     Call,
     CodegenConfig,
+    DecoderKind,
     DirectType,
     GeneratedWrapper,
     Import,
@@ -27,6 +29,33 @@ from relq_codegen.model import (
     Union,
 )
 
+_DECODER_KINDS: tuple[str, ...] = cast(
+    tuple[str, ...], get_args(cast(object, DecoderKind.__value__))
+)
+
+RELQ_NAMES: frozenset[str] = frozenset(
+    {
+        # Every name this module can import into a generated module.  relq_name
+        # refuses anything absent here, so the reserved-name pass downstream can
+        # never fall behind a newly emitted import.  The decoder half is derived
+        # from DecoderKind rather than spelled out.
+        *(f"{kind}_decoder" for kind in _DECODER_KINDS),
+        "JsonValue",
+        "domain_decoder",
+        "enum_decoder",
+        "json_column",
+        "list_decoder",
+        "nullable",
+        "row_adapter",
+    }
+)
+
+STDLIB_MODULES: frozenset[str] = frozenset({"datetime", "decimal", "ipaddress", "uuid"})
+
+MAPPING_IMPORTS: frozenset[Import] = frozenset(
+    {*(Import("relq", (name,)) for name in RELQ_NAMES), *(Import(m) for m in STDLIB_MODULES)}
+)
+
 
 def _display_identity(identity: TypeIdentity) -> str:
     return identity.name if identity.schema is None else f"{identity.schema}.{identity.name}"
@@ -36,11 +65,22 @@ def _display_identity(identity: TypeIdentity) -> str:
 class ResolvedType:
     annotation: RenderExpression
     decoder: RenderExpression | None = None
+    builder: Name | None = None
+    """A dedicated ``Column`` builder for annotations ``column()`` cannot bind.
+
+    ``column(T)`` infers its result from the ``TypeForm`` value it receives,
+    which a type checker will not accept for a recursive type alias such as
+    ``JsonValue``.  Such a type names its own builder, which takes the column
+    name but no type argument.
+    """
 
     def imports(self) -> frozenset[Import]:
-        return self.annotation.imports().union(
-            frozenset() if self.decoder is None else self.decoder.imports()
-        )
+        found = self.annotation.imports()
+        if self.decoder is not None:
+            found |= self.decoder.imports()
+        if self.builder is not None:
+            found |= self.builder.imports()
+        return found
 
 
 def resolve_type(
@@ -49,7 +89,7 @@ def resolve_type(
     if isinstance(sql_type, ArrayType):
         element = resolve_type(sql_type.element, enum_types, config)
         decoder = (
-            Call(relq_decoder("list_decoder"), (element.decoder,))
+            Call(relq_name("list_decoder"), (element.decoder,))
             if element.decoder is not None
             else None
         )
@@ -61,7 +101,7 @@ def resolve_type(
         if sql_type.kind == "enum" and (name := enum_types.get(sql_type.identity)) is not None:
             return ResolvedType(
                 Name(name),
-                Call(relq_decoder("enum_decoder"), (Name(name),)),
+                Call(relq_name("enum_decoder"), (Name(name),)),
             )
         return _resolve_mapped_type(sql_type.identity, config)
     return _resolve_builtin(sql_type, config)
@@ -76,7 +116,7 @@ def _resolve_mapped_type(identity: TypeIdentity, config: CodegenConfig | None) -
         return ResolvedType(
             Name(mapping.name),
             Call(
-                relq_decoder("domain_decoder"),
+                relq_name("domain_decoder"),
                 (StringLiteral(mapping.name), decoder, Name(mapping.name)),
             ),
         )
@@ -102,81 +142,91 @@ def _resolve_builtin(sql_type: BuiltinType, config: CodegenConfig | None) -> Res
             return ResolvedType(
                 Name(mapping.name),
                 Call(
-                    relq_decoder("domain_decoder"),
+                    relq_name("domain_decoder"),
                     (StringLiteral(mapping.name), decoder, Name(mapping.name)),
                 ),
             )
         raise TypeError(f"database type {sql_type.name!r} is rejected: {mapping.reason}")
     if "uuid" in normalized:
-        return ResolvedType(
-            _attribute("uuid", "UUID", Import("uuid")), Call(relq_decoder("uuid_decoder"))
-        )
+        return ResolvedType(_attribute("uuid", "UUID"), Call(relq_name("uuid_decoder")))
     if normalized == "inet":
         return ResolvedType(
             Union(
                 (
-                    _attribute("ipaddress", "IPv4Address", Import("ipaddress")),
-                    _attribute("ipaddress", "IPv6Address", Import("ipaddress")),
-                    _attribute("ipaddress", "IPv4Interface", Import("ipaddress")),
-                    _attribute("ipaddress", "IPv6Interface", Import("ipaddress")),
+                    _attribute("ipaddress", "IPv4Address"),
+                    _attribute("ipaddress", "IPv6Address"),
+                    _attribute("ipaddress", "IPv4Interface"),
+                    _attribute("ipaddress", "IPv6Interface"),
                 )
             ),
-            Call(relq_decoder("inet_decoder")),
+            Call(relq_name("inet_decoder")),
         )
     if "json" in normalized:
-        return ResolvedType(Name("object"), Call(relq_decoder("json_decoder")))
+        return ResolvedType(
+            relq_name("JsonValue"),
+            Call(relq_name("json_decoder")),
+            builder=relq_name("json_column"),
+        )
     if "bool" in normalized:
-        return ResolvedType(Name("bool"), Call(relq_decoder("bool_decoder")))
+        return ResolvedType(Name("bool"), Call(relq_name("bool_decoder")))
     if (
         normalized in {"int2", "int4", "int8", "integer", "smallint", "bigint"}
         or "serial" in normalized
     ):
-        return ResolvedType(Name("int"), Call(relq_decoder("int_decoder")))
+        return ResolvedType(Name("int"), Call(relq_name("int_decoder")))
     if any(token in normalized for token in ("numeric", "decimal")):
         return ResolvedType(
-            _attribute("decimal", "Decimal", Import("decimal")),
-            Call(relq_decoder("decimal_decoder")),
+            _attribute("decimal", "Decimal"),
+            Call(relq_name("decimal_decoder")),
         )
     if any(token in normalized for token in ("real", "double", "float")):
-        return ResolvedType(Name("float"), Call(relq_decoder("float_decoder")))
+        return ResolvedType(Name("float"), Call(relq_name("float_decoder")))
     if any(token in normalized for token in ("blob", "bytea", "binary")):
-        return ResolvedType(Name("bytes"), Call(relq_decoder("bytes_decoder")))
+        return ResolvedType(Name("bytes"), Call(relq_name("bytes_decoder")))
     if "timestamp" in normalized or "datetime" in normalized:
         return ResolvedType(
-            _attribute("datetime", "datetime", Import("datetime")),
-            Call(relq_decoder("datetime_decoder")),
+            _attribute("datetime", "datetime"),
+            Call(relq_name("datetime_decoder")),
         )
     if normalized == "date":
-        return ResolvedType(
-            _attribute("datetime", "date", Import("datetime")), Call(relq_decoder("date_decoder"))
-        )
+        return ResolvedType(_attribute("datetime", "date"), Call(relq_name("date_decoder")))
     if normalized.startswith("time"):
-        return ResolvedType(
-            _attribute("datetime", "time", Import("datetime")), Call(relq_decoder("time_decoder"))
-        )
+        return ResolvedType(_attribute("datetime", "time"), Call(relq_name("time_decoder")))
     if "interval" in normalized:
-        return ResolvedType(_attribute("datetime", "timedelta", Import("datetime")))
+        return ResolvedType(_attribute("datetime", "timedelta"))
     if any(token in normalized for token in ("char", "text", "string", "citext", "xml", "name")):
-        return ResolvedType(Name("str"), Call(relq_decoder("str_decoder")))
+        return ResolvedType(Name("str"), Call(relq_name("str_decoder")))
     raise ValueError(
         f"unsupported database type {sql_type.name!r}; add an explicit relq-codegen mapping"
     )
 
 
-def _attribute(module: str, name: str, dependency: Import) -> Attribute:
-    return Attribute(Name(module, frozenset({dependency})), name)
+def _attribute(module: str, name: str) -> Attribute:
+    """Reference ``module.name`` from a standard-library module a module imports."""
+    if module not in STDLIB_MODULES:
+        raise ValueError(
+            f"{module!r} is imported into generated modules but is missing from "
+            "STDLIB_MODULES, so generated names would not be kept clear of it"
+        )
+    return Attribute(Name(module, frozenset({Import(module)})), name)
 
 
 def _direct_annotation(mapping: DirectType) -> RenderExpression:
     return mapping.annotation
 
 
-def relq_decoder(name: str) -> Name:
+def relq_name(name: str) -> Name:
+    """Reference a name that generated modules import from ``relq``."""
+    if name not in RELQ_NAMES:
+        raise ValueError(
+            f"{name!r} is imported into generated modules but is missing from "
+            "RELQ_NAMES, so generated names would not be kept clear of it"
+        )
     return Name(name, frozenset({Import("relq", (name,))}))
 
 
 def _decoder_for_direct_type(mapping: DirectType) -> RenderExpression:
-    return Call(relq_decoder(f"{mapping.decoder}_decoder"))
+    return Call(relq_name(f"{mapping.decoder}_decoder"))
 
 
 def used_wrapper_policies(

@@ -28,6 +28,15 @@ class Import:
             else f"from {self.module} import {', '.join(self.names)}"
         )
 
+    def bound_names(self) -> frozenset[str]:
+        """The names this import binds in the generated module's namespace.
+
+        A generated name that matches one of these silently rebinds it for the
+        rest of the file, so every reserved-name decision starts here rather
+        than from a hand-kept list of strings.
+        """
+        return frozenset(self.names) if self.names else frozenset({self.module.split(".")[0]})
+
 
 class RenderExpression:
     """A generated Python expression and the imports needed to evaluate it."""
@@ -36,6 +45,14 @@ class RenderExpression:
         raise NotImplementedError
 
     def imports(self) -> frozenset[Import]:
+        raise NotImplementedError
+
+    def names(self) -> frozenset[str]:
+        """Bare names this expression resolves through the enclosing namespace.
+
+        Rebinding one of these anywhere above its use changes what the
+        expression means, so generated declarations are kept clear of them.
+        """
         raise NotImplementedError
 
 
@@ -54,6 +71,9 @@ class Name(RenderExpression):
     def imports(self) -> frozenset[Import]:
         return self.dependencies
 
+    def names(self) -> frozenset[str]:
+        return frozenset({self.value})
+
 
 @dataclass(frozen=True, slots=True)
 class Attribute(RenderExpression):
@@ -70,6 +90,9 @@ class Attribute(RenderExpression):
     def imports(self) -> frozenset[Import]:
         return self.parent.imports()
 
+    def names(self) -> frozenset[str]:
+        return self.parent.names()
+
 
 @dataclass(frozen=True, slots=True)
 class Subscript(RenderExpression):
@@ -84,6 +107,9 @@ class Subscript(RenderExpression):
     def imports(self) -> frozenset[Import]:
         return self.parent.imports().union(*(argument.imports() for argument in self.arguments))
 
+    def names(self) -> frozenset[str]:
+        return self.parent.names().union(*(argument.names() for argument in self.arguments))
+
 
 @dataclass(frozen=True, slots=True)
 class StringLiteral(RenderExpression):
@@ -93,6 +119,9 @@ class StringLiteral(RenderExpression):
         return repr(self.value)
 
     def imports(self) -> frozenset[Import]:
+        return frozenset()
+
+    def names(self) -> frozenset[str]:
         return frozenset()
 
 
@@ -110,6 +139,9 @@ class Call(RenderExpression):
 
     def imports(self) -> frozenset[Import]:
         return self.function.imports().union(*(argument.imports() for argument in self.arguments))
+
+    def names(self) -> frozenset[str]:
+        return self.function.names().union(*(argument.names() for argument in self.arguments))
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +162,9 @@ class Union(RenderExpression):
         for member in self.members:
             imports.update(member.imports())
         return frozenset(imports)
+
+    def names(self) -> frozenset[str]:
+        return frozenset[str]().union(*(member.names() for member in self.members))
 
 
 @dataclass(frozen=True, slots=True)

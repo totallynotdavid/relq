@@ -54,7 +54,7 @@ async def test_codegen_preserves_type_identity_and_generated_batch_helpers(
     )
     assert "TenantId = NewType('TenantId', int)" in generated
     assert "states: Column[list[RelqIntegrationState]]" in generated
-    assert "payload: Column[object | None]" in generated
+    assert "payload: Column[JsonValue | None] = json_column()" in generated
     assert (
         "origin: Column[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None]"
         in generated
@@ -67,12 +67,13 @@ async def test_codegen_preserves_type_identity_and_generated_batch_helpers(
 async def test_codegen_matches_committed_catalog_snapshot(
     database: PostgresDatabase, postgres_admin: asyncpg.Connection, postgres_schema: str
 ) -> None:
-    assert (
-        await generate_postgres(
-            postgres_admin, schema=postgres_schema, config=_direct_mapping(postgres_schema)
-        )
-        == (Path(__file__).parents[2] / "snapshots" / "postgres_schema.py").read_text()
-    )
+    # Generated tables now carry the schema they were introspected from, and
+    # the harness owns a per-run schema name, so the snapshot is committed with
+    # the default one and rebound to whichever schema this run owns.
+    snapshot = (Path(__file__).parents[2] / "snapshots" / "postgres_schema.py").read_text()
+    assert await generate_postgres(
+        postgres_admin, schema=postgres_schema, config=_direct_mapping(postgres_schema)
+    ) == snapshot.replace("schema='relq_test'", f"schema={postgres_schema!r}")
 
 
 async def test_codegen_cli_detects_changed_schema(
@@ -110,5 +111,5 @@ async def test_codegen_changed_schema_regeneration_is_focused(
     await postgres_admin.execute("alter table relq_codegen_values add column metadata jsonb")
     after = await generate_postgres(postgres_admin, schema=postgres_schema, config=config)
     assert after != before
-    assert "metadata: Column[object | None]" in after
-    assert "metadata: NotRequired[object | None]" in after
+    assert "metadata: Column[JsonValue | None] = json_column()" in after
+    assert "metadata: NotRequired[JsonValue | None]" in after
