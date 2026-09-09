@@ -9,7 +9,7 @@ from relq import Column, Table, column
 
 
 class Users(Table):
-    id: Column[int] = column(int, primary_key=True)
+    id: Column[int] = column(int)
     email: Column[str] = column(str)
     manager_id: Column[int | None] = column(int)
 
