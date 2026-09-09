@@ -21,21 +21,27 @@ postgres_env="$check_dir/postgres"
 cd "$check_dir"
 
 uv venv --clear --python python "$sqlite_env"
-env -u PYTHONPATH uv pip install --python "$sqlite_env/bin/python" \
+env -u PYTHONPATH uv pip install --reinstall --python "$sqlite_env/bin/python" \
   --find-links "$artifact_dir" \
   "relq[sqlite]" \
-  relq-codegen
+  relq-codegen \
+  relq-migrate
 env -u PYTHONPATH "$sqlite_env/bin/python" -c '
 import importlib.util
 import sqlite3
 
 from relq import Column, Table, column, select
 from relq.postgres import cast_uuid, json_text, regex_match
+from relq_migrate import SQLiteMigrator
 from relq_sqlite import SQLiteDatabase
 
 # relq.postgres is a compiler-side expression surface, not a driver binding.
 assert importlib.util.find_spec("asyncpg") is None
 assert (cast_uuid, json_text, regex_match)
+assert SQLiteMigrator.__name__ == "Migrator"
+namespace = {}
+exec("from relq_migrate import *", namespace)
+assert "PostgresMigrator" not in namespace
 
 class Numbers(Table):
     value: Column[int] = column(int)
@@ -59,13 +65,17 @@ connection.close()
 
 uv venv --clear --python python "$postgres_env"
 codegen_wheel=$(printf '%s' "$artifact_dir"/relq_codegen-*.whl)
-env -u PYTHONPATH uv pip install --python "$postgres_env/bin/python" \
+env -u PYTHONPATH uv pip install --reinstall --python "$postgres_env/bin/python" \
   --find-links "$artifact_dir" \
   "relq[postgres]" \
-  "relq-codegen[postgres] @ file://$codegen_wheel"
+  "relq-codegen[postgres] @ file://$codegen_wheel" \
+  "relq-migrate[postgres]"
 env -u PYTHONPATH "$postgres_env/bin/python" -c '
 import relq
 import relq_codegen
+from relq_migrate import PostgresMigrator
 import relq_postgres
+
+assert PostgresMigrator.__name__ == "Migrator"
 '
 "$postgres_env/bin/relq-codegen" postgres --help >/dev/null

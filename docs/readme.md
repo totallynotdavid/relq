@@ -9,6 +9,7 @@
 - [Windows and aggregates](./windows-and-aggregates.md)
 - [Data manipulation](./dml.md)
 - [Execution](./execution.md)
+- [Migrations](./migrations.md)
 - [Code generation](./codegen.md)
 - [Design boundaries](./design-boundaries.md)
 - [Releasing relq](./releasing.md)

@@ -79,7 +79,7 @@ something needs them:
   was introspected from, but one `relq-codegen` run still covers one schema;
   spanning several in one module needs an explicit module/import and collision
   design first.
-- Migrations, generic function builders, and custom dialects/plugins.
+- Raw SQL, generic function builders, and custom dialects/plugins.
 - Conflict predicates, named constraints, and PostgreSQL's `DO UPDATE ... WHERE`
   on `on_conflict`.
 - Named windows.

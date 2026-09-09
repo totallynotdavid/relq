@@ -37,4 +37,5 @@ jobs:
       - run: uv build --package relq-sqlite --out-dir dist
       - run: uv build --package relq-postgres --out-dir dist
       - run: uv build --package relq-codegen --out-dir dist
+      - run: uv build --package relq-migrate --out-dir dist
       - run: scripts/check-install.sh "$PWD/dist"

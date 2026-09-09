@@ -23,6 +23,10 @@ run = "uv run --locked --all-packages basedpyright"
 description = "Run compiler, SQLite integration, and backend-independent tests"
 run = "uv run --locked --all-packages pytest --ignore=tests/integration/postgres"
 
+[tasks."test:migrate"]
+description = "Run relq-migrate unit and SQLite integration tests"
+run = "uv run --locked --all-packages pytest tests/migrate tests/integration/sqlite/test_migrations.py"
+
 [tasks."test:postgres"]
 description = "Run PostgreSQL integration tests against an ephemeral server"
 run = "scripts/test-postgres.sh"
@@ -38,6 +42,7 @@ run = [
   "uv build --package relq-sqlite",
   "uv build --package relq-postgres",
   "uv build --package relq-codegen",
+  "uv build --package relq-migrate",
 ]
 
 [tasks.release]
