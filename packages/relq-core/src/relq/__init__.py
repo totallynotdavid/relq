@@ -40,6 +40,7 @@ from relq.expressions import (
     excluded,
     exists,
     following,
+    json_column,
     max,
     min,
     multiply,
@@ -60,6 +61,7 @@ from relq.expressions import (
 from relq.query import ModelSelectQuery, SelectQuery, cte, select, select_model
 from relq.rows import (
     Decoder,
+    JsonValue,
     RowAdapter,
     RowDecodingError,
     bool_decoder,
@@ -94,6 +96,7 @@ __all__ = [
     "Expression",
     "FrameBoundary",
     "InsertQuery",
+    "JsonValue",
     "ModelDeleteQuery",
     "ModelInsertQuery",
     "ModelSelectQuery",
@@ -134,6 +137,7 @@ __all__ = [
     "inet_decoder",
     "insert_into",
     "int_decoder",
+    "json_column",
     "json_decoder",
     "list_decoder",
     "max",

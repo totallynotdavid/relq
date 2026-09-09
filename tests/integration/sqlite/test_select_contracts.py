@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import pytest
 from relq import (
     Column,
+    CteTable,
     SelectQuery,
     Table,
     add,
@@ -11,12 +12,16 @@ from relq import (
     coalesce,
     column,
     count,
+    cte,
+    delete_from,
     nullif,
+    output_column,
     row_adapter,
     select,
     sum,
 )
 from relq._compiler import compile_postgres, compile_sqlite
+from relq.postgres import regex_match
 from relq_sqlite import SQLiteDatabase
 
 
@@ -193,3 +198,40 @@ def test_single_assignment_builder_clauses_reject_accidental_replacement() -> No
         query.limit(1).limit(2)
     with pytest.raises(ValueError, match=r"offset\(\) can only"):
         query.offset(1).offset(2)
+
+
+class UserIds(CteTable):
+    id: Column[int] = output_column(int)
+
+
+def test_a_materialized_cte_is_portable_and_actually_executes_on_sqlite() -> None:
+    """SQLite has understood AS MATERIALIZED since 3.35.0, relq's RETURNING floor."""
+    connection = sqlite3.connect(":memory:")
+    connection.execute("create table users (id integer, email text, active boolean)")
+    connection.execute("insert into users values (1, 'a@example.com', 1), (2, 'b@example.com', 0)")
+    ids = cte(UserIds, "ids")
+    query = (
+        select(count())
+        .from_(ids)
+        .with_(ids, select(users.id).from_(users).where(users.active.is_true()), materialized=True)
+    )
+
+    assert compile_sqlite(query).sql.startswith('with "ids" as materialized (')
+    assert SQLiteDatabase(connection).fetch_one(query) == (1,)
+
+
+def test_sqlite_rejects_the_postgresql_only_query_surface_before_the_database_sees_it() -> None:
+    schema_qualified = Users("users", schema="analytics")
+    removed = cte(UserIds, "removed")
+    purge = (
+        select(count())
+        .from_(removed)
+        .with_(removed, delete_from(users).where(users.id.eq(1)).returning(users.id))
+    )
+
+    with pytest.raises(ValueError, match="sqlite does not support schema-qualified tables"):
+        compile_sqlite(select(schema_qualified.id).from_(schema_qualified))
+    with pytest.raises(ValueError, match="sqlite does not support data-modifying"):
+        compile_sqlite(purge)
+    with pytest.raises(ValueError, match="PostgreSQL-only regex_match"):
+        compile_sqlite(select(users.id).from_(users).where(regex_match(users.email, "^a")))

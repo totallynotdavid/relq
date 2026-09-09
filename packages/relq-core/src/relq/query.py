@@ -14,6 +14,7 @@ from relq._ast import (
     JoinNode,
     Node,
     NullableResultNode,
+    QueryNode,
     SelectNode,
     StarNode,
 )
@@ -120,7 +121,7 @@ class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
 
     def as_[Relation: DerivedTable](self, relation: type[Relation], alias: str) -> Relation:
         node = select_node(self)
-        _validate_output_schema(node, relation.output_names())
+        _validate_output_schema(node.selections, relation.output_names())
         return relation(DerivedSourceNode(node, alias), alias)
 
     def _compound(self, other: Self, operator: CompoundOperator) -> Self:
@@ -142,18 +143,40 @@ class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
     def except_(self, other: Self) -> Self:
         return self._compound(other, "except")
 
-    def with_[CteRow](self, source: CteTable, query: _SelectQuery[CteRow]) -> Self:
-        name = source.reference
-        query_node = select_node(query)
-        _validate_output_schema(query_node, source.output_names())
-        node = select_node(self)
-        return self._with_node(replace(node, ctes=(*node.ctes, CteNode(name, query_node))))
+    def with_[CteRow](
+        self, source: CteTable, query: CteQuery[CteRow], *, materialized: bool = False
+    ) -> Self:
+        """Add a CTE, optionally fencing it with PostgreSQL's ``AS MATERIALIZED``.
 
-    def with_recursive[CteRow](self, source: CteTable, query: _SelectQuery[CteRow]) -> Self:
+        ``query`` is a SELECT or a bounded ``INSERT``/``UPDATE``/``DELETE``
+        with ``RETURNING``.  A data-modifying CTE runs exactly once for the
+        whole statement, whatever the outer query does with its rows.
+
+        ``materialized=True`` emits ``AS MATERIALIZED``, which needs relq's
+        documented engine floors: SQLite 3.35.0 (the release that also added
+        ``RETURNING``) or PostgreSQL 12.  relq compiles a query without a
+        connection, so it cannot check a server's version here; an engine below
+        the floor rejects the statement itself.
+        """
+        query_node = _cte_query_node(query)
+        _validate_output_schema(_output_expressions(query_node), source.output_names())
+        node = select_node(self)
+        return self._with_node(
+            replace(
+                node,
+                ctes=(
+                    *node.ctes,
+                    CteNode(source.reference, query_node, materialized=materialized),
+                ),
+            )
+        )
+
+    def with_recursive[CteRow](self, source: CteTable, query: SelectQuery[CteRow]) -> Self:
         """Add a recursive CTE; its query may reference its own source name."""
         name = source.reference
+        _reject_declared_model(query)
         query_node = select_node(query)
-        _validate_output_schema(query_node, source.output_names())
+        _validate_output_schema(query_node.selections, source.output_names())
         node = select_node(self)
         return self._with_node(
             replace(node, ctes=(*node.ctes, CteNode(name, query_node, recursive=True)))
@@ -284,9 +307,37 @@ def select_model[Model](
     )
 
 
-def _validate_output_schema(node: SelectNode, expected: set[str]) -> None:
+def _cte_query_node[Row](query: CteQuery[Row]) -> QueryNode:
+    """Return the AST behind a CTE definition, rejecting shapes a CTE can't honor."""
+    _reject_declared_model(query)
+    node = extract_query(query).node
+    if not isinstance(node, SelectNode) and not node.returning:
+        raise ValueError("a data-modifying CTE requires returning() to publish its rows")
+    return node
+
+
+def _reject_declared_model[Row](query: Query[Row]) -> None:
+    """Refuse a CTE body that declares a row model.
+
+    The CTE's rows are consumed by the outer query, which owns the statement's
+    result shape, so an adapter attached here could never decode anything.
+    Accepting one and dropping it would silently lose a declared contract.
+    """
+    if extract_query(query).adapter is not None:
+        raise ValueError(
+            "a CTE source cannot declare a row model: its rows never reach the executor. "
+            "Build the CTE with select()/returning(), and decode the outer query instead"
+        )
+
+
+def _output_expressions(node: QueryNode) -> tuple[Node, ...]:
+    """Return the expressions a query publishes as its output relation."""
+    return node.selections if isinstance(node, SelectNode) else node.returning
+
+
+def _validate_output_schema(expressions: tuple[Node, ...], expected: set[str]) -> None:
     actual: list[str] = []
-    for selection in node.selections:
+    for selection in expressions:
         match selection:
             case AliasNode(_, alias):
                 actual.append(alias)
@@ -333,3 +384,9 @@ def _validate_compound_result_shape(
         raise ValueError(
             "compound queries require the same declared result model and decoder layout"
         )
+
+
+# See the matching note in dml.py: the two builder modules bind each other's
+# names after defining their own, so with_()'s CteQuery annotation resolves at
+# runtime rather than only under a type checker.
+from relq.dml import CteQuery

@@ -30,9 +30,12 @@ import importlib.util
 import sqlite3
 
 from relq import Column, Table, column, select
+from relq.postgres import cast_uuid, json_text, regex_match
 from relq_sqlite import SQLiteDatabase
 
+# relq.postgres is a compiler-side expression surface, not a driver binding.
 assert importlib.util.find_spec("asyncpg") is None
+assert (cast_uuid, json_text, regex_match)
 
 class Numbers(Table):
     value: Column[int] = column(int)

@@ -49,6 +49,7 @@ from relq.expressions.relations import (
     Table,
     column,
     excluded,
+    json_column,
     output_column,
 )
 
@@ -82,6 +83,7 @@ __all__ = [
     "excluded",
     "exists",
     "following",
+    "json_column",
     "max",
     "min",
     "multiply",

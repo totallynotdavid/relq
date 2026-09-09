@@ -12,8 +12,17 @@ from typing import Literal
 
 @dataclass(frozen=True, slots=True)
 class TableSourceNode:
+    """A stored relation, optionally qualified by the schema that owns it.
+
+    ``schema`` is the SQL namespace, rendered as its own quoted identifier.
+    ``reference`` deliberately excludes it: a qualified table's implicit
+    correlation name is still the bare table name, so column qualification and
+    duplicate-source detection stay unchanged.
+    """
+
     name: str
     alias: str | None = None
+    schema: str | None = None
 
     @property
     def reference(self) -> str:
@@ -184,6 +193,38 @@ class ExcludedNode:
 
 
 @dataclass(frozen=True, slots=True)
+class JsonTextNode:
+    """PostgreSQL ``->>``: read one JSON member as text.
+
+    The member key is an ordinary bound value, so it is parameterized like any
+    other operand rather than spliced into the statement.
+    """
+
+    value: Node
+    key: Node
+
+
+@dataclass(frozen=True, slots=True)
+class RegexMatchNode:
+    """PostgreSQL ``~`` / ``~*``: POSIX regular-expression matching."""
+
+    value: Node
+    pattern: Node
+    insensitive: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class UuidCastNode:
+    """PostgreSQL ``::uuid``, rendered as a standard ``CAST`` to one fixed type.
+
+    The target type is fixed by the node, not chosen from a caller-supplied
+    type name; every further cast relq supports needs its own named node.
+    """
+
+    value: Node
+
+
+@dataclass(frozen=True, slots=True)
 class OrderNode:
     expression: Node
     direction: str
@@ -199,9 +240,18 @@ class JoinNode:
 
 @dataclass(frozen=True, slots=True)
 class CteNode:
+    """One ``WITH`` binding.
+
+    ``query`` is a ``SELECT`` or a bounded data-modifying statement whose
+    ``RETURNING`` list becomes the binding's output relation.  ``materialized``
+    requests the ``AS MATERIALIZED`` optimizer fence; leaving it false emits a
+    plain ``AS (...)`` and lets the planner decide.
+    """
+
     name: str
-    query: SelectNode
+    query: QueryNode
     recursive: bool = False
+    materialized: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,5 +354,8 @@ type Node = (
     | ScalarSubqueryNode
     | ExistsNode
     | ExcludedNode
+    | JsonTextNode
+    | RegexMatchNode
+    | UuidCastNode
 )
 type QueryNode = SelectNode | InsertNode | UpdateNode | DeleteNode

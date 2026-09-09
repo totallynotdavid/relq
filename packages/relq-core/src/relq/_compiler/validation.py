@@ -4,6 +4,7 @@ from dataclasses import replace
 
 from relq._analysis.ctes import cte_references
 from relq._analysis.nullability import null_extended_sources
+from relq._analysis.scopes import nested_queries, nested_scopes
 from relq._analysis.sources import referenced_sources
 from relq._analysis.walk import walk
 from relq._ast import (
@@ -13,6 +14,7 @@ from relq._ast import (
     BinaryNode,
     CaseNode,
     ColumnNode,
+    CteNode,
     CteSourceNode,
     DefaultValuesSourceNode,
     DeleteNode,
@@ -24,15 +26,18 @@ from relq._ast import (
     InsertRowsSourceNode,
     InsertSelectSourceNode,
     InsertValuesSourceNode,
+    JsonTextNode,
     Node,
     NullableResultNode,
     QueryNode,
+    RegexMatchNode,
     ScalarSubqueryNode,
     SelectNode,
     StarNode,
     TableSourceNode,
     UnaryNode,
     UpdateNode,
+    UuidCastNode,
     ValueNode,
     WindowNode,
 )
@@ -41,11 +46,22 @@ from relq._compiler.grouping import validate_analytic_clauses, validate_grouping
 
 def validate_query(node: QueryNode) -> None:
     """Validate the complete query tree before dialect-specific rendering."""
+    _validate_data_modifying_cte_placement(node)
+    _validate_nested_cte_visibility(node)
+    _validate_statement(node)
+
+
+def _validate_statement(node: QueryNode, outer_sources: frozenset[str] = frozenset()) -> None:
+    """Validate one statement against the relations visible where it appears.
+
+    ``outer_sources`` is empty for a top-level statement and carries the CTEs
+    already bound by the ``WITH`` chain when this statement *is* a later CTE.
+    """
     match node:
         case SelectNode():
-            _validate_select(node)
+            _validate_select(node, outer_sources)
         case InsertNode():
-            _validate_insert(node)
+            _validate_insert(node, outer_sources)
         case UpdateNode():
             if not node.values:
                 raise ValueError("UPDATE requires at least one value")
@@ -65,10 +81,13 @@ def _validate_select(node: SelectNode, outer_sources: frozenset[str] = frozenset
         if cte.name in visible_ctes:
             raise ValueError(f"CTE {cte.name!r} is declared more than once")
         cte_sources = frozenset(visible_ctes) | outer_sources
-        if cte.recursive:
-            cte_sources |= {cte.name}
-            validate_recursive_cte(cte.query, cte.name)
-        _validate_select(cte.query, cte_sources)
+        if isinstance(cte.query, SelectNode):
+            if cte.recursive:
+                cte_sources |= {cte.name}
+                validate_recursive_cte(cte.query, cte.name)
+            _validate_select(cte.query, cte_sources)
+        else:
+            _validate_data_modifying_cte(cte, cte.query, cte_sources)
         visible_ctes.add(cte.name)
     cte_names = frozenset(visible_ctes)
     validate_sources(node, outer_sources | cte_names)
@@ -78,7 +97,66 @@ def _validate_select(node: SelectNode, outer_sources: frozenset[str] = frozenset
         _validate_select(compound.query, outer_sources | cte_names)
 
 
-def _validate_insert(node: InsertNode) -> None:
+def _validate_data_modifying_cte(
+    cte: CteNode,
+    query: InsertNode | UpdateNode | DeleteNode,
+    outer_sources: frozenset[str],
+) -> None:
+    """Require a bounded, row-returning statement behind a data-modifying CTE.
+
+    ``outer_sources`` is the scope already bound by the ``WITH`` chain, so an
+    insert-from-select body can read a CTE declared before this one, exactly as
+    a SELECT body can.
+    """
+    if cte.recursive:
+        raise ValueError(f"recursive CTE {cte.name!r} requires a SELECT query")
+    if not query.returning:
+        raise ValueError(
+            f"data-modifying CTE {cte.name!r} requires returning() to declare its output relation"
+        )
+    _validate_statement(query, outer_sources)
+
+
+def _validate_nested_cte_visibility(node: QueryNode) -> None:
+    """Reject a CTE reference that its enclosing ``WITH`` clauses have not bound.
+
+    ``validate_sources`` applies this rule to the relations a query names in
+    its own FROM/JOIN, but a derived table or a scalar/EXISTS/IN subquery can
+    name a CTE too, and SQL binds ``WITH`` entries strictly in declaration
+    order at every depth.  Without this pass a CTE body could reach a later
+    entry through a subquery and only fail once the database parsed it.
+    """
+    for nested, visible in nested_scopes(node):
+        if not isinstance(nested, SelectNode):
+            continue
+        # A nested query reads its own WITH clause too, exactly as the
+        # outermost one does; ``visible`` only carries what encloses it.
+        bound = visible | {cte.name for cte in nested.ctes}
+        for source in (nested.from_source, *(join.source for join in nested.joins)):
+            if isinstance(source, CteSourceNode) and source.name not in bound:
+                raise ValueError(f"query references CTE {source.name!r} before it is declared")
+
+
+def _validate_data_modifying_cte_placement(node: QueryNode) -> None:
+    """Keep data-modifying CTEs in the outermost WITH clause.
+
+    SQL runs a data-modifying CTE once for the whole statement rather than
+    once per reference, so nesting one inside a derived table, subquery, or
+    another CTE has no well-defined meaning and no dialect accepts it.
+    """
+    nested_names = sorted(
+        cte.name
+        for nested in nested_queries(node)
+        if isinstance(nested, SelectNode)
+        for cte in nested.ctes
+        if not isinstance(cte.query, SelectNode)
+    )
+    if nested_names:
+        names = ", ".join(nested_names)
+        raise ValueError(f"data-modifying CTE(s) must be declared on the outermost query: {names}")
+
+
+def _validate_insert(node: InsertNode, outer_sources: frozenset[str] = frozenset()) -> None:
     match node.source:
         case None:
             raise ValueError("INSERT requires values(), from_select(), or default_values()")
@@ -87,7 +165,7 @@ def _validate_insert(node: InsertNode) -> None:
                 raise ValueError("insert-from-select requires target columns")
             if len(query.selections) != len(columns):
                 raise ValueError("insert-from-select projection width changed after construction")
-            _validate_select(query)
+            _validate_select(query, outer_sources)
         case InsertRowsSourceNode(rows):
             columns = tuple(column for column, _ in rows[0])
             if any(tuple(column for column, _ in row) != columns for row in rows[1:]):
@@ -173,7 +251,9 @@ def _nullable_result_sources(node: Node) -> set[str]:
     match node:
         case ColumnNode(source, _):
             return {source}
-        case AliasNode(expression, _) | NullableResultNode(expression):
+        case AliasNode(expression, _) | NullableResultNode(expression) | UuidCastNode(expression):
+            # A cast keeps its operand's declared nullability, so an outer join
+            # still widens the result and still needs acknowledging.
             return _nullable_result_sources(expression)
         case BinaryNode(left, operator, right) if operator in {"+", "-", "*", "/"}:
             return _nullable_result_sources(left) | _nullable_result_sources(right)
@@ -195,7 +275,12 @@ def _nullable_result_sources(node: Node) -> set[str]:
             | ExcludedNode()
             | StarNode()
             | BinaryNode()
+            | JsonTextNode()
+            | RegexMatchNode()
         ):
+            # json_text already returns an optional result: an absent member and
+            # a JSON null are indistinguishable, so an outer join cannot widen
+            # what the declared type already admits.
             return set()
     raise TypeError(f"unsupported AST node: {node!r}")
 

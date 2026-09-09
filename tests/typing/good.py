@@ -1,4 +1,5 @@
 import decimal
+import uuid
 from dataclasses import dataclass
 from typing import Literal, assert_type
 
@@ -10,6 +11,7 @@ from relq import (
     DerivedTable,
     Expr,
     InsertQuery,
+    JsonValue,
     ModelInsertQuery,
     ModelSelectQuery,
     NullablePredicate,
@@ -27,9 +29,11 @@ from relq import (
     cte,
     cume_dist,
     current_row,
+    delete_from,
     divide,
     excluded,
     insert_into,
+    json_column,
     output_column,
     percent_rank,
     row_number,
@@ -38,6 +42,7 @@ from relq import (
     select_model,
     sum,
 )
+from relq.postgres import cast_uuid, json_text, regex_match
 from relq_sqlite import SQLiteDatabase
 
 
@@ -152,3 +157,37 @@ model_insert = (
     .returning_model(OuterJoinResult, users.id, users.id)
 )
 assert_type(model_insert, ModelInsertQuery[OuterJoinResult])
+
+
+class Documents(Table):
+    id: Column[uuid.UUID] = column(uuid.UUID)
+    owner: Column[str] = column(str)
+    payload: Column[JsonValue] = json_column()
+
+
+class DocumentIds(CteTable):
+    id: Column[uuid.UUID] = output_column(uuid.UUID)
+
+
+documents = Documents("documents", schema="archive")
+removed = cte(DocumentIds, "removed")
+member = json_text(documents.payload, "job_id")
+assert_type(member, Expr[str | None])
+assert_type(cast_uuid(member), Expr[uuid.UUID | None])
+assert_type(cast_uuid(documents.owner), Expr[uuid.UUID])
+assert_type(regex_match(documents.owner, "^a", insensitive=True), NullablePredicate)
+assert_type(
+    select(count())
+    .from_(removed)
+    .with_(
+        removed,
+        delete_from(documents).where(documents.owner.eq("ada")).returning(documents.id),
+    ),
+    SelectQuery[tuple[int]],
+)
+assert_type(
+    select(removed.id)
+    .from_(removed)
+    .with_(removed, select(documents.id).from_(documents), materialized=True),
+    SelectQuery[tuple[uuid.UUID]],
+)

@@ -8,7 +8,9 @@ from relq import (
     Column,
     CteTable,
     SelectQuery,
+    Table,
     add,
+    column,
     count,
     cte,
     exists,
@@ -171,3 +173,65 @@ def test_compounds_require_declared_outer_relations_for_modifiers() -> None:
         )
     with pytest.raises(ValueError, match="compound queries cannot have ORDER BY"):
         validate_query(replace(select_node(compound), order_by=(employees.id.asc().node(),)))
+
+
+def test_a_declared_column_cannot_shadow_relation_internals() -> None:
+    """Column is a non-data descriptor, so an instance attribute would win over it."""
+    with pytest.raises(TypeError, match="column attribute\\(s\\) reserved by relq: _schema"):
+
+        class SchemaShadow(Table):  # pyright: ignore[reportUnusedClass]
+            _schema: Column[str] = column(str)
+
+    with pytest.raises(TypeError, match="reserved by relq: reference"):
+
+        class ReferenceShadow(Table):  # pyright: ignore[reportUnusedClass]
+            # A type checker rejects this too; the runtime guard covers the
+            # attributes that are only instance state.
+            reference: Column[str] = column(str)  # pyright: ignore[reportIncompatibleMethodOverride]
+
+    with pytest.raises(TypeError, match="reserved by relq: _source"):
+
+        class SourceShadow(CteTable):  # pyright: ignore[reportUnusedClass]
+            _source: Column[str] = output_column(str)
+
+
+def test_a_mixin_cannot_smuggle_a_reserved_column_past_the_guard() -> None:
+    """Column discovery walks the MRO, so the guard has to walk it too."""
+
+    class ReferenceMixin:
+        reference: Column[str] = column(str)
+
+    with pytest.raises(TypeError, match="reserved by relq: reference"):
+        # A type checker rejects the shadowing too; the runtime guard is what
+        # covers a mixin assembled without one.
+        class Records(  # pyright: ignore[reportUnusedClass, reportIncompatibleVariableOverride]
+            ReferenceMixin, Table
+        ):
+            id: Column[int] = column(int)
+
+
+def test_a_mixin_may_share_ordinary_columns() -> None:
+    """The MRO walk rejects reserved names, not inheritance itself."""
+
+    class TimestampsMixin:
+        created_at: Column[str] = column(str)
+
+    class Records(TimestampsMixin, Table):
+        id: Column[int] = column(int)
+
+    records = Records("records")
+    assert records.column_names() == {"id", "created_at"}
+    assert compile_sqlite(select(records.created_at).from_(records)).sql == (
+        'select "records"."created_at" from "records"'
+    )
+
+
+def test_a_reserved_sql_column_name_is_still_reachable_through_an_alias() -> None:
+    class Renamed(Table):
+        schema_column: Column[str] = column(str, name="_schema")
+
+    renamed = Renamed("renamed")
+    assert renamed.column_names() == {"_schema"}
+    assert compile_sqlite(select(renamed.schema_column).from_(renamed)).sql == (
+        'select "renamed"."_schema" from "renamed"'
+    )
