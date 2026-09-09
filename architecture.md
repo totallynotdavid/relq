@@ -9,7 +9,8 @@ layers mean and why they're split this way), see
 
 ```text
 packages/relq-core       public types/builders, private AST, semantic analysis,
-                         validation, fixed-dialect SQL compilation, row adapters
+                         validation, fixed-dialect SQL compilation, row adapters,
+                         and relq.postgres: the PostgreSQL-only expression surface
 packages/relq-sqlite     sqlite3 execution boundary
 packages/relq-postgres   asyncpg execution boundary and PostgreSQL-only decode
 packages/relq-codegen    schema introspection, type mapping, deterministic source
@@ -31,17 +32,23 @@ _ast.py                    : leaf. Pure frozen dataclasses (Node/QueryNode union
 rows.py                    : leaf. RowAdapter/Decoder protocol + all builtin decoders. No relq imports.
 expressions/ordering.py    → _ast
 expressions/core.py        → _ast, _query (select_node), expressions/ordering
-expressions/relations.py   → _ast, expressions/core
+expressions/relations.py   → _ast, expressions/core, rows (JsonValue, for json_column)
 expressions/analytics.py   → _ast, expressions/core, expressions/ordering
 expressions/__init__.py    → re-exports the four above
-_analysis/{ctes,nullability,sources}.py → _ast only (no cross-imports between these three)
+_analysis/{ctes,nullability,scopes,sources}.py → _ast (+ walk) only (no cross-imports between these four)
 _compiler/_model.py        : leaf. Dialect/CompiledQuery dataclasses.
 _compiler/_render.py       → _ast, _compiler/_model
 _compiler/grouping.py      → _ast
 _compiler/validation.py    → _analysis/*, _ast, _compiler/grouping
 _query.py                  → _ast, rows  [+ TYPE_CHECKING-only: dml, query]
-dml.py                     → _ast, _query, expressions, query (SelectQuery, for from_select), rows
-query.py                   → _ast, _query, expressions, rows
+dml.py                     → _ast, _query, expressions, rows, query (SelectQuery, for from_select)
+query.py                   → _ast, _query, expressions, rows, dml (CteQuery, for with_)
+                             These two are mutually recursive at the type level, so each binds the
+                             other's names at the END of its module, after defining its own. That
+                             keeps both public signatures resolvable by typing.get_type_hints()
+                             instead of hiding one side behind TYPE_CHECKING. dml.py owns the
+                             CteQuery alias, the union with_() accepts.
+postgres.py                → _ast, expressions, rows. PostgreSQL-only expressions; not re-exported by relq/__init__
 _compiler/api.py           → _compiler/_model, _compiler/_render, _compiler/validation, _query, dml, query
 _compiler/__init__.py      → re-exports _model.CompiledQuery, api.compile_{sqlite,postgres}
 _execution.py              → _ast, _query, dml, query
@@ -59,8 +66,8 @@ merged for convenience:
 
 - `expressions/`: scalar expressions, relation descriptors, ordering, and
   analytics are separate modules; this is not one god `expressions.py`.
-- `_analysis/`: source scope, CTE scope, and outer-join nullability are separate
-  compiler passes, not one semantic junk drawer.
+- `_analysis/`: source scope, CTE scope, nested query scopes, and outer-join
+  nullability are separate compiler passes, not one semantic junk drawer.
 - `_compiler/`: rendering stays private and cohesive; it's split only when a
   sub-renderer earns its own responsibility or test seam.
 - `rows.py`: adapters and built-in decoders share one explicit driver-trust

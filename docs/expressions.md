@@ -22,6 +22,29 @@ selected, total Boolean is required.
 compose Boolean expressions. Empty `.in_([])` reduces to a bound `FALSE` rather
 than emitting invalid `IN ()` SQL.
 
+## PostgreSQL-only expressions
+
+`relq.postgres` holds the expressions only PostgreSQL has, as named typed
+functions rather than an escape hatch:
+
+```python
+from relq.postgres import cast_uuid, json_text, regex_match
+
+candidate = json_text(jobs.payload, "compute_job_id")  # ->>  Expr[str | None]
+guarded = regex_match(candidate, UUID_RE, insensitive=True)  # ~*  NullablePredicate
+job_id = cast_uuid(candidate)  # ::uuid  Expr[UUID | None]
+```
+
+`json_text` binds its member key as a parameter and returns an optional result,
+because the member may be absent or JSON `null`. `regex_match` is a
+`NullablePredicate` for the same reason `LIKE` is. `cast_uuid` keeps a non-null
+argument's result non-null and preserves an optional one; PostgreSQL raises on
+malformed text rather than producing `NULL`, so guard the value with
+`regex_match` first.
+
+Compiling any of these for SQLite is a compile-time error that names the
+expression. See [Design boundaries](./design-boundaries.md).
+
 ## Conditional expressions
 
 `case_when`, `coalesce`, and `nullif` are the complete, closed conditional
