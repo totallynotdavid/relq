@@ -2,12 +2,14 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 from relq import Column, InsertQuery, Table, UpdateQuery, column, insert_into, update
+from relq import JsonValue
 from relq import bool_decoder
 from relq import datetime_decoder
 from relq import decimal_decoder
 from relq import enum_decoder
 from relq import inet_decoder
 from relq import int_decoder
+from relq import json_column
 from relq import json_decoder
 from relq import list_decoder
 from relq import nullable
@@ -35,11 +37,11 @@ class RelqCodegenValues(Table):
     price: Column[decimal.Decimal] = column(decimal.Decimal)
     occurred_at: Column[datetime.datetime | None] = column(datetime.datetime)
     due_time: Column[datetime.time | None] = column(datetime.time)
-    payload: Column[object | None] = column(object)
+    payload: Column[JsonValue | None] = json_column()
     origin: Column[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None] = column(ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface)
     computed: Column[int | None] = column(int)
 
-relq_codegen_values = RelqCodegenValues('relq_codegen_values')
+relq_codegen_values = RelqCodegenValues('relq_codegen_values', schema='relq_test')
 
 class RelqCodegenValuesInsert(TypedDict):
     id: NotRequired[int]
@@ -49,7 +51,7 @@ class RelqCodegenValuesInsert(TypedDict):
     price: NotRequired[decimal.Decimal]
     occurred_at: NotRequired[datetime.datetime | None]
     due_time: NotRequired[datetime.time | None]
-    payload: NotRequired[object | None]
+    payload: NotRequired[JsonValue | None]
     origin: NotRequired[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None]
 
 class RelqCodegenValuesUpdate(TypedDict):
@@ -60,7 +62,7 @@ class RelqCodegenValuesUpdate(TypedDict):
     price: NotRequired[decimal.Decimal]
     occurred_at: NotRequired[datetime.datetime | None]
     due_time: NotRequired[datetime.time | None]
-    payload: NotRequired[object | None]
+    payload: NotRequired[JsonValue | None]
     origin: NotRequired[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None]
 
 def insert_relq_codegen_values(values: RelqCodegenValuesInsert) -> InsertQuery[tuple[()], Literal[False]]:
@@ -82,7 +84,7 @@ class RelqCodegenValuesRow:
     price: decimal.Decimal
     occurred_at: datetime.datetime | None
     due_time: datetime.time | None
-    payload: object | None
+    payload: JsonValue | None
     origin: ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None
     computed: int | None
 
@@ -94,7 +96,7 @@ class RelqIntegrationArchive(Table):
     id: Column[int] = column(int)
     name: Column[str] = column(str)
 
-relq_integration_archive = RelqIntegrationArchive('relq_integration_archive')
+relq_integration_archive = RelqIntegrationArchive('relq_integration_archive', schema='relq_test')
 
 class RelqIntegrationArchiveInsert(TypedDict):
     id: NotRequired[int]
@@ -132,7 +134,7 @@ class RelqIntegrationUsers(Table):
     state_history: Column[list[RelqIntegrationState]] = column(list[RelqIntegrationState])
     name_length: Column[int | None] = column(int)
 
-relq_integration_users = RelqIntegrationUsers('relq_integration_users')
+relq_integration_users = RelqIntegrationUsers('relq_integration_users', schema='relq_test')
 
 class RelqIntegrationUsersInsert(TypedDict):
     id: NotRequired[int]

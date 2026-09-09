@@ -27,7 +27,6 @@ from relq._ast import (
 )
 from relq._query import Query, extract_query, new_query, select_node
 from relq.expressions import BooleanExpression, Column, Expr, Expression, Table
-from relq.query import SelectQuery
 from relq.rows import RowAdapter, row_adapter
 
 
@@ -68,6 +67,20 @@ def _target_column_names(
 Row_co = TypeVar("Row_co", covariant=True)
 Returns = TypeVar("Returns", Literal[False], Literal[True])
 Bounded = TypeVar("Bounded", Literal[False], Literal[True])
+
+type CteQuery[Row] = (
+    SelectQuery[Row]
+    | InsertQuery[Row, Literal[True]]
+    | UpdateQuery[Row, Literal[True], Literal[True]]
+    | DeleteQuery[Row, Literal[True], Literal[True]]
+)
+"""A query that can define one CTE: a SELECT, or bounded DML with RETURNING.
+
+The declared-model builders are deliberately absent.  A CTE's output relation
+is declared by its :class:`~relq.CteTable`, and the statement's result shape
+belongs to the outer query, so a row model attached to a CTE body would have
+nothing to decode.
+"""
 
 
 def _model_returning[Model](
@@ -471,3 +484,12 @@ def _insert_node[Returns: (Literal[False], Literal[True])](
     if not isinstance(node, InsertNode):  # pragma: no cover - structural invariant
         raise TypeError("expected an INSERT query")
     return node
+
+
+# relq's SELECT and DML builders are mutually recursive at the type level:
+# from_select() takes a SelectQuery, and CteQuery is what SelectQuery.with_()
+# accepts.  Each module therefore binds the other's names only after defining
+# its own, which keeps both public signatures resolvable by
+# typing.get_type_hints() instead of leaving one side's annotations behind a
+# TYPE_CHECKING import.  query.py closes the loop the same way.
+from relq.query import SelectQuery

@@ -9,7 +9,7 @@ from relq import Column, Table, column
 
 
 class Users(Table):
-    id: Column[int] = column(int, primary_key=True)
+    id: Column[int] = column(int)
     email: Column[str] = column(str)
     manager_id: Column[int | None] = column(int)
 
@@ -17,9 +17,40 @@ class Users(Table):
 users = Users("users")
 ```
 
-`column(...)` describes the SQL type and whether the column is nullable, a
-primary key, and so on. `Column[T]` is a typed descriptor: `users.id` is
-`Column[int]`.
+`column(python_type)` binds the column's Python result type; nullability lives
+in the annotation (`Column[int | None]`), not in separate runtime metadata.
+`Column[T]` is a typed descriptor: `users.id` is `Column[int]`. Pass
+`name="..."` when the SQL column name differs from the Python attribute.
+
+A declared column cannot take an attribute name relq itself uses on a relation
+(`table_name`, `reference`, `node`, `as_`, `_schema`, ...); `Column` is a
+non-data descriptor, so such an attribute would silently replace it. That is a
+`TypeError` at class-definition time, and it covers a column a shared mixin
+declares as well as one on the relation itself, because attribute lookup finds
+both. Rename the attribute and keep the SQL name with
+`column(str, name="_schema")`. `relq-codegen` applies the same rename
+automatically.
+
+## Schema-qualified tables
+
+A table that lives outside the connection's default namespace declares the
+schema that owns it:
+
+```python
+queue_jobs = QueueJobs("jobs", schema="rqueue")
+compute_jobs = ComputeJobs("jobs", schema="compute")
+```
+
+The schema compiles to its own quoted identifier, `"rqueue"."jobs"`, never as
+part of the table's name, and it applies to `SELECT` sources and DML targets
+alike. The table's correlation name is still the bare table name, so columns
+stay `"jobs"."id"`; two same-named tables in different schemas therefore need
+`.as_(...)` aliases, exactly as SQL requires.
+
+This is PostgreSQL-only. SQLite has qualified names too, but they address
+attached databases rather than schemas, so compiling a schema-qualified table
+for SQLite is a compile-time error instead of a query that quietly means
+something else.
 
 ## Aliases and self-joins
 

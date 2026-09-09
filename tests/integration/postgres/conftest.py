@@ -15,10 +15,12 @@ async def postgres_schema() -> AsyncGenerator[str]:
     harness = configured_harness()
     await reset_schema(harness)
     await reset_schema(schema_variant(harness, "codegen"))
+    await reset_schema(schema_variant(harness, "queue"))
     yield harness.schema
     if not harness.keep_schema:
         await drop_schema(harness)
         await drop_schema(schema_variant(harness, "codegen"))
+        await drop_schema(schema_variant(harness, "queue"))
 
 
 @pytest_asyncio.fixture
@@ -35,6 +37,14 @@ async def postgres_admin(postgres_schema: str) -> AsyncGenerator[asyncpg.Connect
 @pytest_asyncio.fixture
 async def postgres_codegen_schema(postgres_schema: str) -> str:
     harness = schema_variant(configured_harness(), "codegen")
+    await reset_schema(harness)
+    return harness.schema
+
+
+@pytest_asyncio.fixture
+async def postgres_queue_schema(postgres_schema: str) -> str:
+    """Own a second schema, so cross-schema queries have two real namespaces."""
+    harness = schema_variant(configured_harness(), "queue")
     await reset_schema(harness)
     return harness.schema
 

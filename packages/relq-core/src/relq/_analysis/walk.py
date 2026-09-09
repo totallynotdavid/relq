@@ -27,12 +27,15 @@ from relq._ast import (
     ExistsNode,
     FunctionNode,
     InNode,
+    JsonTextNode,
     Node,
     NullableResultNode,
+    RegexMatchNode,
     ScalarSubqueryNode,
     SelectNode,
     StarNode,
     UnaryNode,
+    UuidCastNode,
     ValueNode,
     WindowNode,
 )
@@ -49,7 +52,12 @@ def children(node: Node) -> Iterator[Node]:
             yield left
             yield right
             return
-        case UnaryNode(_, operand) | AliasNode(operand, _) | NullableResultNode(operand):
+        case (
+            UnaryNode(_, operand)
+            | AliasNode(operand, _)
+            | NullableResultNode(operand)
+            | UuidCastNode(operand)
+        ):
             yield operand
             return
         case FunctionNode(_, arguments):
@@ -80,6 +88,14 @@ def children(node: Node) -> Iterator[Node]:
             yield expression
             yield lower
             yield upper
+            return
+        case JsonTextNode(value, key):
+            yield value
+            yield key
+            return
+        case RegexMatchNode(value, pattern, _):
+            yield value
+            yield pattern
             return
     raise TypeError(f"unsupported AST node: {node!r}")
 

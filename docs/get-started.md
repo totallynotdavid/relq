@@ -10,7 +10,7 @@ from relq_sqlite import SQLiteDatabase
 
 
 class Users(Table):
-    id: Column[int] = column(int, primary_key=True)
+    id: Column[int] = column(int)
     email: Column[str] = column(str)
     active: Column[bool] = column(bool)
 

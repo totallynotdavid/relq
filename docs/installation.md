@@ -28,3 +28,19 @@ imports `asyncpg` only when the `postgres` extra is installed and used. See
 [Code generation](./codegen.md).
 
 relq targets Python 3.15+ only.
+
+## Engine versions
+
+relq compiles for two fixed dialects, and each has a minimum server version.
+Both floors are older than every release either project still supports:
+
+| Engine | Minimum | What sets it |
+| --- | --- | --- |
+| SQLite | 3.35.0 (2021-03-12) | `RETURNING` and CTE `AS MATERIALIZED` both arrived in this release, so a build that rejects one rejects the other. Window frame `EXCLUDE` and `GROUPS` need 3.28.0. |
+| PostgreSQL | 12 (2019-10-03) | CTE `AS MATERIALIZED`. Window frame `EXCLUDE` and `GROUPS` need 11; everything else relq emits is older still. |
+
+These are a documented contract, not a runtime gate. relq's compiler never sees
+a connection (it takes a query and returns SQL), so it cannot check a server's
+version on your behalf, and adding a version probe to every statement would put
+a round trip in the executor's hot path. Pin your engine at or above these
+versions in deployment.

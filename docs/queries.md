@@ -95,3 +95,73 @@ declared before it, and duplicate names or forward references are rejected
 before SQL is emitted. `.with_recursive(source, query)` requires a non-recursive
 seed unioned (`union_all`) with a recursive arm; only that arm may reference the
 CTE itself.
+
+### Materialization
+
+`.with_(source, query, materialized=True)` emits `AS MATERIALIZED`, the
+optimizer fence that stops the planner from inlining the CTE into its
+references. Leaving it unset emits a plain `AS (...)` and leaves the choice to
+the planner.
+
+Both engines accept the modifier at relq's documented version floors: SQLite
+added it in 3.35.0, the same release that added `RETURNING`, so it costs SQLite
+nothing relq did not already require; PostgreSQL added it in 12, which is what
+sets relq's PostgreSQL floor. An older server rejects the statement itself; see
+[Engine versions](./installation.md#engine-versions).
+
+### Data-modifying CTEs
+
+`.with_(...)` also accepts a bounded `INSERT`, `UPDATE`, or `DELETE` whose
+`RETURNING` list becomes the CTE's output relation:
+
+```python
+class Removed(CteTable):
+    id: Column[int] = output_column(int)
+
+
+removed = cte(Removed, "removed")
+purged = (
+    select(count())
+    .from_(removed)
+    .with_(
+        removed,
+        delete_from(jobs).where(jobs.finished_at.lt(cutoff)).returning(jobs.id),
+    )
+)
+```
+
+The statement deletes and counts atomically. A data-modifying CTE runs exactly
+once for the whole statement, whatever the outer query does with its rows, so
+relq requires it to carry `RETURNING` and to be declared on the outermost query;
+nesting one inside a derived table, subquery, or another CTE is rejected before
+compilation. This is PostgreSQL-only (SQLite has no data-modifying CTE) and
+executing such a query mutates data even though it goes through `fetch_one`.
+
+Like a `SELECT` body, a data-modifying body sees the CTEs bound before it, so a
+later CTE can consume an earlier one's `RETURNING` rows:
+
+```python
+query = (
+    select(count())
+    .from_(archived)
+    .with_(removed, delete_from(jobs).where(jobs.finished_at.lt(cutoff)).returning(jobs.id))
+    .with_(
+        archived,
+        insert_into(job_archive)
+        .from_select(select(removed.id).from_(removed), job_archive.id)
+        .returning(job_archive.id),
+    )
+)
+```
+
+Forward references are still rejected: a CTE can only read names declared
+before it.
+
+### CTE bodies and row models
+
+`with_` and `with_recursive` take the tuple builders (`select`, `returning`),
+never `select_model` / `returning_model`. A CTE's output relation is declared by
+its `CteTable`, and the statement's result shape belongs to the outer query, so
+an adapter attached to a CTE body would have nothing to decode. Passing one is a
+type error, and a runtime error at the builder boundary, rather than a silently
+dropped contract. Decode the outer query instead.

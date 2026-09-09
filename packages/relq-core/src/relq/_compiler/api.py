@@ -17,7 +17,14 @@ from relq.dml import (
 from relq.query import ModelSelectQuery, SelectQuery
 
 _SQLITE = Dialect("sqlite", "?", max_parameters=999)
-_POSTGRES = Dialect("postgres", "$", max_parameters=65_535)
+_POSTGRES = Dialect(
+    "postgres",
+    "$",
+    max_parameters=65_535,
+    supports_schema_qualified_tables=True,
+    supports_data_modifying_ctes=True,
+    supports_postgres_expressions=True,
+)
 
 
 type CompilableQuery[

@@ -8,6 +8,7 @@ from relq._ast import (
     CaseNode,
     ColumnNode,
     ConflictNode,
+    CteNode,
     CteSourceNode,
     DefaultValuesSourceNode,
     DeleteNode,
@@ -21,10 +22,12 @@ from relq._ast import (
     InsertRowsSourceNode,
     InsertSelectSourceNode,
     InsertValuesSourceNode,
+    JsonTextNode,
     Node,
     NullableResultNode,
     OrderNode,
     QueryNode,
+    RegexMatchNode,
     ScalarSubqueryNode,
     SelectNode,
     SourceNode,
@@ -32,6 +35,7 @@ from relq._ast import (
     TableSourceNode,
     UnaryNode,
     UpdateNode,
+    UuidCastNode,
     ValueNode,
     WindowFrameNode,
     WindowNode,
@@ -44,12 +48,8 @@ def render_query(node: QueryNode, dialect: Dialect) -> CompiledQuery:
     match node:
         case SelectNode():
             sql = _compile_select(node, dialect, parameters)
-        case InsertNode():
-            sql = _compile_insert(node, dialect, parameters)
-        case UpdateNode():
-            sql = _compile_update(node, dialect, parameters)
-        case DeleteNode():
-            sql = _compile_delete(node, dialect, parameters)
+        case InsertNode() | UpdateNode() | DeleteNode():
+            sql = _compile_dml(node, dialect, parameters)
     if dialect.max_parameters is not None and len(parameters) > dialect.max_parameters:
         raise ValueError(
             f"{dialect.name} supports at most {dialect.max_parameters} parameters per statement; "
@@ -66,13 +66,7 @@ def _compile_select(
 ) -> str:
     if node.from_source is None:  # pragma: no cover - established by validate_query()
         raise AssertionError("attempted to render an unvalidated SELECT")
-    visible_ctes: set[str] = set()
-    for cte in node.ctes:
-        cte_sources = frozenset(visible_ctes) | outer_sources
-        if cte.recursive:
-            cte_sources |= {cte.name}
-        visible_ctes.add(cte.name)
-    cte_names = frozenset(visible_ctes)
+    cte_names = frozenset(cte.name for cte in node.ctes)
     scope = (
         outer_sources
         | cte_names
@@ -86,9 +80,9 @@ def _compile_select(
             cte_sources = outer_sources | prior_ctes
             if cte.recursive:
                 cte_sources |= {cte.name}
-            compiled_ctes.append(
-                f"{_identifier(cte.name)} as ({_compile_select(cte.query, dialect, parameters, cte_sources)})"
-            )
+            modifier = " materialized" if cte.materialized else ""
+            body = _compile_cte_body(cte, dialect, parameters, cte_sources)
+            compiled_ctes.append(f"{_identifier(cte.name)} as{modifier} ({body})")
             prior_ctes |= {cte.name}
         keyword = "with recursive" if any(cte.recursive for cte in node.ctes) else "with"
         prefix = keyword + " " + ", ".join(compiled_ctes) + " "
@@ -122,6 +116,32 @@ def _compile_select(
             compound.query, dialect, parameters, outer_sources | cte_names
         )
     return prefix + sql
+
+
+def _compile_cte_body(
+    cte: CteNode,
+    dialect: Dialect,
+    parameters: list[object],
+    outer_sources: frozenset[str],
+) -> str:
+    """Render one ``WITH`` binding's body, gating data-modifying statements."""
+    if isinstance(cte.query, SelectNode):
+        return _compile_select(cte.query, dialect, parameters, outer_sources)
+    if not dialect.supports_data_modifying_ctes:
+        raise ValueError(f"{dialect.name} does not support data-modifying common table expressions")
+    return _compile_dml(cte.query, dialect, parameters)
+
+
+def _compile_dml(
+    node: InsertNode | UpdateNode | DeleteNode, dialect: Dialect, parameters: list[object]
+) -> str:
+    match node:
+        case InsertNode():
+            return _compile_insert(node, dialect, parameters)
+        case UpdateNode():
+            return _compile_update(node, dialect, parameters)
+        case DeleteNode():
+            return _compile_delete(node, dialect, parameters)
 
 
 def _compile_insert(node: InsertNode, dialect: Dialect, parameters: list[object]) -> str:
@@ -207,8 +227,16 @@ def _compile_source(
     outer_sources: frozenset[str] = frozenset(),
 ) -> str:
     match source:
-        case TableSourceNode(name, alias):
-            sql = _identifier(name)
+        case TableSourceNode(name, alias, schema):
+            if schema is None:
+                sql = _identifier(name)
+            elif dialect.supports_schema_qualified_tables:
+                sql = f"{_identifier(schema)}.{_identifier(name)}"
+            else:
+                raise ValueError(
+                    f"{dialect.name} does not support schema-qualified tables; "
+                    f"{schema}.{name} cannot be compiled for it"
+                )
             return sql if alias is None else f"{sql} as {_identifier(alias)}"
         case CteSourceNode(name):
             return _identifier(name)
@@ -311,7 +339,29 @@ def _compile_node(
             return f"{operator} ({_compile_select(query, dialect, parameters, outer_sources)})"
         case ExcludedNode(_, name):
             return f"excluded.{_identifier(name)}"
+        case JsonTextNode(value, key):
+            _require_postgres_expression(dialect, "json_text()")
+            return (
+                f"({_compile_node(value, dialect, parameters, outer_sources)} ->> "
+                f"{_compile_node(key, dialect, parameters, outer_sources)})"
+            )
+        case RegexMatchNode(value, pattern, insensitive):
+            _require_postgres_expression(dialect, "regex_match()")
+            operator = "~*" if insensitive else "~"
+            return (
+                f"({_compile_node(value, dialect, parameters, outer_sources)} {operator} "
+                f"{_compile_node(pattern, dialect, parameters, outer_sources)})"
+            )
+        case UuidCastNode(value):
+            _require_postgres_expression(dialect, "cast_uuid()")
+            return f"cast({_compile_node(value, dialect, parameters, outer_sources)} as uuid)"
     raise TypeError(f"unsupported AST node: {node!r}")
+
+
+def _require_postgres_expression(dialect: Dialect, name: str) -> None:
+    """Keep PostgreSQL-only expressions out of every other dialect's SQL."""
+    if not dialect.supports_postgres_expressions:
+        raise ValueError(f"{dialect.name} does not support the PostgreSQL-only {name} expression")
 
 
 def _identifier(value: str) -> str:

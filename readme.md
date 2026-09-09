@@ -16,7 +16,7 @@ from relq import Column, Table, column, select
 
 
 class Users(Table):
-    id: Column[int] = column(int, primary_key=True)
+    id: Column[int] = column(int)
     email: Column[str] = column(str)
     active: Column[bool] = column(bool)
 
@@ -36,11 +36,16 @@ query = select(users.id, users.email).from_(users).where(users.active.is_true())
   (`bool | None`), matching SQL's `UNKNOWN`.
 - Raw driver results and typed model results are distinct static states, with no
   implicit decoding.
+- Schema-qualified tables, materialized CTEs, and data-modifying CTEs
+  (`WITH removed AS (DELETE ... RETURNING id) SELECT count(*) FROM removed`).
 - `relq-codegen` generates committed schema modules from an existing database.
 
 There is intentionally no raw SQL, generic function builder, custom dialect, or
-implicit result decoding. See [Design boundaries](./docs/design-boundaries.md)
-for the complete list and the reasoning.
+implicit result decoding. PostgreSQL-only capabilities live behind a separate
+`relq.postgres` import as named, typed, validated expressions, and compiling one
+for SQLite is a compile-time error rather than a silent difference. See
+[Design boundaries](./docs/design-boundaries.md) for the complete list and the
+reasoning.
 
 ## Documentation
 
