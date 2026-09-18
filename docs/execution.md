@@ -25,21 +25,24 @@ pgbouncer's `transaction` or `statement` pooling mode, so pass
 `statement_cache_size=0` to `asyncpg.connect`/`create_pool` if your pool sits
 behind it.
 
-## Raw and mapped results are different states
+## Raw and decoded results
 
 `select(...)` and `.returning(...)` are raw-result queries: `fetch_all` /
 `fetch_one` return the exact tuple type you selected, with the driver's own
 values (SQLite's `0`/`1` for booleans, text timestamps, and so on).
-`select_model(Model, ...)` and `.returning_model(Model, ...)` are mapped-result
-queries: `fetch_all` / `fetch_one` return exactly the declared dataclass or
-`NamedTuple`. There is no result-type union and no implicit driver-to-domain
-conversion.
+`.decode(Model)` attaches a declared decoder to the same SELECT or DML builder.
+It preserves the query's SQL projection and every valid composition operation,
+but `fetch_all` / `fetch_one` return the declared dataclass or `NamedTuple`.
+Decoding never changes what a query can mean in SQL.
 
 ```python
 @dataclass
 class UserEmail:
     id: int
     email: str
+
+
+decoded = select(users.id, users.email).from_(users).decode(UserEmail)
 
 
 rows = database.fetch_all_as(
@@ -49,8 +52,8 @@ rows = database.fetch_all_as(
 ```
 
 `fetch_all_as` / `fetch_one_as` are the explicit, one-off adapter path for a raw
-query. `row_adapter(Model)` validates arity against the model before any row is
-decoded.
+query. Embedded decoders are for reusable query contracts; executor-time decoders
+are for one call. `row_adapter(Model)` validates arity before any row is decoded.
 
 ## Transactions
 

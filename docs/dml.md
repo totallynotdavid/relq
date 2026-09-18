@@ -47,9 +47,44 @@ upsert = (
 
 `on_conflict(...)` is shared by SQLite and PostgreSQL and must be completed with
 `.do_nothing()` or `.do_update(...)`; `excluded(column)` refers to the proposed
-row. Conflict predicates, named constraints, and PostgreSQL's
-`DO UPDATE ... WHERE` aren't part of this cross-dialect surface yet. See
+row. Named constraints as a conflict target aren't part of this surface yet. See
 [Design boundaries](./design-boundaries.md).
+
+The target takes any number of columns, because a composite unique index does.
+They are typed as `ConflictTarget`, the un-parameterised base every `Column`
+inherits, so one target can mix value types -- `(queue, dedupe_key)` with
+`dedupe_key` nullable, say. `from_select(...)` and `returning(...)` do cap their
+arity, because there each position feeds the result tuple; a conflict target
+feeds nothing, so it has no such cap.
+
+### Conflict predicates (PostgreSQL only)
+
+Both of SQL's `ON CONFLICT` predicates are spelled `.where(...)`, in the same
+positions the SQL clauses occupy:
+
+```python
+(
+    insert_into(jobs)
+    .values(queue="emails", dedupe_key="welcome:7", state="pending")
+    .on_conflict(jobs.queue, jobs.dedupe_key)
+    .where(jobs.dedupe_key.is_not_null() & jobs.state.in_(("pending", "leased")))
+    .do_update(updated_at=jobs.updated_at)
+    .where(jobs.state.eq("pending"))
+)
+```
+
+The first `.where(...)` is the *arbiter* predicate: it repeats a partial unique
+index's own predicate so PostgreSQL can infer that index, and it is required
+whenever the unique index is partial. The second is the *action* predicate: the
+conflicting row is updated only where it holds, which makes `do_update` a
+compare-and-swap rather than an unconditional overwrite.
+
+`.do_update(...)` returns a `ConflictUpdateQuery`, which is already executable;
+its `.where(...)` must come before `.returning(...)`, matching SQL's own order.
+`excluded(column)` is allowed in the action predicate and rejected in the
+arbiter predicate, which describes stored rows rather than the proposed one.
+Compiling either predicate for SQLite raises: relq only emits them for
+PostgreSQL.
 
 ## Update and delete
 
@@ -70,7 +105,8 @@ insert_into(users).values(email="ada@example.com").returning(users.id, users.ema
 ```
 
 `.returning(...)` turns a DML builder into a row-producing query, so it goes to
-`fetch_all`/`fetch_one`, not `execute`. Tuple `returning` overloads stop at six
-expressions (`select` stops at eight); wider results use
-`returning_model(Model, ...)` / `select_model(Model, ...)`, which fix arity and
-executor mapping explicitly rather than degrading to `tuple[object, ...]`.
+`fetch_all`/`fetch_one`, not `execute`. Tuple `returning` overloads stop at eight
+expressions, matching `select`; wider results use
+`.returning(...).decode(Model)` / `select(...).decode(Model)`. For a declared
+relation wider than eight columns, use `select_all_from(relation)` before
+decoding; its declared row shape remains exact.

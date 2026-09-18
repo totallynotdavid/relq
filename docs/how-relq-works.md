@@ -32,8 +32,8 @@ handwritten declarations or database metadata
    values (SQLite's `0`/`1` for booleans, text timestamps, and so on) instead of
    pretending they're already Python domain objects. `row_adapter(Model)` is the
    explicit, arity-checked conversion boundary for `fetch_all_as` /
-   `fetch_one_as`; `select_model` and `returning_model` embed that adapter
-   directly into a query. See [Execution](./execution.md).
+   `fetch_one_as`; `.decode(...)` embeds that adapter directly into a query.
+   See [Execution](./execution.md).
 
 This split exists to make a category of bug unrepresentable rather than just
 discouraged: schema shape can't be assembled from user input at runtime, SQL

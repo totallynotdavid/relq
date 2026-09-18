@@ -20,8 +20,8 @@ category of bug unrepresentable. Some is just scope relq hasn't grown into yet.
   individual `execute` calls inside a transaction.
 - **No implicit result decoding.** Raw fetches return exact driver tuples.
   Turning those into application values requires an explicit `RowAdapter`,
-  either passed to `fetch_*_as` or embedded by `select_model` /
-  `returning_model`. There is no result-type union.
+  either passed to `fetch_*_as` or embedded by `.decode(...)`. There is no
+  result-type union.
 - **No Python arithmetic operator overloading for SQL.** `add`, `subtract`,
   `multiply`, and `divide` are typed functions, not `+`/`-`/`*`/`/`. See
   [Expressions](./expressions.md).
@@ -35,6 +35,6 @@ something needs them:
 - Multi-schema generated modules: needs an explicit module/import and collision
   design first.
 - Migrations, raw SQL, generic function builders, and custom dialects/plugins.
-- Conflict predicates, named constraints, and PostgreSQL's `DO UPDATE ... WHERE`
-  on `on_conflict`.
+- Named constraints as an `on_conflict` target, and conflict predicates on
+  SQLite (PostgreSQL has both; see [DML](./dml.md)).
 - Named windows.
