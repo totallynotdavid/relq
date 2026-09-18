@@ -1,4 +1,4 @@
-"""relq: typed SQL queries for Python 3.15+."""
+"""relq: typed SQL queries for Python 3.13+."""
 
 from relq.dml import (
     ConflictUpdateQuery,

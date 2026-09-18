@@ -7,6 +7,8 @@ their own payload TypedDicts while this API validates target column names at
 runtime and retains typed ``RETURNING`` rows.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Generic, Literal, Self, TypeVar, overload

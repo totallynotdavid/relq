@@ -1,6 +1,6 @@
 # relq
 
-relq is a type-safe SQL query builder for Python 3.15+. It targets SQLite and
+relq is a type-safe SQL query builder for Python 3.13+. It targets SQLite and
 PostgreSQL only, and makes invalid or dangerous query construction hard to
 express before runtime: immutable builders, structured expressions,
 parameterized values only.

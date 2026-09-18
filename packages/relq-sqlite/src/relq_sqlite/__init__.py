@@ -1,5 +1,7 @@
 """Synchronous stdlib SQLite executor for relq."""
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Callable, Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager
