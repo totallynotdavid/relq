@@ -2,13 +2,12 @@
 
 import decimal
 from dataclasses import dataclass
-from typing import Protocol, overload
+from typing import Protocol
 
 from relq import (
     Column,
     CteTable,
     DerivedTable,
-    ModelSelectQuery,
     SelectQuery,
     Table,
     add,
@@ -27,17 +26,12 @@ from relq import (
     row_adapter,
     scalar,
     select,
-    select_model,
     sum,
 )
 
 
 class MatrixDatabase(Protocol):
-    @overload
-    async def fetch_all[Row](self, query: SelectQuery[Row]) -> list[Row]: ...
-
-    @overload
-    async def fetch_all[Model](self, query: ModelSelectQuery[Model]) -> list[Model]: ...
+    async def fetch_all[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> list[Row]: ...
 
 
 class MatrixLeft(Table):
@@ -129,11 +123,11 @@ async def assert_relational_matrix(database: MatrixDatabase) -> None:
 
     manager = matrix_people.as_("matrix_manager")
     employee_managers = (
-        select_model(
-            MatrixEmployeeManager,
+        select(
             matrix_people.id,
             manager.id.nullable(),
         )
+        .decode(MatrixEmployeeManager)
         .from_(matrix_people)
         .left_join(manager, on=matrix_people.manager_id.eq(manager.id))
         .order_by(matrix_people.id.asc())
@@ -147,12 +141,12 @@ async def assert_relational_matrix(database: MatrixDatabase) -> None:
     ]
 
     chained_outer_join = (
-        select_model(
-            MatrixChainedOuterJoin,
+        select(
             matrix_left.id.nullable(),
             matrix_right.id.nullable(),
             matrix_third.id.nullable(),
         )
+        .decode(MatrixChainedOuterJoin)
         .from_(matrix_left)
         .full_join(matrix_right, on=matrix_left.id.eq(matrix_right.id))
         .full_join(matrix_third, on=matrix_right.id.eq(matrix_third.id))
@@ -356,10 +350,10 @@ async def assert_relational_matrix(database: MatrixDatabase) -> None:
         )
     ) == [(8, 4.0)]
     assert await database.fetch_all(
-        select_model(
-            row_adapter(MatrixDecimalProduct, decoders=(decimal_decoder(),)),
+        select(
             multiply(matrix_semantics.price, matrix_semantics.price),
         )
+        .decode(row_adapter(MatrixDecimalProduct, decoders=(decimal_decoder(),)))
         .from_(matrix_semantics)
         .order_by(matrix_semantics.id.asc())
     ) == [

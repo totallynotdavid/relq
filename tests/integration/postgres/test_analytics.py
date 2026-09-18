@@ -1,9 +1,11 @@
 """PostgreSQL execution half of portable analytic behavior contracts."""
 
 import os
+from typing import cast
 
 import pytest
 from relq import (
+    Expr,
     RowDecodingError,
     WindowExclusion,
     count,
@@ -18,7 +20,6 @@ from relq import (
     row_adapter,
     row_number,
     select,
-    select_model,
     sum,
     unbounded_preceding,
     uuid_decoder,
@@ -158,4 +159,6 @@ async def test_decoder_failures_have_the_same_precise_context(database: Postgres
     )
     for adapter, expression, message in cases:
         with pytest.raises(RowDecodingError, match=message):
-            await database.fetch_all(select_model(adapter, expression).from_(users))
+            await database.fetch_all(
+                select(cast(Expr[object], expression)).from_(users).decode(adapter)
+            )

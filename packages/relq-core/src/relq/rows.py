@@ -10,7 +10,7 @@ import json
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields, is_dataclass
-from typing import Protocol, cast, get_type_hints
+from typing import NewType, Protocol, cast, get_type_hints
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type Inet = (
@@ -19,6 +19,48 @@ type Inet = (
     | ipaddress.IPv4Interface
     | ipaddress.IPv6Interface
 )
+
+NaiveDateTime = NewType("NaiveDateTime", datetime.datetime)
+AwareDateTime = NewType("AwareDateTime", datetime.datetime)
+NaiveTime = NewType("NaiveTime", datetime.time)
+AwareTime = NewType("AwareTime", datetime.time)
+
+
+def naive_datetime(value: datetime.datetime) -> NaiveDateTime:
+    if value.tzinfo is not None:
+        raise ValueError("naive datetime must not have tzinfo")
+    return NaiveDateTime(value)
+
+
+def aware_datetime(value: datetime.datetime) -> AwareDateTime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("aware datetime must have a concrete UTC offset")
+    return AwareDateTime(value)
+
+
+def naive_time(value: datetime.time) -> NaiveTime:
+    if value.tzinfo is not None:
+        raise ValueError("naive time must not have tzinfo")
+    return NaiveTime(value)
+
+
+def aware_time(value: datetime.time) -> AwareTime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("aware time must have a concrete UTC offset")
+    return AwareTime(value)
+
+
+@dataclass(frozen=True, slots=True)
+class Interval:
+    """PostgreSQL's lossless ``(months, days, microseconds)`` interval value."""
+
+    months: int = 0
+    days: int = 0
+    microseconds: int = 0
+
+    def __post_init__(self) -> None:
+        if any(type(value) is not int for value in (self.months, self.days, self.microseconds)):
+            raise TypeError("interval components must be integers")
 
 
 class RowDecodingError(ValueError):
@@ -91,7 +133,7 @@ class RowAdapter[Model]:
     def model_name(self) -> str:
         return self._model.__name__
 
-    def is_compatible_with(self, other: RowAdapter[object]) -> bool:
+    def is_compatible_with[Other](self, other: RowAdapter[Other]) -> bool:
         """Whether two query arms have one deterministic result mapping."""
         return self._model is other._model and tuple(
             (field.name, None if field.decoder is None else field.decoder.name)
@@ -178,12 +220,37 @@ def datetime_decoder() -> Decoder[datetime.datetime]:
     return _temporal_decoder("datetime", datetime.datetime, datetime.datetime.fromisoformat)
 
 
+def naive_datetime_decoder() -> Decoder[NaiveDateTime]:
+    return Decoder("naive datetime", lambda value: naive_datetime(datetime_decoder().decode(value)))
+
+
+def aware_datetime_decoder() -> Decoder[AwareDateTime]:
+    return Decoder("aware datetime", lambda value: aware_datetime(datetime_decoder().decode(value)))
+
+
 def date_decoder() -> Decoder[datetime.date]:
     return _temporal_decoder("date", datetime.date, datetime.date.fromisoformat)
 
 
 def time_decoder() -> Decoder[datetime.time]:
     return _temporal_decoder("time", datetime.time, datetime.time.fromisoformat)
+
+
+def naive_time_decoder() -> Decoder[NaiveTime]:
+    return Decoder("naive time", lambda value: naive_time(time_decoder().decode(value)))
+
+
+def aware_time_decoder() -> Decoder[AwareTime]:
+    return Decoder("aware time", lambda value: aware_time(time_decoder().decode(value)))
+
+
+def interval_decoder() -> Decoder[Interval]:
+    def decode(value: object) -> Interval:
+        if isinstance(value, Interval):
+            return value
+        raise TypeError("interval values must be relq.Interval instances")
+
+    return Decoder("Interval", decode)
 
 
 def json_decoder() -> Decoder[JsonValue]:
