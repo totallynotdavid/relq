@@ -2,7 +2,7 @@
 name = "relq-postgres"
 version = "0.0.1"
 description = "PostgreSQL executor for relq's type-safe SQL queries"
-requires-python = ">=3.15"
+requires-python = ">=3.13"
 dependencies = ["asyncpg>=0.31", "relq==0.0.1"]
 
 [tool.uv.sources]

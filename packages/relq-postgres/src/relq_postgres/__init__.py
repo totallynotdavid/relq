@@ -1,5 +1,7 @@
 """Asynchronous asyncpg executor for relq."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import overload

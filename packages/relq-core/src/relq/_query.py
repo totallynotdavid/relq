@@ -1,5 +1,7 @@
 """Private immutable state shared by concrete public query values."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast, overload
 

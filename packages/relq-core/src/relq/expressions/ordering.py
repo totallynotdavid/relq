@@ -1,5 +1,7 @@
 """Closed ordering grammar shared by query and window clauses."""
 
+from __future__ import annotations
+
 from typing import Literal
 
 from relq._ast import Node, OrderNode
