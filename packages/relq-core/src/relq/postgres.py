@@ -22,7 +22,8 @@ one of this module's extensions.
 import uuid
 from typing import overload
 
-from relq._ast import JsonTextNode, RegexMatchNode, UuidCastNode, ValueNode
+from relq._ast import JsonTextNode, Node, RegexMatchNode, UuidCastNode, ValueNode
+from relq._node_value import construction_token, expression_node, initialize_node
 from relq.expressions import Expr, NullablePredicate
 from relq.rows import JsonValue
 
@@ -30,6 +31,12 @@ __all__ = ["cast_uuid", "json_text", "regex_match"]
 
 type TextExpr = Expr[str] | Expr[str | None]
 """A SQL text expression, whether or not its declared result is optional."""
+
+
+def _expr[T](node: Node) -> Expr[T]:
+    expression = Expr[T](construction_token())
+    initialize_node(expression, node)
+    return expression
 
 
 def json_text(value: Expr[JsonValue], key: str) -> Expr[str | None]:
@@ -41,7 +48,7 @@ def json_text(value: Expr[JsonValue], key: str) -> Expr[str | None]:
     """
     if not key:
         raise ValueError("json_text requires a non-empty member key")
-    return Expr(JsonTextNode(value.node(), ValueNode(key)))
+    return _expr(JsonTextNode(expression_node(value), ValueNode(key)))
 
 
 def regex_match(
@@ -52,8 +59,10 @@ def regex_match(
     Like ``LIKE``, the result is ``UNKNOWN`` when either operand is NULL, so
     this is a :class:`~relq.NullablePredicate` rather than a total one.
     """
-    pattern_node = pattern.node() if isinstance(pattern, Expr) else ValueNode(pattern)
-    return NullablePredicate(RegexMatchNode(value.node(), pattern_node, insensitive))
+    pattern_node = expression_node(pattern) if isinstance(pattern, Expr) else ValueNode(pattern)
+    predicate = NullablePredicate(construction_token())
+    initialize_node(predicate, RegexMatchNode(expression_node(value), pattern_node, insensitive))
+    return predicate
 
 
 @overload
@@ -73,5 +82,5 @@ def cast_uuid(value: object) -> object:
     """
     if not isinstance(value, Expr):
         raise TypeError("cast_uuid requires a SQL text expression")
-    result: Expr[uuid.UUID | None] = Expr(UuidCastNode(value.node()))
+    result: Expr[uuid.UUID | None] = _expr(UuidCastNode(expression_node(value)))
     return result

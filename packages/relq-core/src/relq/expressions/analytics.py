@@ -1,7 +1,7 @@
 """Portable aggregates, window functions, and closed frame grammar."""
 
 import decimal
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from enum import StrEnum
 from typing import overload
 
@@ -14,6 +14,13 @@ from relq._ast import (
     WindowFrameNode,
     WindowNode,
 )
+from relq._node_value import (
+    NodeValue,
+    construction_token,
+    expression_node,
+    initialize_node,
+    node_of,
+)
 from relq.expressions.core import (
     AverageResult,
     BooleanExpression,
@@ -24,57 +31,49 @@ from relq.expressions.core import (
 from relq.expressions.ordering import Order
 
 
-@dataclass(frozen=True, slots=True)
 class AggregateExpr[T](Expr[T]):
     def filter(self, predicate: BooleanExpression) -> AggregateExpr[T]:
-        node = self.node()
+        node = node_of(self)
         if not isinstance(node, AggregateNode):
             raise TypeError("AggregateExpr must contain an AggregateNode")
         filter_node = (
-            predicate.node()
+            node_of(predicate)
             if node.filter is None
-            else BinaryNode(node.filter, "and", predicate.node())
+            else BinaryNode(node.filter, "and", node_of(predicate))
         )
-        return AggregateExpr(replace(node, filter=filter_node))
+        return _aggregate(replace(node, filter=filter_node))
 
     def over(self) -> WindowSpec[T]:
-        node = self.node()
+        node = node_of(self)
         if not isinstance(node, AggregateNode):
             raise TypeError("AggregateExpr must contain an AggregateNode")
-        return WindowSpec(WindowNode(node))
+        return _window_spec(WindowNode(node))
 
 
-@dataclass(frozen=True, slots=True)
-class WindowFunction[T]:
-    _function: FunctionNode
+class WindowFunction[T](NodeValue[FunctionNode]):
+    __slots__ = ()
 
     def over(self) -> WindowSpec[T]:
-        return WindowSpec(WindowNode(self._function))
+        return _window_spec(WindowNode(node_of(self)))
 
 
-@dataclass(frozen=True, slots=True)
 class WindowSpec[T](Expr[T]):
-    _node: WindowNode
-
     def partition_by(self, *expressions: Expression) -> WindowSpec[T]:
         if not expressions:
             raise ValueError("partition_by requires at least one expression")
-        return replace(
-            self,
-            _node=replace(
-                self._node,
-                partition_by=(*self._node.partition_by, *(item.node() for item in expressions)),
-            ),
+        node = _window_node(self)
+        return _window_spec(
+            replace(
+                node, partition_by=(*node.partition_by, *(node_of(item) for item in expressions))
+            )
         )
 
     def order_by(self, *orders: Order) -> WindowSpec[T]:
         if not orders:
             raise ValueError("window order_by requires at least one Order")
-        return replace(
-            self,
-            _node=replace(
-                self._node, order_by=(*self._node.order_by, *(order.node() for order in orders))
-            ),
+        node = _window_node(self)
+        return _window_spec(
+            replace(node, order_by=(*node.order_by, *(node_of(order) for order in orders)))
         )
 
     def rows_between(self, start: FrameBoundary, end: FrameBoundary) -> WindowSpec[T]:
@@ -87,27 +86,25 @@ class WindowSpec[T](Expr[T]):
         return self._with_frame("groups", start, end)
 
     def exclude(self, exclusion: WindowExclusion) -> WindowSpec[T]:
-        if self._node.frame is None:
+        node = _window_node(self)
+        if node.frame is None:
             raise ValueError("window exclusions require an explicit frame")
-        if self._node.exclusion is not None:
+        if node.exclusion is not None:
             raise ValueError("a window expression can have only one exclusion")
-        return replace(self, _node=replace(self._node, exclusion=exclusion.value))
+        return _window_spec(replace(node, exclusion=exclusion.value))
 
     def _with_frame(self, kind: str, start: FrameBoundary, end: FrameBoundary) -> WindowSpec[T]:
-        if self._node.frame is not None:
+        node = _window_node(self)
+        if node.frame is not None:
             raise ValueError("a window expression can have only one frame")
         _validate_frame_bounds(start, end)
-        return replace(
-            self, _node=replace(self._node, frame=WindowFrameNode(kind, start.node(), end.node()))
+        return _window_spec(
+            replace(node, frame=WindowFrameNode(kind, node_of(start), node_of(end)))
         )
 
 
-@dataclass(frozen=True, slots=True)
-class FrameBoundary:
-    _node: FrameBoundaryNode
-
-    def node(self) -> FrameBoundaryNode:
-        return self._node
+class FrameBoundary(NodeValue[FrameBoundaryNode]):
+    __slots__ = ()
 
 
 class WindowExclusion(StrEnum):
@@ -118,7 +115,7 @@ class WindowExclusion(StrEnum):
 
 
 def unbounded_preceding() -> FrameBoundary:
-    return FrameBoundary(FrameBoundaryNode("unbounded preceding"))
+    return _frame_boundary(FrameBoundaryNode("unbounded preceding"))
 
 
 def preceding(amount: int) -> FrameBoundary:
@@ -126,7 +123,7 @@ def preceding(amount: int) -> FrameBoundary:
 
 
 def current_row() -> FrameBoundary:
-    return FrameBoundary(FrameBoundaryNode("current row"))
+    return _frame_boundary(FrameBoundaryNode("current row"))
 
 
 def following(amount: int) -> FrameBoundary:
@@ -134,12 +131,12 @@ def following(amount: int) -> FrameBoundary:
 
 
 def unbounded_following() -> FrameBoundary:
-    return FrameBoundary(FrameBoundaryNode("unbounded following"))
+    return _frame_boundary(FrameBoundaryNode("unbounded following"))
 
 
 def count[T](expression: Expr[T] | None = None) -> AggregateExpr[int]:
-    argument = StarNode() if expression is None else expression.node()
-    return AggregateExpr(AggregateNode("count", (argument,)))
+    argument = StarNode() if expression is None else node_of(expression)
+    return _aggregate(AggregateNode("count", (argument,)))
 
 
 @overload
@@ -157,9 +154,9 @@ def sum(expression: object) -> object:
     PostgreSQL ``numeric`` does. Use a declared row adapter when a Decimal
     domain value is required across both engines.
     """
-    if not isinstance(expression, Expr):
+    if not isinstance(expression, Expression):
         raise TypeError("sum() requires a SQL expression")
-    result: AggregateExpr[object] = AggregateExpr(AggregateNode("sum", (expression.node(),)))
+    result: AggregateExpr[object] = _aggregate(AggregateNode("sum", (expression_node(expression),)))
     return result
 
 
@@ -167,49 +164,80 @@ def avg(
     expression: Expr[int] | Expr[float] | Expr[decimal.Decimal],
 ) -> AggregateExpr[AverageResult]:
     """Return the dialect-native average type without a false float promise."""
-    return AggregateExpr(AggregateNode("avg", (expression.node(),)))
+    return _aggregate(AggregateNode("avg", (node_of(expression),)))
 
 
 def min[T](expression: Expr[T]) -> AggregateExpr[T | None]:
-    return AggregateExpr(AggregateNode("min", (expression.node(),)))
+    return _aggregate(AggregateNode("min", (node_of(expression),)))
 
 
 def max[T](expression: Expr[T]) -> AggregateExpr[T | None]:
-    return AggregateExpr(AggregateNode("max", (expression.node(),)))
+    return _aggregate(AggregateNode("max", (node_of(expression),)))
 
 
 def row_number() -> WindowFunction[int]:
-    return WindowFunction(FunctionNode("row_number", ()))
+    return _window_function(FunctionNode("row_number", ()))
 
 
 def rank() -> WindowFunction[int]:
-    return WindowFunction(FunctionNode("rank", ()))
+    return _window_function(FunctionNode("rank", ()))
 
 
 def dense_rank() -> WindowFunction[int]:
-    return WindowFunction(FunctionNode("dense_rank", ()))
+    return _window_function(FunctionNode("dense_rank", ()))
 
 
 def percent_rank() -> WindowFunction[float]:
-    return WindowFunction(FunctionNode("percent_rank", ()))
+    return _window_function(FunctionNode("percent_rank", ()))
 
 
 def cume_dist() -> WindowFunction[float]:
-    return WindowFunction(FunctionNode("cume_dist", ()))
+    return _window_function(FunctionNode("cume_dist", ()))
+
+
+def _aggregate[T](node: AggregateNode) -> AggregateExpr[T]:
+    expression = AggregateExpr[T](construction_token())
+    initialize_node(expression, node)
+    return expression
+
+
+def _window_function[T](node: FunctionNode) -> WindowFunction[T]:
+    function = WindowFunction[T](construction_token())
+    initialize_node(function, node)
+    return function
+
+
+def _window_spec[T](node: WindowNode) -> WindowSpec[T]:
+    expression = WindowSpec[T](construction_token())
+    initialize_node(expression, node)
+    return expression
+
+
+def _window_node[T](expression: WindowSpec[T]) -> WindowNode:
+    node = node_of(expression)
+    if not isinstance(node, WindowNode):
+        raise TypeError("WindowSpec must contain a WindowNode")
+    return node
+
+
+def _frame_boundary(node: FrameBoundaryNode) -> FrameBoundary:
+    boundary = FrameBoundary(construction_token())
+    initialize_node(boundary, node)
+    return boundary
 
 
 def _frame_offset(kind: str, amount: int) -> FrameBoundary:
     if isinstance(amount, bool) or amount < 0:
         raise ValueError(f"{kind} frame offset must be a non-negative integer")
-    return FrameBoundary(FrameBoundaryNode(kind, amount))
+    return _frame_boundary(FrameBoundaryNode(kind, amount))
 
 
 def _validate_frame_bounds(start: FrameBoundary, end: FrameBoundary) -> None:
-    if start.node().kind == "unbounded following":
+    if node_of(start).kind == "unbounded following":
         raise ValueError("a window frame cannot start at unbounded following")
-    if end.node().kind == "unbounded preceding":
+    if node_of(end).kind == "unbounded preceding":
         raise ValueError("a window frame cannot end at unbounded preceding")
-    if _frame_position(start.node()) > _frame_position(end.node()):
+    if _frame_position(node_of(start)) > _frame_position(node_of(end)):
         raise ValueError("a window frame start cannot follow its end")
 
 

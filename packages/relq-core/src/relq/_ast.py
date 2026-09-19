@@ -104,7 +104,17 @@ class TemporalMakeTimestampNode:
     hour: Node
     minute: Node
     second: Node
-    aware: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalMakeTimestamptzNode:
+    year: Node
+    month: Node
+    day: Node
+    hour: Node
+    minute: Node
+    second: Node
+    zone: Node | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +170,13 @@ class TemporalExtractNode:
 class TemporalTruncNode:
     unit: str
     expression: Node
-    zone: Node | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalTruncTimestamptzNode:
+    unit: str
+    expression: Node
+    zone: Node
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,7 +364,7 @@ class UuidCastNode:
 @dataclass(frozen=True, slots=True)
 class OrderNode:
     expression: Node
-    direction: str
+    direction: Literal["asc", "desc"]
     nulls: NullPlacement | None = None
 
 
@@ -474,6 +490,7 @@ type Node = (
     | TemporalMakeDateNode
     | TemporalMakeTimeNode
     | TemporalMakeTimestampNode
+    | TemporalMakeTimestamptzNode
     | TemporalMakeIntervalNode
     | TemporalEpochNode
     | TemporalArithmeticNode
@@ -483,6 +500,7 @@ type Node = (
     | TemporalTimezoneNode
     | TemporalExtractNode
     | TemporalTruncNode
+    | TemporalTruncTimestamptzNode
     | TemporalBinNode
     | TemporalAgeNode
     | TemporalOverlapsNode

@@ -57,6 +57,7 @@ RELATION_ATTRIBUTES: frozenset[str] = frozenset(
         "_reference",
         "_schema",
         "_source",
+        "_state",
         "as_",
         "column_names",
         "node",

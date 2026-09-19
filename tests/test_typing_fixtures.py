@@ -14,10 +14,12 @@ from relq.query import SelectQuery
 ROOT = Path(__file__).parents[1]
 GOOD = ROOT / "tests" / "typing" / "good.json"
 BAD = ROOT / "tests" / "typing" / "bad_window.json"
+BAD_AST_BOUNDARY = ROOT / "tests" / "typing" / "bad_ast_boundary.json"
 BAD_COMPOUNDS = ROOT / "tests" / "typing" / "bad_compounds.json"
 BAD_CONDITIONAL = ROOT / "tests" / "typing" / "bad_conditional.json"
 BAD_DML_CTES = ROOT / "tests" / "typing" / "bad_dml_ctes.json"
 BAD_DIALECT = ROOT / "tests" / "typing" / "bad_dialect.json"
+BAD_TEMPORAL = ROOT / "tests" / "typing" / "bad_temporal.json"
 GENERATED = ROOT / "tests" / "typing" / "generated_batch.json"
 GENERATED_SCHEMA = ROOT / "tests" / "typing" / "generated_schema.py"
 SNAPSHOT = ROOT / "tests" / "snapshots" / "sqlite_schema.py"
@@ -100,6 +102,14 @@ def test_bad_typing_fixture_fails_for_the_intended_contracts() -> None:
     assert "reportArgumentType" in rules
 
 
+def test_ast_boundary_fixture_rejects_public_node_access_and_structural_fakes() -> None:
+    returncode, diagnostics = _basedpyright(BAD_AST_BOUNDARY)
+    rules = {diagnostic.get("rule") for diagnostic in diagnostics}
+    assert returncode != 0
+    assert "reportAttributeAccessIssue" in rules
+    assert "reportArgumentType" in rules
+
+
 def test_bad_compound_fixture_fails_for_the_result_shape_contract() -> None:
     returncode, diagnostics = _basedpyright(BAD_COMPOUNDS)
     rules = {diagnostic.get("rule") for diagnostic in diagnostics}
@@ -109,6 +119,13 @@ def test_bad_compound_fixture_fails_for_the_result_shape_contract() -> None:
 
 def test_bad_conditional_fixture_fails_for_closed_case_contracts() -> None:
     returncode, diagnostics = _basedpyright(BAD_CONDITIONAL)
+    rules = {diagnostic.get("rule") for diagnostic in diagnostics}
+    assert returncode != 0
+    assert "reportArgumentType" in rules
+
+
+def test_bad_temporal_fixture_fails_for_temporal_domains() -> None:
+    returncode, diagnostics = _basedpyright(BAD_TEMPORAL)
     rules = {diagnostic.get("rule") for diagnostic in diagnostics}
     assert returncode != 0
     assert "reportArgumentType" in rules

@@ -51,9 +51,11 @@ from relq._ast import (
     TemporalMakeIntervalNode,
     TemporalMakeTimeNode,
     TemporalMakeTimestampNode,
+    TemporalMakeTimestamptzNode,
     TemporalOverlapsNode,
     TemporalTimezoneNode,
     TemporalTruncNode,
+    TemporalTruncTimestamptzNode,
     UnaryNode,
     UpdateNode,
     UuidCastNode,
@@ -62,6 +64,8 @@ from relq._ast import (
 )
 from relq._compiler._model import Dialect
 from relq._compiler.grouping import validate_analytic_clauses, validate_grouping
+from relq._temporal import EXTRACT_FIELD_VALUES, TRUNC_UNIT_VALUES
+from relq.rows import Interval
 
 
 def validate_query(node: QueryNode, dialect: Dialect) -> None:
@@ -339,6 +343,7 @@ def _validate_expression_dialect(expression: Node, dialect: Dialect) -> None:
         TemporalMakeDateNode,
         TemporalMakeTimeNode,
         TemporalMakeTimestampNode,
+        TemporalMakeTimestamptzNode,
         TemporalMakeIntervalNode,
         TemporalEpochNode,
         TemporalArithmeticNode,
@@ -348,6 +353,7 @@ def _validate_expression_dialect(expression: Node, dialect: Dialect) -> None:
         TemporalTimezoneNode,
         TemporalExtractNode,
         TemporalTruncNode,
+        TemporalTruncTimestamptzNode,
         TemporalBinNode,
         TemporalAgeNode,
         TemporalOverlapsNode,
@@ -381,46 +387,17 @@ def _validate_temporal_node(node: Node) -> None:
                 raise ValueError("unsupported make_interval component")
             if len(names) != len(set(names)):
                 raise ValueError("make_interval components must be unique")
-        case TemporalExtractNode(field, _) if field not in {
-            "century",
-            "day",
-            "decade",
-            "dow",
-            "doy",
-            "epoch",
-            "hour",
-            "isodow",
-            "isoyear",
-            "microseconds",
-            "millennium",
-            "milliseconds",
-            "minute",
-            "month",
-            "quarter",
-            "second",
-            "timezone",
-            "timezone_hour",
-            "timezone_minute",
-            "week",
-            "year",
-        }:
+        case TemporalExtractNode(field, _) if field not in EXTRACT_FIELD_VALUES:
             raise ValueError(f"unsupported extract field: {field!r}")
-        case TemporalTruncNode(unit, _, _) if unit not in {
-            "microseconds",
-            "milliseconds",
-            "second",
-            "minute",
-            "hour",
-            "day",
-            "week",
-            "month",
-            "quarter",
-            "year",
-            "decade",
-            "century",
-            "millennium",
-        }:
+        case TemporalTruncNode(unit, _) | TemporalTruncTimestamptzNode(unit, _, _) if (
+            unit not in TRUNC_UNIT_VALUES
+        ):
             raise ValueError(f"unsupported date_trunc unit: {unit!r}")
+        case TemporalBinNode(ValueNode(Interval(months, days, microseconds)), _, _):
+            if months or days * 86_400_000_000 + microseconds <= 0:
+                raise ValueError(
+                    "date_bin stride must be positive and cannot contain month-or-larger units"
+                )
         case TemporalArithmeticNode(_, operator, _) if operator not in {"+", "-"}:
             raise ValueError(f"unsupported temporal arithmetic operator: {operator!r}")
         case TemporalIntervalScaleNode(_, operator, _) if operator not in {"*", "/"}:
@@ -540,7 +517,14 @@ def _nullable_result_sources(node: Node) -> set[str]:
                 | _nullable_result_sources(minute)
                 | _nullable_result_sources(second)
             )
-        case TemporalMakeTimestampNode(year, month, day, hour, minute, second):
+        case TemporalMakeTimestampNode(
+            year=year,
+            month=month,
+            day=day,
+            hour=hour,
+            minute=minute,
+            second=second,
+        ):
             return (
                 _nullable_result_sources(year)
                 | _nullable_result_sources(month)
@@ -548,6 +532,24 @@ def _nullable_result_sources(node: Node) -> set[str]:
                 | _nullable_result_sources(hour)
                 | _nullable_result_sources(minute)
                 | _nullable_result_sources(second)
+            )
+        case TemporalMakeTimestamptzNode(
+            year=year,
+            month=month,
+            day=day,
+            hour=hour,
+            minute=minute,
+            second=second,
+            zone=zone,
+        ):
+            return (
+                _nullable_result_sources(year)
+                | _nullable_result_sources(month)
+                | _nullable_result_sources(day)
+                | _nullable_result_sources(hour)
+                | _nullable_result_sources(minute)
+                | _nullable_result_sources(second)
+                | (set() if zone is None else _nullable_result_sources(zone))
             )
         case TemporalMakeIntervalNode(components):
             result: set[str] = set()
@@ -566,22 +568,15 @@ def _nullable_result_sources(node: Node) -> set[str]:
             return _nullable_result_sources(expression) | _nullable_result_sources(zone)
         case TemporalExtractNode(_, expression):
             return _nullable_result_sources(expression)
-        case TemporalTruncNode(_, expression, zone):
-            return _nullable_result_sources(expression) | (
-                set() if zone is None else _nullable_result_sources(zone)
-            )
+        case TemporalTruncNode(_, expression):
+            return _nullable_result_sources(expression)
+        case TemporalTruncTimestamptzNode(_, expression, zone):
+            return _nullable_result_sources(expression) | _nullable_result_sources(zone)
         case TemporalBinNode(stride, expression, origin):
             return (
                 _nullable_result_sources(stride)
                 | _nullable_result_sources(expression)
                 | _nullable_result_sources(origin)
-            )
-        case TemporalOverlapsNode(left_start, left_end, right_start, right_end):
-            return (
-                _nullable_result_sources(left_start)
-                | _nullable_result_sources(left_end)
-                | _nullable_result_sources(right_start)
-                | _nullable_result_sources(right_end)
             )
         case CaseNode(branches, otherwise):
             result = _nullable_result_sources(otherwise)
@@ -604,10 +599,12 @@ def _nullable_result_sources(node: Node) -> set[str]:
             | BinaryNode()
             | JsonTextNode()
             | RegexMatchNode()
+            | TemporalOverlapsNode()
         ):
             # json_text already returns an optional result: an absent member and
             # a JSON null are indistinguishable, so an outer join cannot widen
-            # what the declared type already admits.
+            # what the declared type already admits.  overlaps() is likewise a
+            # NullablePredicate whatever its operands are.
             return set()
     raise TypeError(f"unsupported AST node: {node!r}")
 

@@ -48,9 +48,11 @@ from relq._ast import (
     TemporalMakeIntervalNode,
     TemporalMakeTimeNode,
     TemporalMakeTimestampNode,
+    TemporalMakeTimestamptzNode,
     TemporalOverlapsNode,
     TemporalTimezoneNode,
     TemporalTruncNode,
+    TemporalTruncTimestamptzNode,
     UnaryNode,
     UuidCastNode,
     ValueNode,
@@ -79,13 +81,38 @@ def children(node: Node) -> Iterator[Node]:
             yield minute
             yield second
             return
-        case TemporalMakeTimestampNode(year, month, day, hour, minute, second):
+        case TemporalMakeTimestampNode(
+            year=year,
+            month=month,
+            day=day,
+            hour=hour,
+            minute=minute,
+            second=second,
+        ):
             yield year
             yield month
             yield day
             yield hour
             yield minute
             yield second
+            return
+        case TemporalMakeTimestamptzNode(
+            year=year,
+            month=month,
+            day=day,
+            hour=hour,
+            minute=minute,
+            second=second,
+            zone=zone,
+        ):
+            yield year
+            yield month
+            yield day
+            yield hour
+            yield minute
+            yield second
+            if zone is not None:
+                yield zone
             return
         case TemporalMakeIntervalNode(components):
             yield from (value for _, value in components)
@@ -115,10 +142,12 @@ def children(node: Node) -> Iterator[Node]:
         case TemporalExtractNode(_, expression):
             yield expression
             return
-        case TemporalTruncNode(_, expression, zone):
+        case TemporalTruncNode(_, expression):
             yield expression
-            if zone is not None:
-                yield zone
+            return
+        case TemporalTruncTimestamptzNode(_, expression, zone):
+            yield expression
+            yield zone
             return
         case TemporalBinNode(stride, expression, origin):
             yield stride
