@@ -1,7 +1,8 @@
-"""Private executor support: command safety and explicit result mapping."""
+"""Private executor support: command safety, result mapping, and observability."""
 
-from collections.abc import Iterable
-from typing import Literal, cast
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from typing import Literal, NoReturn, Protocol, cast
 
 from relq._ast import SelectNode
 from relq._query import Query, extract_query
@@ -32,6 +33,38 @@ type Command[Row] = (
     | UpdateQuery[Row, Literal[False], Literal[True]]
     | DeleteQuery[Row, Literal[False], Literal[True]]
 )
+
+
+@dataclass(frozen=True, slots=True)
+class QueryEvent:
+    """The compiled statement and outcome of one executor operation."""
+
+    sql: str
+    parameters: tuple[object, ...]
+    duration: float
+    row_count: int | None
+    error: BaseException | None
+
+
+class QueryObserver(Protocol):
+    """Receive one event for each completed fetch, execute, or stream."""
+
+    def __call__(self, event: QueryEvent, /) -> None: ...
+
+
+class NoResultError(LookupError):
+    """Raised by an ``or_raise`` executor method when no row is returned."""
+
+
+class TransactionUnavailableError(RuntimeError):
+    """Raised when a controlled transaction or savepoint is no longer usable."""
+
+
+def raise_no_result(error: Callable[[], Exception] | None) -> NoReturn:
+    """Raise the default or caller-provided exception for an empty result."""
+    if error is None:
+        raise NoResultError("query returned no rows")
+    raise error()
 
 
 def require_command[Row](query: Query[Row]) -> None:
