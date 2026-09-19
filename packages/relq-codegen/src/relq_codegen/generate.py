@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 def generate_sqlite(connection: sqlite3.Connection, *, config: CodegenConfig | None = None) -> str:
-    return render(inspect_sqlite(connection), config=config)
+    return render(inspect_sqlite(connection), dialect="sqlite", config=config)
 
 
 async def generate_postgres(
@@ -22,6 +22,7 @@ async def generate_postgres(
 ) -> str:
     return render(
         await inspect_postgres(connection, schema=schema),
+        dialect="postgres",
         enums=await inspect_postgres_enums(connection, schema=schema),
         config=config,
     )

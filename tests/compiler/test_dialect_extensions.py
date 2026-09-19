@@ -16,7 +16,9 @@ from relq import (
     delete_from,
     insert_into,
     json_column,
+    max,
     output_column,
+    row_number,
     scalar,
     select,
     select_model,
@@ -389,3 +391,28 @@ def test_cast_uuid_still_needs_the_marker_because_it_keeps_its_operand_type() ->
         .left_join(documents, on=documents.id.eq(archive.id))
     )
     assert 'cast("documents"."owner" as uuid) as "owner_id"' in compile_postgres(acknowledged).sql
+
+
+def test_row_level_statements_reject_aggregate_and_window_expressions() -> None:
+    """A database refuses these in an UPDATE, DELETE, or INSERT, so compilation does first."""
+    for compile_ in (compile_postgres, compile_sqlite):
+        with pytest.raises(ValueError, match="UPDATE cannot contain aggregate or window"):
+            compile_(update(documents).values(owner=max(documents.owner)).where(documents.id.eq(1)))
+        with pytest.raises(ValueError, match="UPDATE cannot contain aggregate or window"):
+            compile_(update(documents).values(owner="ada").where(count().gt(0)))
+        with pytest.raises(ValueError, match="DELETE cannot contain aggregate or window"):
+            compile_(delete_from(documents).where(documents.id.eq(1)).returning(count()))
+        with pytest.raises(ValueError, match="DELETE cannot contain aggregate or window"):
+            compile_(
+                delete_from(documents).where(documents.id.eq(1)).returning(row_number().over())
+            )
+        with pytest.raises(ValueError, match="INSERT cannot contain aggregate or window"):
+            compile_(insert_into(documents).values(owner=count()))
+        with pytest.raises(ValueError, match="INSERT cannot contain aggregate or window"):
+            compile_(insert_into(documents).values(owner="ada").returning(count()))
+
+
+def test_an_aggregate_inside_a_subquery_is_still_legal_in_a_row_level_statement() -> None:
+    newest = scalar(select(max(archive.id)).from_(archive))
+    compiled = compile_postgres(update(documents).values(id=newest).where(documents.owner.eq("a")))
+    assert 'max("archive"."id")' in compiled.sql

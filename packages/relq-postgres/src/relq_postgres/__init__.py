@@ -9,7 +9,7 @@ from time import perf_counter
 from typing import Literal, NoReturn, Protocol, cast, overload
 
 import asyncpg
-from relq import RowAdapter
+from relq import Interval, RowAdapter
 from relq._compiler.api import compile_postgres
 from relq._execution import (
     Command,
@@ -216,6 +216,27 @@ class PostgresDatabase:
         started = await self._run_control(sql, lambda: connection.execute(sql))
         self._observe(sql, (), started, 0, None)
 
+    @staticmethod
+    async def _configure_connection(connection: Connection) -> None:
+        await connection.set_type_codec(
+            "interval",
+            schema="pg_catalog",
+            encoder=_encode_interval,
+            decoder=_decode_interval,
+            format="tuple",
+        )
+
+    @asynccontextmanager
+    async def _connection_scope(self) -> AsyncGenerator[Connection]:
+        """Acquire and configure exactly one physical connection per operation."""
+        if isinstance(self._connection, asyncpg.Pool):
+            async with self._connection.acquire() as connection:
+                await self._configure_connection(connection)
+                yield connection
+            return
+        await self._configure_connection(self._connection)
+        yield self._connection
+
     @overload
     async def fetch_all[Row](self, query: RawResultQuery[Row]) -> list[Row]: ...
 
@@ -227,7 +248,8 @@ class PostgresDatabase:
         compiled = compile_postgres(query)
         started = perf_counter()
         try:
-            records = await self._connection.fetch(compiled.sql, *compiled.parameters)
+            async with self._connection_scope() as connection:
+                records = await connection.fetch(compiled.sql, *compiled.parameters)
             rows = [tuple(record) for record in records]
             result = map_all(query, rows)
         except BaseException as error:
@@ -247,7 +269,8 @@ class PostgresDatabase:
         compiled = compile_postgres(query)
         started = perf_counter()
         try:
-            record = await self._connection.fetchrow(compiled.sql, *compiled.parameters)
+            async with self._connection_scope() as connection:
+                record = await connection.fetchrow(compiled.sql, *compiled.parameters)
             row = None if record is None else tuple(record)
             result = map_one(query, row)
         except BaseException as error:
@@ -266,7 +289,8 @@ class PostgresDatabase:
         compiled = compile_postgres(query)
         started = perf_counter()
         try:
-            records = await self._connection.fetch(compiled.sql, *compiled.parameters)
+            async with self._connection_scope() as connection:
+                records = await connection.fetch(compiled.sql, *compiled.parameters)
             rows = [tuple(record) for record in records]
             result = [adapter.map(row) for row in rows]
         except BaseException as error:
@@ -284,7 +308,8 @@ class PostgresDatabase:
         compiled = compile_postgres(query)
         started = perf_counter()
         try:
-            record = await self._connection.fetchrow(compiled.sql, *compiled.parameters)
+            async with self._connection_scope() as connection:
+                record = await connection.fetchrow(compiled.sql, *compiled.parameters)
             result = None if record is None else adapter.map(tuple(record))
         except BaseException as error:
             self._observe(compiled.sql, compiled.parameters, started, None, error)
@@ -355,6 +380,11 @@ class PostgresDatabase:
         try:
             transaction = await self.begin()
             try:
+                try:
+                    await self._configure_connection(transaction.raw_connection)
+                except BaseException as error:
+                    outcome.record_error(error)
+                    raise
                 yield _stream_rows(
                     query,
                     transaction.raw_connection,
@@ -398,7 +428,8 @@ class PostgresDatabase:
             # cache with fetch()/fetchrow() (both route through Connection._execute).
             # Only zero-parameter calls (e.g. DEFAULT VALUES) skip it, via
             # asyncpg's simple-query protocol.
-            status = await self._connection.execute(compiled.sql, *compiled.parameters)
+            async with self._connection_scope() as connection:
+                status = await connection.execute(compiled.sql, *compiled.parameters)
             count = _command_count(status)
         except BaseException as error:
             self._observe(compiled.sql, compiled.parameters, started, None, error)
@@ -977,6 +1008,17 @@ async def _recover_asyncpg_connection(
         raise recovery_error
     if release_error is not None:
         raise release_error
+
+
+def _encode_interval(value: object) -> tuple[int, int, int]:
+    if not isinstance(value, Interval):
+        raise TypeError("PostgreSQL interval parameters must be relq.Interval values")
+    return (value.months, value.days, value.microseconds)
+
+
+def _decode_interval(value: tuple[int, int, int]) -> Interval:
+    months, days, microseconds = value
+    return Interval(months, days, microseconds)
 
 
 def _command_count(status: str) -> int:

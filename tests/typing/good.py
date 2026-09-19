@@ -5,12 +5,14 @@ from typing import Literal, assert_type
 
 from relq import (
     AggregateExpr,
+    AwareDateTime,
     CaseWhen,
     Column,
     CteTable,
     DerivedTable,
     Expr,
     InsertQuery,
+    Interval,
     JsonValue,
     ModelInsertQuery,
     ModelSelectQuery,
@@ -22,6 +24,7 @@ from relq import (
     WindowExclusion,
     WindowSpec,
     add,
+    add_interval,
     case_when,
     coalesce,
     column,
@@ -40,8 +43,11 @@ from relq import (
     scalar,
     select,
     select_model,
+    subtract_interval,
     sum,
+    transaction_timestamp,
 )
+from relq._compiler import compile_postgres
 from relq.postgres import cast_uuid, json_text, regex_match
 from relq_postgres import ControlledTransaction, PostgresDatabase
 from relq_sqlite import SQLiteDatabase
@@ -65,6 +71,8 @@ assert_type(count().filter(users.active.is_true()), AggregateExpr[int])
 manager = users.as_("manager")
 assert_type(manager.id, Column[int])
 assert_type(add(users.id, 1), Expr[int])
+assert_type(add_interval(transaction_timestamp(), Interval(days=1)), Expr[AwareDateTime])
+assert_type(subtract_interval(transaction_timestamp(), Interval(days=1)), Expr[AwareDateTime])
 assert_type(divide(users.id, 2), Expr[int])
 assert_type(users.id.eq(1), NullablePredicate)
 assert_type(users.id.is_null(), Predicate)
@@ -104,6 +112,9 @@ assert_type(
 assert_type(
     select(users.id).from_(users).except_(select(users.id).from_(users)), SelectQuery[tuple[int]]
 )
+locked = select(users.id).from_(users).for_update(users).skip_locked()
+assert_type(locked, SelectQuery[tuple[int]])
+compile_postgres(locked)
 upsert = (
     insert_into(users)
     .values(id=1, email="a@example.com", active=True)

@@ -13,6 +13,7 @@ from relq_codegen.model import (
     BuiltinType,
     Call,
     CodegenConfig,
+    CodegenDialect,
     DecoderKind,
     DirectType,
     GeneratedWrapper,
@@ -38,13 +39,23 @@ RELQ_NAMES: frozenset[str] = frozenset(
         # Every name this module can import into a generated module.  relq_name
         # refuses anything absent here, so the reserved-name pass downstream can
         # never fall behind a newly emitted import.  The decoder half is derived
-        # from DecoderKind rather than spelled out.
+        # from DecoderKind rather than spelled out; the temporal decoders are named here.
         *(f"{kind}_decoder" for kind in _DECODER_KINDS),
+        "AwareDateTime",
+        "AwareTime",
+        "Interval",
         "JsonValue",
+        "NaiveDateTime",
+        "NaiveTime",
+        "aware_datetime_decoder",
+        "aware_time_decoder",
         "domain_decoder",
         "enum_decoder",
+        "interval_decoder",
         "json_column",
         "list_decoder",
+        "naive_datetime_decoder",
+        "naive_time_decoder",
         "nullable",
         "row_adapter",
     }
@@ -84,10 +95,13 @@ class ResolvedType:
 
 
 def resolve_type(
-    sql_type: SqlType, enum_types: Mapping[TypeIdentity, str], config: CodegenConfig | None
+    sql_type: SqlType,
+    enum_types: Mapping[TypeIdentity, str],
+    config: CodegenConfig | None,
+    dialect: CodegenDialect,
 ) -> ResolvedType:
     if isinstance(sql_type, ArrayType):
-        element = resolve_type(sql_type.element, enum_types, config)
+        element = resolve_type(sql_type.element, enum_types, config, dialect)
         decoder = (
             Call(relq_name("list_decoder"), (element.decoder,))
             if element.decoder is not None
@@ -104,7 +118,7 @@ def resolve_type(
                 Call(relq_name("enum_decoder"), (Name(name),)),
             )
         return _resolve_mapped_type(sql_type.identity, config)
-    return _resolve_builtin(sql_type, config)
+    return _resolve_builtin(sql_type, config, dialect)
 
 
 def _resolve_mapped_type(identity: TypeIdentity, config: CodegenConfig | None) -> ResolvedType:
@@ -129,7 +143,9 @@ def _resolve_mapped_type(identity: TypeIdentity, config: CodegenConfig | None) -
     )
 
 
-def _resolve_builtin(sql_type: BuiltinType, config: CodegenConfig | None) -> ResolvedType:
+def _resolve_builtin(
+    sql_type: BuiltinType, config: CodegenConfig | None, dialect: CodegenDialect
+) -> ResolvedType:
     normalized = sql_type.name.lower()
     mapping = (
         config.type_mappings.get(TypeIdentity(None, normalized)) if config is not None else None
@@ -183,6 +199,22 @@ def _resolve_builtin(sql_type: BuiltinType, config: CodegenConfig | None) -> Res
         return ResolvedType(Name("float"), Call(relq_name("float_decoder")))
     if any(token in normalized for token in ("blob", "bytea", "binary")):
         return ResolvedType(Name("bytes"), Call(relq_name("bytes_decoder")))
+    # SQLite has no timezone-aware storage, so only PostgreSQL gets the branded
+    # Aware/Naive types; a SQLite column of the same declared name falls through
+    # to the plain datetime/time handling below.
+    if dialect == "postgres":
+        if normalized in {"timestamptz", "timestamp with time zone"}:
+            return ResolvedType(
+                relq_name("AwareDateTime"), Call(relq_name("aware_datetime_decoder"))
+            )
+        if normalized == "timestamp without time zone":
+            return ResolvedType(
+                relq_name("NaiveDateTime"), Call(relq_name("naive_datetime_decoder"))
+            )
+        if normalized == "time without time zone":
+            return ResolvedType(relq_name("NaiveTime"), Call(relq_name("naive_time_decoder")))
+        if normalized in {"timetz", "time with time zone"}:
+            return ResolvedType(relq_name("AwareTime"), Call(relq_name("aware_time_decoder")))
     if "timestamp" in normalized or "datetime" in normalized:
         return ResolvedType(
             _attribute("datetime", "datetime"),
@@ -192,8 +224,17 @@ def _resolve_builtin(sql_type: BuiltinType, config: CodegenConfig | None) -> Res
         return ResolvedType(_attribute("datetime", "date"), Call(relq_name("date_decoder")))
     if normalized.startswith("time"):
         return ResolvedType(_attribute("datetime", "time"), Call(relq_name("time_decoder")))
-    if "interval" in normalized:
-        return ResolvedType(_attribute("datetime", "timedelta"))
+    if normalized == "interval":
+        if dialect == "sqlite":
+            # sqlite3 hands an interval-declared column back as text, and
+            # interval_decoder() accepts only a relq.Interval, so the generated
+            # module would fail at decode time.  A configured mapping, checked
+            # above, is the deliberate way to read such a column.
+            raise TypeError(
+                f"database type {sql_type.name!r} is rejected: SQLite has no interval type, "
+                "and relq.Interval is PostgreSQL-only; add an explicit relq-codegen mapping"
+            )
+        return ResolvedType(relq_name("Interval"), Call(relq_name("interval_decoder")))
     if any(token in normalized for token in ("char", "text", "string", "citext", "xml", "name")):
         return ResolvedType(Name("str"), Call(relq_name("str_decoder")))
     raise ValueError(

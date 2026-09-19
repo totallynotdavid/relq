@@ -32,8 +32,13 @@ category of bug unrepresentable. Some is just scope relq hasn't grown into yet.
 
 ## PostgreSQL-only extensions
 
-Everything exported from the top-level `relq` package compiles for both
-supported dialects. `relq.postgres` is the deliberate exception:
+Most of what the top-level `relq` package exports compiles for both supported
+dialects. Three groups are PostgreSQL-only and are rejected at compile time for
+SQLite: the `relq.postgres` module, the temporal builders exported from `relq`
+itself (`extract`, `date_trunc`, `date_bin`, `age`, the clock and `make_*`
+functions, interval arithmetic, and the rest of that family), and the row-locking
+clauses (`for_update()`, `for_share()`, and their variants). `relq.postgres` is
+the one that lives behind a separate import:
 
 ```python
 from relq.postgres import cast_uuid, json_text, regex_match
@@ -47,8 +52,10 @@ SQLite is a compile-time error naming the expression, so a PostgreSQL-only
 query can never quietly become a different SQLite query.
 
 The separate import path is the point. A grep for `relq.postgres` finds every
-query that has left the portable subset, which a keyword argument or a silently
-dialect-dependent method would not.
+query that uses these extensions, which a keyword argument or a silently
+dialect-dependent method would not. The temporal builders and row-locking
+clauses are named functions and methods with their own compile-time rejection,
+but they are not behind that import.
 
 This is an extension mechanism, not a loophole: there is no
 `fn("some_function", ...)`, no operator string, and no caller-chosen cast

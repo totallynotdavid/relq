@@ -17,6 +17,7 @@ BAD = ROOT / "tests" / "typing" / "bad_window.json"
 BAD_COMPOUNDS = ROOT / "tests" / "typing" / "bad_compounds.json"
 BAD_CONDITIONAL = ROOT / "tests" / "typing" / "bad_conditional.json"
 BAD_DML_CTES = ROOT / "tests" / "typing" / "bad_dml_ctes.json"
+BAD_DIALECT = ROOT / "tests" / "typing" / "bad_dialect.json"
 GENERATED = ROOT / "tests" / "typing" / "generated_batch.json"
 GENERATED_SCHEMA = ROOT / "tests" / "typing" / "generated_schema.py"
 SNAPSHOT = ROOT / "tests" / "snapshots" / "sqlite_schema.py"
@@ -118,6 +119,12 @@ def test_bad_dml_cte_fixture_fails_for_the_bounded_returning_contract() -> None:
     rules = {diagnostic.get("rule") for diagnostic in diagnostics}
     assert returncode != 0
     assert "reportArgumentType" in rules
+
+
+def test_dialect_legality_is_a_compiler_contract() -> None:
+    returncode, diagnostics = _basedpyright(BAD_DIALECT)
+    assert returncode == 0
+    assert diagnostics == []
 
 
 def test_generated_batch_helper_type_checks() -> None:

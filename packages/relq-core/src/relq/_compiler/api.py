@@ -20,6 +20,8 @@ _SQLITE = Dialect("sqlite", "?", max_parameters=999)
 _POSTGRES = Dialect(
     "postgres",
     "$",
+    supports_row_locking=True,
+    supports_temporal_arithmetic=True,
     max_parameters=65_535,
     supports_schema_qualified_tables=True,
     supports_data_modifying_ctes=True,
@@ -62,5 +64,5 @@ def compile_postgres[
 def _compile[Row](query: Query[Row], dialect: Dialect) -> CompiledQuery:
     """Run relq's complete AST-only compilation pipeline for one fixed dialect."""
     node = extract_query(query).node
-    validate_query(node)
+    validate_query(node, dialect)
     return render_query(node, dialect)

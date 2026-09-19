@@ -1,6 +1,7 @@
 """Real PostgreSQL execution contracts for queries and mutations."""
 
 import asyncio
+import datetime
 import os
 from dataclasses import dataclass
 from typing import Protocol, cast
@@ -10,6 +11,7 @@ import pytest
 from asyncpg import Connection
 from relq import (
     Column,
+    Interval,
     Table,
     column,
     cte,
@@ -19,6 +21,8 @@ from relq import (
     row_adapter,
     scalar,
     select,
+    subtract_interval,
+    transaction_timestamp,
     update,
 )
 from relq_postgres import NoResultError, PostgresDatabase, QueryEvent, TransactionUnavailableError
@@ -141,6 +145,39 @@ async def test_pool_transactions_have_independent_connection_state(
         assert sorted(rows) == [(f"Pool {index}",) for index in range(4)]
     finally:
         await pool.close()
+
+
+async def test_for_update_skip_locked_and_timestamp_duration_execute(
+    database: PostgresDatabase, postgres_schema: str
+) -> None:
+    await database.execute(insert_into(users).values(name="Ada", manager_id=None))
+    await database.execute(insert_into(users).values(name="Grace", manager_id=None))
+    claim = (
+        select(users.id)
+        .from_(users)
+        .order_by(users.id.asc())
+        .limit(1)
+        .for_update(users)
+        .skip_locked()
+    )
+    async with database.transaction() as first_worker:
+        assert await first_worker.fetch_all(claim) == [(1,)]
+        connection = await asyncpg.connect(
+            configured_harness().dsn,
+            server_settings={"search_path": f"{postgres_schema}, public"},
+        )
+        try:
+            second_worker = PostgresDatabase(connection)
+            async with second_worker.transaction() as transaction:
+                assert await transaction.fetch_all(claim) == [(2,)]
+        finally:
+            await connection.close()
+
+    rows = await database.fetch_all(
+        select(subtract_interval(transaction_timestamp(), Interval(days=1))).from_(users).limit(1)
+    )
+    assert len(rows) == 1
+    assert isinstance(rows[0][0], datetime.datetime)
 
 
 async def test_relational_matrix(database: PostgresDatabase, postgres_admin: Connection) -> None:

@@ -19,6 +19,7 @@ from relq import (
     select,
 )
 from relq._compiler import compile_sqlite
+from relq._compiler._model import Dialect
 from relq._compiler.validation import validate_query
 from relq._query import select_node
 
@@ -172,7 +173,10 @@ def test_compounds_require_declared_outer_relations_for_modifiers() -> None:
             arm.order_by(employees.id.asc()).union_all(select(employees.id).from_(employees))
         )
     with pytest.raises(ValueError, match="compound queries cannot have ORDER BY"):
-        validate_query(replace(select_node(compound), order_by=(employees.id.asc().node(),)))
+        validate_query(
+            replace(select_node(compound), order_by=(employees.id.asc().node(),)),
+            Dialect("sqlite", "?"),
+        )
 
 
 def test_a_declared_column_cannot_shadow_relation_internals() -> None:

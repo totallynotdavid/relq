@@ -1,7 +1,7 @@
 """Immutable typed SELECT builder and relational composition."""
 
 from dataclasses import dataclass, replace
-from typing import Generic, Self, TypeVar, overload
+from typing import Literal, Self, TypeVar, overload
 
 from relq._ast import (
     AliasNode,
@@ -12,6 +12,7 @@ from relq._ast import (
     CteNode,
     DerivedSourceNode,
     JoinNode,
+    LockClauseNode,
     Node,
     NullableResultNode,
     QueryNode,
@@ -27,6 +28,7 @@ from relq.expressions import (
     Expression,
     Order,
     Source,
+    Table,
 )
 from relq.rows import RowAdapter, row_adapter
 
@@ -34,7 +36,7 @@ Row_co = TypeVar("Row_co", covariant=True)
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
+class _SelectQuery[Row_co](Query[Row_co]):
     def _with_node(self, node: SelectNode) -> Self:
         return new_query(type(self), node, extract_query(self).adapter)
 
@@ -182,15 +184,71 @@ class _SelectQuery(Query[Row_co], Generic[Row_co]):  # noqa: UP046
             replace(node, ctes=(*node.ctes, CteNode(name, query_node, recursive=True)))
         )
 
+    def _lock(
+        self,
+        strength: Literal["update", "no key update", "share", "key share"],
+        tables: tuple[Table, ...],
+    ) -> Self:
+        sources = tuple(table.node() for table in tables)
+        node = select_node(self)
+        return self._with_node(
+            replace(node, locks=(*node.locks, LockClauseNode(strength, sources)))
+        )
+
+    def _wait(self, wait: Literal["nowait", "skip locked"]) -> Self:
+        node = select_node(self)
+        if not node.locks:
+            raise ValueError(f"{wait.replace(' ', '_')}() requires a preceding lock clause")
+        latest = node.locks[-1]
+        if latest.wait is not None:
+            raise ValueError("a lock clause can have only one wait policy")
+        return self._with_node(replace(node, locks=(*node.locks[:-1], replace(latest, wait=wait))))
+
 
 @dataclass(frozen=True, slots=True, init=False)
 class SelectQuery[Row](_SelectQuery[Row]):
     """A SELECT that exposes raw driver tuples."""
 
+    def for_update(self, *of: Table) -> Self:
+        return self._lock("update", of)
+
+    def for_no_key_update(self, *of: Table) -> Self:
+        return self._lock("no key update", of)
+
+    def for_share(self, *of: Table) -> Self:
+        return self._lock("share", of)
+
+    def for_key_share(self, *of: Table) -> Self:
+        return self._lock("key share", of)
+
+    def no_wait(self) -> Self:
+        return self._wait("nowait")
+
+    def skip_locked(self) -> Self:
+        return self._wait("skip locked")
+
 
 @dataclass(frozen=True, slots=True, init=False)
 class ModelSelectQuery[Model](_SelectQuery[Model]):
     """A SELECT whose rows are decoded into one declared model."""
+
+    def for_update(self, *of: Table) -> Self:
+        return self._lock("update", of)
+
+    def for_no_key_update(self, *of: Table) -> Self:
+        return self._lock("no key update", of)
+
+    def for_share(self, *of: Table) -> Self:
+        return self._lock("share", of)
+
+    def for_key_share(self, *of: Table) -> Self:
+        return self._lock("key share", of)
+
+    def no_wait(self) -> Self:
+        return self._wait("nowait")
+
+    def skip_locked(self) -> Self:
+        return self._wait("skip locked")
 
 
 def cte[Relation: CteTable](relation: type[Relation], name: str) -> Relation:
@@ -361,8 +419,8 @@ def _validate_output_schema(expressions: tuple[Node, ...], expected: set[str]) -
         )
 
 
-def _validate_compound_result_shape(
-    left: _SelectQuery[object], right: _SelectQuery[object]
+def _validate_compound_result_shape[Left, Right](
+    left: _SelectQuery[Left], right: _SelectQuery[Right]
 ) -> None:
     """Keep the public result-type transition sound across a compound."""
     left_node = select_node(left)

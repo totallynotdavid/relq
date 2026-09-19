@@ -78,9 +78,52 @@ def test_codegen_maps_richer_database_value_types() -> None:
     assert "payload: Column[JsonValue | None] = json_column()" in generated
 
 
+def test_sqlite_codegen_keeps_plain_datetime_types_for_timezone_spellings() -> None:
+    """SQLite stores these as text, so the branded PostgreSQL types would misdescribe them."""
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "create table stamps (id integer primary key, a timestamptz not null, "
+        'b "timestamp with time zone" not null, c "timestamp without time zone" not null, '
+        'd timetz not null, e "time with time zone" not null, f "time without time zone" not null)'
+    )
+
+    generated = generate_sqlite(connection)
+
+    for name in ("a", "b", "c"):
+        assert f"{name}: Column[datetime.datetime] = column(datetime.datetime)" in generated
+    for name in ("d", "e", "f"):
+        assert f"{name}: Column[datetime.time] = column(datetime.time)" in generated
+    for branded in ("AwareDateTime", "NaiveDateTime", "AwareTime", "NaiveTime"):
+        assert branded not in generated
+    namespace: dict[str, object] = {}
+    exec(generated, namespace)  # noqa: S102 - generated module must import.
+
+
+def test_sqlite_codegen_rejects_interval_columns_instead_of_failing_at_decode_time() -> None:
+    """sqlite3 returns text for an interval column, which interval_decoder() cannot read."""
+    connection = sqlite3.connect(":memory:")
+    connection.execute("create table spans (id integer primary key, elapsed interval not null)")
+
+    with pytest.raises(TypeError, match="database type 'interval' is rejected"):
+        generate_sqlite(connection)
+
+
+def test_a_configured_mapping_still_reads_a_sqlite_interval_column() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute("create table spans (id integer primary key, elapsed interval not null)")
+    config = CodegenConfig(
+        type_mappings={TypeIdentity(None, "interval"): DirectType(Name("str"), "str")}
+    )
+
+    generated = generate_sqlite(connection, config=config)
+
+    assert "elapsed: Column[str] = column(str)" in generated
+
+
 def test_codegen_single_field_row_adapter_remains_a_tuple() -> None:
     generated = render(
-        (SchemaTable("single_value", (SchemaColumn("id", BuiltinType("int4"), False, True),)),)
+        (SchemaTable("single_value", (SchemaColumn("id", BuiltinType("int4"), False, True),)),),
+        dialect="postgres",
     )
     assert "decoders=(int_decoder(),)" in generated
     namespace: dict[str, object] = {}
@@ -96,7 +139,7 @@ def test_codegen_uses_structured_mapping_annotations_and_imports() -> None:
             )
         }
     )
-    generated = render((table,), config=config)
+    generated = render((table,), config=config, dialect="postgres")
     assert "from ids import EventId" in generated
     assert "decoders=(uuid_decoder(),)" in generated
 
@@ -119,13 +162,14 @@ def test_codegen_generates_enums_and_requires_explicit_domain_mapping() -> None:
         ),
     )
     with pytest.raises(ValueError, match="public.tenant_id"):
-        render((table,), enums=(SchemaEnum(state, ("todo", "in-progress")),))
+        render((table,), enums=(SchemaEnum(state, ("todo", "in-progress")),), dialect="postgres")
     generated = render(
         (table,),
         enums=(SchemaEnum(state, ("todo", "in-progress")),),
         config=CodegenConfig(
             {tenant: DirectType(Name("TenantId", frozenset({Import("ids", ("TenantId",))})), "int")}
         ),
+        dialect="postgres",
     )
     assert "class TaskState(enum.StrEnum):" in generated
     assert "IN_PROGRESS = 'in-progress'" in generated
@@ -157,8 +201,10 @@ def test_codegen_uses_qualified_identities_and_explicit_type_policies() -> None:
         }
     )
     with pytest.raises(TypeError, match="public.opaque_id is rejected"):
-        render((table,), enums=enums, config=config)
-    generated = render((SchemaTable("events", table.columns[:-1]),), enums=enums, config=config)
+        render((table,), enums=enums, config=config, dialect="postgres")
+    generated = render(
+        (SchemaTable("events", table.columns[:-1]),), enums=enums, config=config, dialect="postgres"
+    )
     assert "class PublicStatus(enum.StrEnum):" in generated
     assert "class AuditStatus(enum.StrEnum):" in generated
     assert "TenantId = NewType('TenantId', int)" in generated
@@ -258,7 +304,7 @@ def test_a_configured_wrapper_cannot_take_a_name_the_module_imports() -> None:
     )
 
     with pytest.raises(ValueError, match="json_column"):
-        render((table,), config=config)
+        render((table,), config=config, dialect="postgres")
 
 
 def test_a_configured_wrapper_cannot_take_a_generated_enum_name() -> None:
@@ -274,7 +320,9 @@ def test_a_configured_wrapper_cannot_take_a_generated_enum_name() -> None:
     )
 
     with pytest.raises(ValueError, match="Status"):
-        render((table,), enums=(SchemaEnum(identity, ("live",)),), config=config)
+        render(
+            (table,), enums=(SchemaEnum(identity, ("live",)),), config=config, dialect="postgres"
+        )
 
 
 def test_a_configured_import_reserves_its_name_against_generated_classes() -> None:
@@ -291,7 +339,7 @@ def test_a_configured_import_reserves_its_name_against_generated_classes() -> No
         (SchemaColumn("id", BuiltinType("integer"), nullable=False, primary_key=True),),
     )
 
-    generated = render((table,), config=config)
+    generated = render((table,), config=config, dialect="sqlite")
 
     assert "from app.ids import EventId" in generated
     assert "class EventId_(Table):" in generated
@@ -324,7 +372,7 @@ def test_a_table_and_an_enum_that_want_the_same_class_name_stay_distinct() -> No
         ),
     )
 
-    generated = render(tables, enums=(SchemaEnum(identity, ("live", "dead")),))
+    generated = render(tables, enums=(SchemaEnum(identity, ("live", "dead")),), dialect="postgres")
 
     namespace: dict[str, object] = {}
     exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.

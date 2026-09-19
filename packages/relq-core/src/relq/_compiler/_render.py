@@ -33,6 +33,23 @@ from relq._ast import (
     SourceNode,
     StarNode,
     TableSourceNode,
+    TemporalAgeNode,
+    TemporalArithmeticNode,
+    TemporalBinNode,
+    TemporalClockNode,
+    TemporalDifferenceNode,
+    TemporalEpochNode,
+    TemporalExtractNode,
+    TemporalIntervalScaleNode,
+    TemporalIntervalUnaryNode,
+    TemporalJustifyNode,
+    TemporalMakeDateNode,
+    TemporalMakeIntervalNode,
+    TemporalMakeTimeNode,
+    TemporalMakeTimestampNode,
+    TemporalOverlapsNode,
+    TemporalTimezoneNode,
+    TemporalTruncNode,
     UnaryNode,
     UpdateNode,
     UuidCastNode,
@@ -111,6 +128,12 @@ def _compile_select(
         sql += " limit " + str(node.limit)
     if node.offset is not None:
         sql += " offset " + str(node.offset)
+    for lock in node.locks:
+        sql += " for " + lock.strength
+        if lock.of:
+            sql += " of " + ", ".join(_identifier(source.reference) for source in lock.of)
+        if lock.wait is not None:
+            sql += " " + lock.wait
     for compound in node.compounds:
         sql += f" {compound.operator} " + _compile_select(
             compound.query, dialect, parameters, outer_sources | cte_names
@@ -257,8 +280,111 @@ def _compile_node(
         case ValueNode(value):
             parameters.append(value)
             return dialect.placeholder if dialect.placeholder == "?" else f"${len(parameters)}"
+        case TemporalClockNode(kind):
+            return {
+                "current_date": "current_date",
+                "current_time": "current_time",
+                "local_time": "localtime",
+                "local_timestamp": "localtimestamp",
+            }.get(kind, f"{kind}()")
         case BinaryNode(left, operator, right):
             return f"({_compile_node(left, dialect, parameters, outer_sources)} {operator} {_compile_node(right, dialect, parameters, outer_sources)})"
+        case TemporalMakeDateNode(year, month, day):
+            return _compile_temporal_call(
+                "make_date", (year, month, day), dialect, parameters, outer_sources
+            )
+        case TemporalMakeTimeNode(hour, minute, second):
+            return _compile_temporal_call(
+                "make_time", (hour, minute, second), dialect, parameters, outer_sources
+            )
+        case TemporalMakeTimestampNode(year, month, day, hour, minute, second, aware):
+            return _compile_temporal_call(
+                "make_timestamptz" if aware else "make_timestamp",
+                (year, month, day, hour, minute, second),
+                dialect,
+                parameters,
+                outer_sources,
+            )
+        case TemporalMakeIntervalNode(components):
+            return (
+                "make_interval("
+                + ", ".join(
+                    f"{name} => {_compile_node(value, dialect, parameters, outer_sources)}"
+                    for name, value in components
+                )
+                + ")"
+            )
+        case TemporalEpochNode(seconds):
+            return _compile_temporal_call(
+                "to_timestamp", (seconds,), dialect, parameters, outer_sources
+            )
+        case TemporalArithmeticNode(timestamp, operator, interval):
+            interval_sql = _compile_node(interval, dialect, parameters, outer_sources)
+            if isinstance(interval, ValueNode):
+                interval_sql += "::interval"
+            return (
+                f"({_compile_node(timestamp, dialect, parameters, outer_sources)} "
+                f"{operator} {interval_sql})"
+            )
+        case TemporalDifferenceNode(left, right):
+            return (
+                f"({_compile_node(left, dialect, parameters, outer_sources)} - "
+                f"{_compile_node(right, dialect, parameters, outer_sources)})"
+            )
+        case TemporalIntervalUnaryNode(interval):
+            return f"(-{_compile_node(interval, dialect, parameters, outer_sources)})"
+        case TemporalIntervalScaleNode(interval, operator, factor):
+            return (
+                f"({_compile_node(interval, dialect, parameters, outer_sources)} {operator} "
+                f"{_compile_node(factor, dialect, parameters, outer_sources)})"
+            )
+        case TemporalTimezoneNode(expression, zone):
+            return (
+                f"({_compile_node(expression, dialect, parameters, outer_sources)} at time zone "
+                f"{_compile_node(zone, dialect, parameters, outer_sources)})"
+            )
+        case TemporalExtractNode(field, expression):
+            return (
+                f"extract({_sql_literal(field)} from "
+                f"{_compile_node(expression, dialect, parameters, outer_sources)})"
+            )
+        case TemporalTruncNode(unit, expression, zone):
+            arguments = [
+                _sql_literal(unit),
+                _compile_node(expression, dialect, parameters, outer_sources),
+            ]
+            if zone is not None:
+                arguments.append(_compile_node(zone, dialect, parameters, outer_sources))
+            return "date_trunc(" + ", ".join(arguments) + ")"
+        case TemporalBinNode(stride, expression, origin):
+            stride_sql = _compile_node(stride, dialect, parameters, outer_sources)
+            if isinstance(stride, ValueNode):
+                stride_sql += "::interval"
+            return (
+                "date_bin("
+                + ", ".join(
+                    (
+                        stride_sql,
+                        _compile_node(expression, dialect, parameters, outer_sources),
+                        _compile_node(origin, dialect, parameters, outer_sources),
+                    )
+                )
+                + ")"
+            )
+        case TemporalAgeNode(left, right):
+            return _compile_temporal_call("age", (left, right), dialect, parameters, outer_sources)
+        case TemporalOverlapsNode(left_start, left_end, right_start, right_end):
+            left = ", ".join(
+                _compile_node(item, dialect, parameters, outer_sources)
+                for item in (left_start, left_end)
+            )
+            right = ", ".join(
+                _compile_node(item, dialect, parameters, outer_sources)
+                for item in (right_start, right_end)
+            )
+            return f"(({left}) overlaps ({right}))"
+        case TemporalJustifyNode(kind, interval):
+            return _compile_temporal_call(kind, (interval,), dialect, parameters, outer_sources)
         case UnaryNode(operator, operand):
             return f"({_compile_node(operand, dialect, parameters, outer_sources)} {operator})"
         case FunctionNode(name, arguments):
@@ -366,6 +492,27 @@ def _require_postgres_expression(dialect: Dialect, name: str) -> None:
 
 def _identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
+
+
+def _sql_literal(value: str) -> str:
+    """Render a closed compiler-owned text token, never user SQL."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _compile_temporal_call(
+    name: str,
+    arguments: tuple[Node, ...],
+    dialect: Dialect,
+    parameters: list[object],
+    outer_sources: frozenset[str],
+) -> str:
+    return (
+        f"{name}("
+        + ", ".join(
+            _compile_node(argument, dialect, parameters, outer_sources) for argument in arguments
+        )
+        + ")"
+    )
 
 
 def _compile_order(

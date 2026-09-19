@@ -1,17 +1,20 @@
 """PostgreSQL-only typed expressions.
 
-Everything exported from the top-level ``relq`` package compiles for both
-supported dialects.  This module is the deliberate exception: each function
-here is a named, typed, validated expression that only PostgreSQL has, and
-compiling a query that uses one for SQLite is a compile-time error rather than
-a silently different query or a runtime surprise.
+Most of what the top-level ``relq`` package exports compiles for both
+supported dialects.  The exceptions are the temporal builders it exports
+(``extract``, ``date_trunc``, ``date_bin``, ``age`` and the rest of that
+family), the row-locking clauses (``for_update()`` and its variants), and this
+module.  This module is the one behind a separate import: each function here is
+a named, typed, validated expression that only PostgreSQL has, and compiling a
+query that uses one for SQLite is a compile-time error rather than a silently
+different query or a runtime surprise.
 
 That is the whole extension mechanism.  There is no raw SQL fragment, no
 generic function-name builder, and no caller-supplied operator or cast target:
 a PostgreSQL operator relq does not model yet needs a new named function here
 and a new node in the compiler, exactly like these three.  Importing from
-``relq.postgres`` is therefore the visible, greppable marker that a query has
-left the portable subset.
+``relq.postgres`` is therefore the visible, greppable marker that a query uses
+one of this module's extensions.
 
     from relq.postgres import cast_uuid, json_text, regex_match
 """

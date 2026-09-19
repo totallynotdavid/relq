@@ -11,6 +11,7 @@ from relq_codegen.mapping import MAPPING_IMPORTS, relq_name, resolve_type, used_
 from relq_codegen.model import (
     Call,
     CodegenConfig,
+    CodegenDialect,
     DirectType,
     GeneratedWrapper,
     Import,
@@ -253,6 +254,7 @@ def _plan(
 def render(
     tables: tuple[SchemaTable, ...],
     *,
+    dialect: CodegenDialect,
     enums: tuple[SchemaEnum, ...] = (),
     config: CodegenConfig | None = None,
 ) -> str:
@@ -300,7 +302,7 @@ def render(
         if not table.columns:
             body.append("    pass")
         for field, attribute in zip(table.columns, table_names.columns, strict=True):
-            resolved = resolve_type(field.sql_type, enum_types, config)
+            resolved = resolve_type(field.sql_type, enum_types, config, dialect)
             imports.update(resolved.imports())
             rendered.append(resolved.annotation)
             annotation = (
@@ -330,11 +332,23 @@ def render(
             declaration += f", schema={table.schema!r}"
         body.extend((f"{instance_name} = {class_name}({declaration})", ""))
         _render_payload(
-            body, insert_payload, table.columns, kind="insert", enum_types=enum_types, config=config
+            body,
+            insert_payload,
+            table.columns,
+            kind="insert",
+            enum_types=enum_types,
+            config=config,
+            dialect=dialect,
         )
         body.append("")
         _render_payload(
-            body, update_payload, table.columns, kind="update", enum_types=enum_types, config=config
+            body,
+            update_payload,
+            table.columns,
+            kind="update",
+            enum_types=enum_types,
+            config=config,
+            dialect=dialect,
         )
         body.extend(
             (
@@ -352,7 +366,13 @@ def render(
         )
         imports.update(
             _render_row_model(
-                body, table, table_names, enum_types=enum_types, config=config, rendered=rendered
+                body,
+                table,
+                table_names,
+                enum_types=enum_types,
+                config=config,
+                dialect=dialect,
+                rendered=rendered,
             )
         )
     names.check(rendered)
@@ -390,6 +410,7 @@ def _render_payload(
     kind: str,
     enum_types: Mapping[TypeIdentity, str],
     config: CodegenConfig | None,
+    dialect: CodegenDialect,
 ) -> None:
     payload_columns = tuple(column for column in columns if not column.generated)
     if not all(
@@ -399,7 +420,7 @@ def _render_payload(
         for column in payload_columns
     ):
         fields = ", ".join(
-            f"{column.name!r}: {_payload_field_annotation(column, kind, enum_types, config)}"
+            f"{column.name!r}: {_payload_field_annotation(column, kind, enum_types, config, dialect)}"
             for column in payload_columns
         )
         body.append(f"{name} = TypedDict({name!r}, {{{fields}}})")
@@ -410,7 +431,7 @@ def _render_payload(
         return
     for field in payload_columns:
         body.append(
-            f"    {field.name}: {_payload_field_annotation(field, kind, enum_types, config)}"
+            f"    {field.name}: {_payload_field_annotation(field, kind, enum_types, config, dialect)}"
         )
 
 
@@ -419,8 +440,9 @@ def _payload_field_annotation(
     kind: str,
     enum_types: Mapping[TypeIdentity, str],
     config: CodegenConfig | None,
+    dialect: CodegenDialect,
 ) -> str:
-    resolved = resolve_type(field.sql_type, enum_types, config)
+    resolved = resolve_type(field.sql_type, enum_types, config, dialect)
     annotation = (
         f"{resolved.annotation.render()} | None" if field.nullable else resolved.annotation.render()
     )
@@ -438,6 +460,7 @@ def _render_row_model(
     *,
     enum_types: Mapping[TypeIdentity, str],
     config: CodegenConfig | None,
+    dialect: CodegenDialect,
     rendered: list[RenderExpression],
 ) -> set[Import]:
     body.extend(("", "@dataclass(frozen=True, slots=True)", f"class {names.row}:"))
@@ -445,7 +468,7 @@ def _render_row_model(
         body.append("    pass")
     decoders: list[RenderExpression | None] = []
     for field, attribute in zip(table.columns, names.columns, strict=True):
-        resolved = resolve_type(field.sql_type, enum_types, config)
+        resolved = resolve_type(field.sql_type, enum_types, config, dialect)
         annotation = (
             f"{resolved.annotation.render()} | None"
             if field.nullable

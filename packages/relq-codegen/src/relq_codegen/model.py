@@ -248,6 +248,9 @@ class RejectedType:
 
 
 type TypeMapping = DirectType | GeneratedWrapper | RejectedType
+type CodegenDialect = Literal["postgres", "sqlite"]
+"""The database a schema is generated for; the mapping is not dialect-blind."""
+
 type DecoderKind = Literal[
     "bool",
     "bytes",

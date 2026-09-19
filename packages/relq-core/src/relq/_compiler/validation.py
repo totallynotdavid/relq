@@ -1,5 +1,6 @@
 """Defensive structural validation for private query AST values."""
 
+from collections.abc import Iterable
 from dataclasses import replace
 
 from relq._analysis.ctes import cte_references
@@ -18,6 +19,7 @@ from relq._ast import (
     CteSourceNode,
     DefaultValuesSourceNode,
     DeleteNode,
+    DerivedSourceNode,
     ExcludedNode,
     ExistsNode,
     FunctionNode,
@@ -35,23 +37,43 @@ from relq._ast import (
     SelectNode,
     StarNode,
     TableSourceNode,
+    TemporalAgeNode,
+    TemporalArithmeticNode,
+    TemporalBinNode,
+    TemporalClockNode,
+    TemporalDifferenceNode,
+    TemporalEpochNode,
+    TemporalExtractNode,
+    TemporalIntervalScaleNode,
+    TemporalIntervalUnaryNode,
+    TemporalJustifyNode,
+    TemporalMakeDateNode,
+    TemporalMakeIntervalNode,
+    TemporalMakeTimeNode,
+    TemporalMakeTimestampNode,
+    TemporalOverlapsNode,
+    TemporalTimezoneNode,
+    TemporalTruncNode,
     UnaryNode,
     UpdateNode,
     UuidCastNode,
     ValueNode,
     WindowNode,
 )
+from relq._compiler._model import Dialect
 from relq._compiler.grouping import validate_analytic_clauses, validate_grouping
 
 
-def validate_query(node: QueryNode) -> None:
+def validate_query(node: QueryNode, dialect: Dialect) -> None:
     """Validate the complete query tree before dialect-specific rendering."""
     _validate_data_modifying_cte_placement(node)
     _validate_nested_cte_visibility(node)
-    _validate_statement(node)
+    _validate_statement(node, dialect)
 
 
-def _validate_statement(node: QueryNode, outer_sources: frozenset[str] = frozenset()) -> None:
+def _validate_statement(
+    node: QueryNode, dialect: Dialect, outer_sources: frozenset[str] = frozenset()
+) -> None:
     """Validate one statement against the relations visible where it appears.
 
     ``outer_sources`` is empty for a top-level statement and carries the CTEs
@@ -59,22 +81,26 @@ def _validate_statement(node: QueryNode, outer_sources: frozenset[str] = frozens
     """
     match node:
         case SelectNode():
-            _validate_select(node, outer_sources)
+            _validate_select(node, dialect, outer_sources)
         case InsertNode():
-            _validate_insert(node, outer_sources)
+            _validate_insert(node, dialect, outer_sources)
         case UpdateNode():
             if not node.values:
                 raise ValueError("UPDATE requires at least one value")
             if not node.bounded:
                 raise ValueError("UPDATE requires where() or explicit all_rows()")
             validate_dml_sources(node.table, node.where, node.values, node.returning)
+            _validate_dml_dialect(node, dialect, outer_sources)
         case DeleteNode():
             if not node.bounded:
                 raise ValueError("DELETE requires where() or explicit all_rows()")
             validate_dml_sources(node.table, node.where, (), node.returning)
+            _validate_dml_dialect(node, dialect, outer_sources)
 
 
-def _validate_select(node: SelectNode, outer_sources: frozenset[str] = frozenset()) -> None:
+def _validate_select(
+    node: SelectNode, dialect: Dialect, outer_sources: frozenset[str] = frozenset()
+) -> None:
     validate_compound_shape(node)
     visible_ctes: set[str] = set()
     for cte in node.ctes:
@@ -85,21 +111,44 @@ def _validate_select(node: SelectNode, outer_sources: frozenset[str] = frozenset
             if cte.recursive:
                 cte_sources |= {cte.name}
                 validate_recursive_cte(cte.query, cte.name)
-            _validate_select(cte.query, cte_sources)
+            _validate_select(cte.query, dialect, cte_sources)
         else:
-            _validate_data_modifying_cte(cte, cte.query, cte_sources)
+            _validate_data_modifying_cte(cte, cte.query, dialect, cte_sources)
         visible_ctes.add(cte.name)
     cte_names = frozenset(visible_ctes)
     validate_sources(node, outer_sources | cte_names)
+    validate_locks(node)
+    _validate_dialect_nodes(node, dialect)
     validate_analytic_clauses(node)
     validate_grouping(node)
     for compound in node.compounds:
-        _validate_select(compound.query, outer_sources | cte_names)
+        if compound.query.locks:
+            raise ValueError("row locking cannot be combined with UNION, INTERSECT, or EXCEPT")
+        _validate_select(compound.query, dialect, outer_sources | cte_names)
+    if node.from_source is None:  # pragma: no cover - established by validate_sources()
+        raise AssertionError("validated SELECT has no source")
+    local_sources = frozenset(
+        {node.from_source.reference, *(join.source.reference for join in node.joins)}
+    )
+    for source in (node.from_source, *(join.source for join in node.joins)):
+        if isinstance(source, DerivedSourceNode):
+            _validate_select(source.query, dialect, outer_sources | cte_names)
+    for expression in (
+        *node.selections,
+        *(join.predicate for join in node.joins),
+        node.where,
+        *node.group_by,
+        node.having,
+        *(order.expression for order in node.order_by),
+    ):
+        if expression is not None:
+            _validate_nested_selects(expression, dialect, outer_sources | cte_names | local_sources)
 
 
 def _validate_data_modifying_cte(
     cte: CteNode,
     query: InsertNode | UpdateNode | DeleteNode,
+    dialect: Dialect,
     outer_sources: frozenset[str],
 ) -> None:
     """Require a bounded, row-returning statement behind a data-modifying CTE.
@@ -114,7 +163,7 @@ def _validate_data_modifying_cte(
         raise ValueError(
             f"data-modifying CTE {cte.name!r} requires returning() to declare its output relation"
         )
-    _validate_statement(query, outer_sources)
+    _validate_statement(query, dialect, outer_sources)
 
 
 def _validate_nested_cte_visibility(node: QueryNode) -> None:
@@ -156,7 +205,9 @@ def _validate_data_modifying_cte_placement(node: QueryNode) -> None:
         raise ValueError(f"data-modifying CTE(s) must be declared on the outermost query: {names}")
 
 
-def _validate_insert(node: InsertNode, outer_sources: frozenset[str] = frozenset()) -> None:
+def _validate_insert(
+    node: InsertNode, dialect: Dialect, outer_sources: frozenset[str] = frozenset()
+) -> None:
     match node.source:
         case None:
             raise ValueError("INSERT requires values(), from_select(), or default_values()")
@@ -165,7 +216,7 @@ def _validate_insert(node: InsertNode, outer_sources: frozenset[str] = frozenset
                 raise ValueError("insert-from-select requires target columns")
             if len(query.selections) != len(columns):
                 raise ValueError("insert-from-select projection width changed after construction")
-            _validate_select(query, outer_sources)
+            _validate_select(query, dialect, outer_sources)
         case InsertRowsSourceNode(rows):
             columns = tuple(column for column, _ in rows[0])
             if any(tuple(column for column, _ in row) != columns for row in rows[1:]):
@@ -177,6 +228,7 @@ def _validate_insert(node: InsertNode, outer_sources: frozenset[str] = frozenset
     if isinstance(node.source, DefaultValuesSourceNode) and node.conflict is not None:
         raise ValueError("INSERT DEFAULT VALUES cannot use ON CONFLICT")
     validate_insert(node)
+    _validate_insert_dialect(node, dialect, outer_sources)
 
 
 def validate_sources(node: SelectNode, outer_sources: frozenset[str] = frozenset()) -> None:
@@ -228,6 +280,221 @@ def validate_projected_nullability(node: SelectNode) -> None:
         _validate_selection_nullability(selection, nullable_sources)
 
 
+def validate_locks(node: SelectNode) -> None:
+    """Defend PostgreSQL's row-identity restrictions at the AST boundary."""
+    if not node.locks:
+        return
+    if node.distinct:
+        raise ValueError("row locking cannot be combined with DISTINCT")
+    if node.group_by or node.having is not None:
+        raise ValueError("row locking cannot be combined with GROUP BY or HAVING")
+    if node.compounds:
+        raise ValueError("row locking cannot be combined with UNION, INTERSECT, or EXCEPT")
+    if any(
+        isinstance(descendant, (AggregateNode, WindowNode))
+        for expression in (
+            *node.selections,
+            node.where,
+            *node.group_by,
+            node.having,
+            *(order.expression for order in node.order_by),
+        )
+        if expression is not None
+        for descendant in walk(expression)
+    ):
+        raise ValueError("row locking cannot be combined with aggregate or window expressions")
+    direct_tables = {
+        source
+        for source in (node.from_source, *(join.source for join in node.joins))
+        if isinstance(source, TableSourceNode)
+    }
+    nullable = null_extended_sources(node)
+    for lock in node.locks:
+        targets = direct_tables if not lock.of else set(lock.of)
+        if not targets <= direct_tables:
+            raise ValueError("lock OF must reference direct tables in from_() or join()")
+        locked_names = {target.reference for target in targets}
+        if nullable & locked_names:
+            raise ValueError("row locking cannot lock a nullable outer-join side")
+
+
+def _validate_dialect_nodes(node: SelectNode, dialect: Dialect) -> None:
+    for expression in (
+        *node.selections,
+        node.where,
+        *(join.predicate for join in node.joins),
+        *node.group_by,
+        node.having,
+        *(order.expression for order in node.order_by),
+    ):
+        if expression is not None:
+            _validate_expression_dialect(expression, dialect)
+    if node.locks and not dialect.supports_row_locking:
+        raise ValueError(f"{dialect.name} does not support PostgreSQL row locking")
+
+
+def _validate_expression_dialect(expression: Node, dialect: Dialect) -> None:
+    temporal_types = (
+        TemporalClockNode,
+        TemporalMakeDateNode,
+        TemporalMakeTimeNode,
+        TemporalMakeTimestampNode,
+        TemporalMakeIntervalNode,
+        TemporalEpochNode,
+        TemporalArithmeticNode,
+        TemporalDifferenceNode,
+        TemporalIntervalUnaryNode,
+        TemporalIntervalScaleNode,
+        TemporalTimezoneNode,
+        TemporalExtractNode,
+        TemporalTruncNode,
+        TemporalBinNode,
+        TemporalAgeNode,
+        TemporalOverlapsNode,
+        TemporalJustifyNode,
+    )
+    for item in walk(expression):
+        if not isinstance(item, temporal_types):
+            continue
+        if not dialect.supports_temporal_arithmetic:
+            raise ValueError(f"{dialect.name} does not support PostgreSQL temporal expressions")
+        _validate_temporal_node(item)
+
+
+def _validate_temporal_node(node: Node) -> None:
+    """Validate compiler-owned temporal tokens before dialect rendering."""
+    match node:
+        case TemporalClockNode(kind) if kind not in {
+            "transaction_timestamp",
+            "statement_timestamp",
+            "clock_timestamp",
+            "current_date",
+            "current_time",
+            "local_time",
+            "local_timestamp",
+        }:
+            raise ValueError(f"unsupported temporal clock: {kind!r}")
+        case TemporalMakeIntervalNode(components):
+            allowed = {"years", "months", "weeks", "days", "hours", "mins", "secs"}
+            names = tuple(name for name, _ in components)
+            if any(name not in allowed for name in names):
+                raise ValueError("unsupported make_interval component")
+            if len(names) != len(set(names)):
+                raise ValueError("make_interval components must be unique")
+        case TemporalExtractNode(field, _) if field not in {
+            "century",
+            "day",
+            "decade",
+            "dow",
+            "doy",
+            "epoch",
+            "hour",
+            "isodow",
+            "isoyear",
+            "microseconds",
+            "millennium",
+            "milliseconds",
+            "minute",
+            "month",
+            "quarter",
+            "second",
+            "timezone",
+            "timezone_hour",
+            "timezone_minute",
+            "week",
+            "year",
+        }:
+            raise ValueError(f"unsupported extract field: {field!r}")
+        case TemporalTruncNode(unit, _, _) if unit not in {
+            "microseconds",
+            "milliseconds",
+            "second",
+            "minute",
+            "hour",
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year",
+            "decade",
+            "century",
+            "millennium",
+        }:
+            raise ValueError(f"unsupported date_trunc unit: {unit!r}")
+        case TemporalArithmeticNode(_, operator, _) if operator not in {"+", "-"}:
+            raise ValueError(f"unsupported temporal arithmetic operator: {operator!r}")
+        case TemporalIntervalScaleNode(_, operator, _) if operator not in {"*", "/"}:
+            raise ValueError(f"unsupported interval scale operator: {operator!r}")
+        case TemporalJustifyNode(kind, _) if kind not in {
+            "justify_days",
+            "justify_hours",
+            "justify_interval",
+        }:
+            raise ValueError(f"unsupported interval justification: {kind!r}")
+        case _:
+            pass
+
+
+def _validate_dml_dialect(
+    node: UpdateNode | DeleteNode, dialect: Dialect, outer_sources: frozenset[str]
+) -> None:
+    expressions: list[Node] = []
+    if node.where is not None:
+        expressions.append(node.where)
+    if isinstance(node, UpdateNode):
+        expressions.extend(value for _, value in node.values)
+    expressions.extend(node.returning)
+    _reject_aggregates_and_windows(
+        expressions, "UPDATE" if isinstance(node, UpdateNode) else "DELETE"
+    )
+    for expression in expressions:
+        _validate_expression_dialect(expression, dialect)
+        _validate_nested_selects(expression, dialect, outer_sources | {node.table.reference})
+
+
+def _validate_insert_dialect(
+    node: InsertNode, dialect: Dialect, outer_sources: frozenset[str]
+) -> None:
+    expressions: list[Node] = [*node.returning]
+    if isinstance(node.source, InsertValuesSourceNode):
+        expressions.extend(value for _, value in node.source.values)
+    elif isinstance(node.source, InsertRowsSourceNode):
+        expressions.extend(value for row in node.source.rows for _, value in row)
+    if node.conflict is not None:
+        expressions.extend(value for _, value in node.conflict.update_values)
+    _reject_aggregates_and_windows(expressions, "INSERT")
+    for expression in expressions:
+        _validate_expression_dialect(expression, dialect)
+        _validate_nested_selects(expression, dialect, outer_sources | {node.table.reference})
+
+
+def _reject_aggregates_and_windows(expressions: Iterable[Node], statement: str) -> None:
+    """Keep set-level expressions out of a row-level statement's own clauses.
+
+    ``walk`` stops at a nested SELECT, so an aggregate inside a subquery, where
+    it is legal, is not seen here.
+    """
+    if any(
+        isinstance(descendant, (AggregateNode, WindowNode))
+        for expression in expressions
+        for descendant in walk(expression)
+    ):
+        raise ValueError(f"{statement} cannot contain aggregate or window expressions")
+
+
+def _validate_nested_selects(
+    expression: Node, dialect: Dialect, outer_sources: frozenset[str]
+) -> None:
+    for item in walk(expression):
+        match item:
+            case ScalarSubqueryNode(query) | ExistsNode(query):
+                _validate_select(query, dialect, outer_sources)
+            case InNode(values=SelectNode() as query):
+                _validate_select(query, dialect, outer_sources)
+            case _:
+                pass
+
+
 def _validate_selection_nullability(node: Node, nullable_sources: frozenset[str]) -> None:
     if isinstance(node, NullableResultNode):
         return
@@ -257,6 +524,65 @@ def _nullable_result_sources(node: Node) -> set[str]:
             return _nullable_result_sources(expression)
         case BinaryNode(left, operator, right) if operator in {"+", "-", "*", "/"}:
             return _nullable_result_sources(left) | _nullable_result_sources(right)
+        case TemporalArithmeticNode(timestamp, _, interval):
+            return _nullable_result_sources(timestamp) | _nullable_result_sources(interval)
+        case TemporalDifferenceNode(left, right) | TemporalAgeNode(left, right):
+            return _nullable_result_sources(left) | _nullable_result_sources(right)
+        case TemporalMakeDateNode(year, month, day):
+            return (
+                _nullable_result_sources(year)
+                | _nullable_result_sources(month)
+                | _nullable_result_sources(day)
+            )
+        case TemporalMakeTimeNode(hour, minute, second):
+            return (
+                _nullable_result_sources(hour)
+                | _nullable_result_sources(minute)
+                | _nullable_result_sources(second)
+            )
+        case TemporalMakeTimestampNode(year, month, day, hour, minute, second):
+            return (
+                _nullable_result_sources(year)
+                | _nullable_result_sources(month)
+                | _nullable_result_sources(day)
+                | _nullable_result_sources(hour)
+                | _nullable_result_sources(minute)
+                | _nullable_result_sources(second)
+            )
+        case TemporalMakeIntervalNode(components):
+            result: set[str] = set()
+            for _, argument in components:
+                result.update(_nullable_result_sources(argument))
+            return result
+        case (
+            TemporalEpochNode(seconds)
+            | TemporalIntervalUnaryNode(seconds)
+            | TemporalJustifyNode(_, seconds)
+        ):
+            return _nullable_result_sources(seconds)
+        case TemporalIntervalScaleNode(interval, _, factor):
+            return _nullable_result_sources(interval) | _nullable_result_sources(factor)
+        case TemporalTimezoneNode(expression, zone):
+            return _nullable_result_sources(expression) | _nullable_result_sources(zone)
+        case TemporalExtractNode(_, expression):
+            return _nullable_result_sources(expression)
+        case TemporalTruncNode(_, expression, zone):
+            return _nullable_result_sources(expression) | (
+                set() if zone is None else _nullable_result_sources(zone)
+            )
+        case TemporalBinNode(stride, expression, origin):
+            return (
+                _nullable_result_sources(stride)
+                | _nullable_result_sources(expression)
+                | _nullable_result_sources(origin)
+            )
+        case TemporalOverlapsNode(left_start, left_end, right_start, right_end):
+            return (
+                _nullable_result_sources(left_start)
+                | _nullable_result_sources(left_end)
+                | _nullable_result_sources(right_start)
+                | _nullable_result_sources(right_end)
+            )
         case CaseNode(branches, otherwise):
             result = _nullable_result_sources(otherwise)
             for _, value in branches:
@@ -264,6 +590,7 @@ def _nullable_result_sources(node: Node) -> set[str]:
             return result
         case (
             ValueNode()
+            | TemporalClockNode()
             | UnaryNode()
             | FunctionNode()
             | AggregateNode()
