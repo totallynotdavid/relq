@@ -15,6 +15,8 @@ packages/relq-sqlite     sqlite3 execution boundary
 packages/relq-postgres   asyncpg execution boundary and PostgreSQL-only decode
 packages/relq-codegen    schema introspection, type mapping, deterministic source
                          rendering, and CLI; no query-builder ownership
+packages/relq-migrate    forward-only raw-DDL migrations with separate SQLite
+                         and PostgreSQL adapters; no query-builder ownership
 tests/                   contract-focused unit tests, shared relational matrix,
                          and PostgreSQL integration tests
 scripts/                 ephemeral PostgreSQL and clean-wheel-install harnesses

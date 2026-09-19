@@ -1,12 +1,12 @@
 # Releasing relq
 
 Each relq release publishes one tested version set: `relq`, `relq-sqlite`,
-`relq-postgres`, and `relq-codegen` all have the same version. The release tag
-is the only publishing trigger.
+`relq-postgres`, `relq-codegen`, and `relq-migrate` all have the same version.
+The release tag is the only publishing trigger.
 
 ## Prepare a release
 
-1. Update all four package versions and their exact cross-package dependencies.
+1. Update all five package versions and their exact cross-package dependencies.
 2. Add `docs/releases/vX.Y.Z.md`. Write a short, direct summary for users.
    GitHub appends its generated change list and comparison link to this text.
 3. Run `mise check`, commit the release preparation, and merge it.
