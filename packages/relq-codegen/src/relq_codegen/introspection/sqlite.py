@@ -34,7 +34,6 @@ def inspect_sqlite(connection: sqlite3.Connection) -> tuple[SchemaTable, ...]:
 
 
 def _rows(cursor: sqlite3.Cursor) -> tuple[tuple[object, ...], ...]:
-    """Normalize SQLite's unparameterized DB-API result boundary once."""
     rows: list[tuple[object, ...]] = []
     for index, raw_row in enumerate(_list_items(cast(object, cursor.fetchall()))):
         # sqlite3 types fetched rows as ``Any``.  Do not let that leak from

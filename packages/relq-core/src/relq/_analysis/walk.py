@@ -1,17 +1,12 @@
 """Shared structural descent over the private Node union.
 
-``children`` is the single place that enumerates every ``Node`` variant's
-direct ``Node``-typed children.  It never yields into a nested ``SelectNode``
-(a scalar subquery's body, an ``IN (SELECT ...)`` branch, ...): those fields
-are not ``Node``-typed, so scope boundaries fall out of the type system
-instead of being reimplemented by every caller.  There is no catch-all case:
-a new ``Node`` variant makes basedpyright flag this function as
-non-exhaustive, and the trailing raise covers anything that reaches it at
-runtime.  Callers that need "collect every X reachable from here" build it
-from ``walk``; callers with a genuinely different traversal rule (an opaque
-boundary at aggregates, a narrower propagation rule, ...) still use
-``children`` for their generic-descent cases so this stays the only place
-the union's shape is hand-written.
+``children`` is the only place that enumerates each ``Node`` variant's direct
+``Node``-typed children. It never yields into a nested ``SelectNode``, such as a
+scalar subquery's body or an ``IN (SELECT ...)`` branch. Those fields are not
+``Node``-typed, so the types draw the scope boundary and no caller has to.
+Callers that collect everything reachable use ``walk``. Callers with their own
+traversal rule, such as an opaque boundary at aggregates, still use ``children``
+for generic descent.
 """
 
 from collections.abc import Iterator
@@ -61,7 +56,6 @@ from relq._ast import (
 
 
 def children(node: Node) -> Iterator[Node]:
-    """Yield a node's direct Node-typed children, never crossing into a nested SELECT."""
     match node:
         case ColumnNode() | ValueNode() | TemporalClockNode() | StarNode() | ExcludedNode():
             return
@@ -205,6 +199,8 @@ def children(node: Node) -> Iterator[Node]:
             yield value
             yield pattern
             return
+    # There is deliberately no catch-all case. A new Node variant makes
+    # basedpyright report the match above as non-exhaustive.
     raise TypeError(f"unsupported AST node: {node!r}")
 
 

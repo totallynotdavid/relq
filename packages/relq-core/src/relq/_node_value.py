@@ -22,17 +22,12 @@ class _NodeState[N]:
 class NodeValue[N]:
     """Private base for values that carry one immutable AST node."""
 
-    # ``__slots__`` is spelled out instead of asked for with ``slots=True``
-    # because that argument rebuilds the class, and on CPython 3.13.0 through
-    # 3.13.13 *and* 3.14.0 through 3.14.4 the frozen ``__setattr__`` carried
-    # into the replacement still closed over the discarded original.  Every
-    # subclass assignment that is not one of this class's own fields --
-    # ``Table.table_name``, for example -- reached that method and raised
-    # ``TypeError`` instead of being stored, so no table could be instantiated.
-    # The two windows were fixed separately, in 3.13.14 and 3.14.5; both are
-    # inside what ``requires-python`` admits, and CI pins 3.13.0 and 3.14.0 so
-    # neither can regress unnoticed.  Declaring the layout here produces the
-    # same class without the rebuild.
+    # ``__slots__`` is declared by hand because ``slots=True`` rebuilds the class.
+    # On CPython 3.13.0 through 3.13.13 and 3.14.0 through 3.14.4 the rebuilt
+    # class keeps a frozen ``__setattr__`` that closes over the discarded
+    # original. Assigning any non-field attribute on a subclass, such as
+    # ``Table.table_name``, then raises ``TypeError``. CI pins 3.13.0 and 3.14.0
+    # so this cannot regress unnoticed.
     __slots__ = ("_state",)
 
     _state: _NodeState[N]
@@ -41,24 +36,13 @@ class NodeValue[N]:
         if token is not _CONSTRUCTION_TOKEN:
             raise TypeError("relq values are created by relq builders, not constructors")
 
-    # ``slots=True`` installs ``__getstate__``/``__setstate__`` on a frozen
-    # slotted dataclass and a hand-written ``__slots__`` does not, so they are
-    # restated here as ``_dataclass_getstate``/``_dataclass_setstate`` would
-    # have generated them: the dataclass fields, nothing else.  The state is a
-    # ``list`` rather than a ``tuple`` because that is what the generated
-    # ``__getstate__`` returns on every supported version, and the difference
-    # is observable -- it changes the pickle by a byte, so a tuple here would
-    # make these values pickle differently from the ``slots=True`` build they
-    # replace.  ``__setstate__`` is the generated body plus ``strict=True``,
-    # which only rejects a state of the wrong length instead of silently
-    # dropping fields; nothing relq writes can produce one.
-    #
-    # Matching that narrow behaviour is deliberate.  It is not fully correct --
-    # state a subclass keeps outside the fields does not survive ``copy``,
-    # which is why ``Table.as_`` re-sets ``table_name`` by hand -- but it is
-    # what relq has always done, and widening it here broke pickling of generic
-    # values whose ``__dict__`` carries ``__orig_class__``.  Copy/pickle
-    # completeness for extra subclass state is a separate, pre-existing defect.
+    # A hand-written ``__slots__`` does not get the ``__getstate__`` and
+    # ``__setstate__`` that ``slots=True`` installs, so they are restated here.
+    # The state is a list because the generated ``__getstate__`` returns a list,
+    # and a tuple would change the pickle bytes. Only dataclass fields are saved.
+    # State a subclass keeps elsewhere does not survive ``copy``, which is why
+    # ``Table.as_`` sets ``table_name`` again by hand. Saving more breaks pickling
+    # of generic values whose ``__dict__`` holds ``__orig_class__``.
     def __getstate__(self) -> list[object]:
         return [cast(object, getattr(self, field.name)) for field in fields(self)]
 
@@ -80,33 +64,28 @@ class _NodeBridge(NodeValue[object]):
 
 
 def construction_token() -> object:
-    """Return the token accepted by private builder constructors."""
     return _CONSTRUCTION_TOKEN
 
 
 def initialize_node[N](value: NodeValue[N], node: N) -> None:
-    """Attach the sole AST node while a private builder factory creates a value."""
     object.__setattr__(value, "_state", _NodeState(node))
 
 
 def node_of[N](value: NodeValue[N]) -> N:
-    """Extract a node for internal builder, compiler, or executor composition."""
     return _NodeBridge.node(value)
 
 
 def expression_node(value: NodeValue[Node]) -> Node:
-    """Extract a scalar expression node without exposing its value parameter."""
     return node_of(value)
 
 
 def has_node[N](value: NodeValue[N]) -> bool:
-    """Report whether a builder factory ever attached this value's node.
+    """Report whether a builder factory attached this value's node.
 
-    Every value relq constructs has one, because the factories are the only
-    way past the constructor token.  A class declared outside relq can still
-    inherit a nominal public base such as ``ConflictTarget`` and skip that
-    token by overriding ``__init__``, so a builder that accepts a base rather
-    than a concrete type asks this first and raises its own error instead of
-    letting a private attribute surface.
+    Every value relq constructs has one, because the factories are the only way
+    past the constructor token. A class declared outside relq can inherit a
+    nominal public base such as ``ConflictTarget`` and skip the token by
+    overriding ``__init__``. A builder that accepts a base rather than a
+    concrete type checks this first and raises its own error.
     """
     return _NodeBridge.initialized(value)

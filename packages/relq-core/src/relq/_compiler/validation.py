@@ -70,7 +70,6 @@ from relq.rows import Interval
 
 
 def validate_query(node: QueryNode, dialect: Dialect) -> None:
-    """Validate the complete query tree before dialect-specific rendering."""
     _validate_data_modifying_cte_placement(node)
     _validate_nested_cte_visibility(node)
     _validate_statement(node, dialect)
@@ -81,8 +80,8 @@ def _validate_statement(
 ) -> None:
     """Validate one statement against the relations visible where it appears.
 
-    ``outer_sources`` is empty for a top-level statement and carries the CTEs
-    already bound by the ``WITH`` chain when this statement *is* a later CTE.
+    ``outer_sources`` is empty for a top-level statement. For a statement that
+    is a later CTE, it holds the CTEs the ``WITH`` chain has already bound.
     """
     match node:
         case SelectNode():
@@ -158,9 +157,8 @@ def _validate_data_modifying_cte(
 ) -> None:
     """Require a bounded, row-returning statement behind a data-modifying CTE.
 
-    ``outer_sources`` is the scope already bound by the ``WITH`` chain, so an
-    insert-from-select body can read a CTE declared before this one, exactly as
-    a SELECT body can.
+    ``outer_sources`` is the scope the ``WITH`` chain has already bound, so an
+    insert-from-select body can read an earlier CTE as a SELECT body can.
     """
     if cte.recursive:
         raise ValueError(f"recursive CTE {cte.name!r} requires a SELECT query")
@@ -174,17 +172,15 @@ def _validate_data_modifying_cte(
 def _validate_nested_cte_visibility(node: QueryNode) -> None:
     """Reject a CTE reference that its enclosing ``WITH`` clauses have not bound.
 
-    ``validate_sources`` applies this rule to the relations a query names in
-    its own FROM/JOIN, but a derived table or a scalar/EXISTS/IN subquery can
-    name a CTE too, and SQL binds ``WITH`` entries strictly in declaration
-    order at every depth.  Without this pass a CTE body could reach a later
-    entry through a subquery and only fail once the database parsed it.
+    ``validate_sources`` applies this rule to the relations a query names in its
+    own FROM/JOIN. A derived table or a scalar/EXISTS/IN subquery can name a CTE
+    too, and SQL binds ``WITH`` entries in declaration order at every depth.
     """
     for nested, visible in nested_scopes(node):
         if not isinstance(nested, SelectNode):
             continue
-        # A nested query reads its own WITH clause too, exactly as the
-        # outermost one does; ``visible`` only carries what encloses it.
+        # ``visible`` holds only what encloses the nested query, which reads its
+        # own WITH clause as well.
         bound = visible | {cte.name for cte in nested.ctes}
         for source in (nested.from_source, *(join.source for join in nested.joins)):
             if isinstance(source, CteSourceNode) and source.name not in bound:
@@ -194,9 +190,9 @@ def _validate_nested_cte_visibility(node: QueryNode) -> None:
 def _validate_data_modifying_cte_placement(node: QueryNode) -> None:
     """Keep data-modifying CTEs in the outermost WITH clause.
 
-    SQL runs a data-modifying CTE once for the whole statement rather than
-    once per reference, so nesting one inside a derived table, subquery, or
-    another CTE has no well-defined meaning and no dialect accepts it.
+    SQL runs a data-modifying CTE once for the whole statement, not once per
+    reference. Nesting one inside a derived table, subquery, or another CTE has
+    no well-defined meaning and no supported dialect accepts it.
     """
     nested_names = sorted(
         cte.name
@@ -272,11 +268,11 @@ def validate_sources(node: SelectNode, outer_sources: frozenset[str] = frozenset
 def validate_projected_nullability(node: SelectNode) -> None:
     """Require an explicit result-type transition after an outer join.
 
-    A stored column's declaration describes rows in its own table, not rows
-    manufactured by an outer join.  Expressions whose SQL value becomes NULL
-    because they use a NULL-extended source must therefore carry the private
-    marker produced by ``Expr.nullable()``.  Aggregates, windows, scalar
-    subqueries, and predicates keep their own documented SQL result semantics.
+    A stored column's declaration describes rows in its own table, not rows an
+    outer join manufactures. An expression whose SQL value becomes NULL because
+    it uses a NULL-extended source must carry the marker that ``Expr.nullable()``
+    produces. Aggregates, windows, scalar subqueries, and predicates keep their
+    own result semantics.
     """
     nullable_sources = null_extended_sources(node)
     if not nullable_sources:
@@ -286,7 +282,7 @@ def validate_projected_nullability(node: SelectNode) -> None:
 
 
 def validate_locks(node: SelectNode) -> None:
-    """Defend PostgreSQL's row-identity restrictions at the AST boundary."""
+    """Enforce PostgreSQL's row-locking restrictions on the AST."""
     if not node.locks:
         return
     if node.distinct:
@@ -369,7 +365,6 @@ def _validate_expression_dialect(expression: Node, dialect: Dialect) -> None:
 
 
 def _validate_temporal_node(node: Node) -> None:
-    """Validate compiler-owned temporal tokens before dialect rendering."""
     match node:
         case TemporalClockNode(kind) if kind not in {
             "transaction_timestamp",
@@ -451,7 +446,7 @@ def _validate_insert_dialect(
 
 
 def _reject_aggregates_and_windows(expressions: Iterable[Node], statement: str) -> None:
-    """Keep set-level expressions out of a row-level statement's own clauses.
+    """Reject aggregates and windows in a row-level statement's own clauses.
 
     ``walk`` stops at a nested SELECT, so an aggregate inside a subquery, where
     it is legal, is not seen here.
@@ -493,16 +488,16 @@ def _validate_selection_nullability(node: Node, nullable_sources: frozenset[str]
 def _nullable_result_sources(node: Node) -> set[str]:
     """Find sources that can make a selected scalar expression NULL.
 
-    This is intentionally narrower than ``referenced_sources``.  Predicates
-    and analytic expressions have their own result semantics, while ordinary
-    column and arithmetic projections inherit a NULL-extended input.
+    This is narrower than ``referenced_sources`` on purpose. Predicates and
+    analytic expressions have their own result semantics. Column and arithmetic
+    projections inherit a NULL-extended input.
     """
     match node:
         case ColumnNode(source, _):
             return {source}
         case AliasNode(expression, _) | NullableResultNode(expression) | UuidCastNode(expression):
-            # A cast keeps its operand's declared nullability, so an outer join
-            # still widens the result and still needs acknowledging.
+            # A cast keeps its operand's nullability, so an outer join still
+            # widens the result.
             return _nullable_result_sources(expression)
         case BinaryNode(left, operator, right) if operator in {"+", "-", "*", "/"}:
             return _nullable_result_sources(left) | _nullable_result_sources(right)
@@ -606,20 +601,20 @@ def _nullable_result_sources(node: Node) -> set[str]:
             | RegexMatchNode()
             | TemporalOverlapsNode()
         ):
-            # json_text already returns an optional result: an absent member and
-            # a JSON null are indistinguishable, so an outer join cannot widen
-            # what the declared type already admits.  overlaps() is likewise a
-            # NullablePredicate whatever its operands are.
+            # json_text already returns an optional result because an absent
+            # member and a JSON null are indistinguishable, so an outer join
+            # widens nothing. overlaps() is a NullablePredicate whatever its
+            # operands are.
             return set()
     raise TypeError(f"unsupported AST node: {node!r}")
 
 
 def validate_compound_shape(node: SelectNode) -> None:
-    """Defend the compiler boundary against ambiguous set-operation ASTs.
+    """Reject set-operation ASTs the portable grammar does not allow.
 
-    Public builders require a declared derived relation before an ordered or
-    paginated compound is used.  Repeating the rule here keeps handcrafted
-    ``_Query`` implementations from bypassing that portable grammar.
+    Public builders already require a declared derived relation before a compound
+    is ordered or paginated. Repeating the rule here stops a handcrafted
+    ``_Query`` from bypassing it.
     """
     if not node.compounds:
         return

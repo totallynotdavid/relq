@@ -1,10 +1,10 @@
 # ruff: noqa: UP046
 """Immutable data-modification builders.
 
-Payloads intentionally use keyword arguments.  Python cannot derive a
-``TypedDict`` from arbitrary column descriptors; generated schemas can expose
-their own payload TypedDicts while this API validates target column names at
-runtime and retains typed ``RETURNING`` rows.
+Payloads are keyword arguments because Python cannot derive a ``TypedDict``
+from arbitrary column descriptors. Generated schemas can expose their own payload
+TypedDicts. This API validates target column names at runtime and keeps
+``RETURNING`` rows typed.
 """
 
 from __future__ import annotations
@@ -87,10 +87,10 @@ type CteQuery[Row] = (
 )
 """A query that can define one CTE: a SELECT, or bounded DML with RETURNING.
 
-The declared-model builders are deliberately absent.  A CTE's output relation
-is declared by its :class:`~relq.CteTable`, and the statement's result shape
-belongs to the outer query, so a row model attached to a CTE body would have
-nothing to decode.
+The declared-model builders are absent on purpose. A CTE's output relation is
+declared by its :class:`~relq.CteTable` and the statement's result shape belongs
+to the outer query, so a row model attached to a CTE body would have nothing to
+decode.
 """
 
 
@@ -175,20 +175,17 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         return self._with_source(InsertSelectSourceNode(node, names))
 
     def default_values(self) -> InsertQuery[Row_co, Returns]:
-        """Insert one row using the table's declared defaults."""
         return self._with_source(DefaultValuesSourceNode())
 
     def on_conflict(self, *columns: ConflictTarget) -> ConflictBuilder[Row_co, Returns]:
-        """Start an SQLite/PostgreSQL ``ON CONFLICT`` clause.
+        """Start an ``ON CONFLICT`` clause.
 
-        The conflict target takes any number of columns, because a composite
-        unique index does.  ``from_select`` and ``returning`` spell one type
-        parameter per position since each position feeds the result tuple; a
-        conflict target feeds nothing, so a per-position ladder would only
-        cap the arity.  ``ConflictTarget`` is the un-parameterised base
-        ``Column`` inherits, which sidesteps ``Column``'s invariance and lets
-        a composite target mix value types -- ``(queue, dedupe_key)`` with
-        ``dedupe_key`` nullable, say.
+        The target takes any number of columns because a composite unique index
+        does. Unlike ``from_select`` and ``returning``, it has no per-arity
+        overloads, because a conflict target contributes nothing to the result
+        tuple. ``ConflictTarget`` is the unparameterized base that ``Column``
+        inherits. It sidesteps ``Column``'s invariance, so one composite target
+        can mix value types and nullability.
         """
         if self._node.source is None:
             raise ValueError("on_conflict requires values() or from_select() first")
@@ -302,9 +299,9 @@ class ConflictBuilder(Generic[Row_co, Returns]):
     def where(self, predicate: BooleanExpression) -> ConflictBuilder[Row_co, Returns]:
         """Match a partial unique index by repeating its own index predicate.
 
-        This is the arbiter's ``WHERE``, not the action's: it selects which
-        unique index PostgreSQL infers, and is required when that index is
-        partial.  ``do_update(...).where(...)`` is the separate predicate that
+        This is the arbiter's ``WHERE``, not the action's. It selects which
+        unique index PostgreSQL infers and is required when that index is
+        partial. ``do_update(...).where(...)`` is the separate predicate that
         decides whether the update runs.
         """
         if not self._columns:
@@ -346,9 +343,9 @@ class ConflictBuilder(Generic[Row_co, Returns]):
 class ConflictUpdateQuery(InsertQuery[Row_co, Returns], Generic[Row_co, Returns]):
     """A complete INSERT whose ``DO UPDATE`` can still be narrowed by a predicate.
 
-    It is already executable; ``where()`` is the optional compare-and-swap
-    step, and must come before ``returning()`` because the wider builder
-    methods deliberately return a plain ``InsertQuery``.
+    It is already executable. ``where()`` is the optional compare-and-swap step.
+    It must come before ``returning()``, because the wider builder methods return
+    a plain ``InsertQuery``.
     """
 
     def where(self, predicate: BooleanExpression) -> InsertQuery[Row_co, Returns]:
@@ -619,10 +616,8 @@ def _insert_node[Returns: (Literal[False], Literal[True])](
     return node
 
 
-# relq's SELECT and DML builders are mutually recursive at the type level:
-# from_select() takes a SelectQuery, and CteQuery is what SelectQuery.with_()
-# accepts.  Each module therefore binds the other's names only after defining
-# its own, which keeps both public signatures resolvable by
-# typing.get_type_hints() instead of leaving one side's annotations behind a
-# TYPE_CHECKING import.  query.py closes the loop the same way.
+# The SELECT and DML builders refer to each other in their signatures:
+# from_select() takes a SelectQuery and with_() accepts a CteQuery. Each module
+# imports the other's names after defining its own, so typing.get_type_hints()
+# can resolve both public signatures without a TYPE_CHECKING import.
 from relq.query import SelectQuery

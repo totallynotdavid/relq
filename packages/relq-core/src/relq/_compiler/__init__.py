@@ -1,7 +1,7 @@
 """Fixed-dialect compilation entry points.
 
-The renderer and defensive AST validation are internal implementation details;
-only the two supported compiler functions cross this package boundary.
+The renderer and the AST validation are internal. Only the two compiler
+functions cross this package boundary.
 """
 
 from relq._compiler._model import CompiledQuery

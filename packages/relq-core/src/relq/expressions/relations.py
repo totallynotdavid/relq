@@ -24,17 +24,17 @@ from relq.rows import JsonValue
 
 _RESERVED_ATTRIBUTES = frozenset(
     {
-        # Instance state relq stores on a relation.  ``Column`` is a non-data
-        # descriptor, so an instance attribute of the same name wins over it: a
-        # column declared under one of these names would silently replace the
-        # descriptor and break rendering, aliasing, or schema qualification.
+        # Instance state relq stores on a relation. ``Column`` is a non-data
+        # descriptor, so an instance attribute of the same name wins over it. A
+        # column declared under one of these names would replace the descriptor
+        # and break rendering, aliasing, or schema qualification.
         "_alias",
         "_reference",
         "_schema",
         "_source",
         "_state",
         "table_name",
-        # Behaviour every relation has to keep.
+        # Methods and properties every relation must keep.
         "as_",
         "column_names",
         "node",
@@ -50,7 +50,6 @@ class Source[SqlRow_co = object](NodeValue[SourceNode]):
     __slots__ = ()
 
     def __init_subclass__(cls) -> None:
-        """Reject a declared column that would shadow relq's own attributes."""
         super().__init_subclass__()
         clashes = sorted(
             {attribute for attribute, _ in _declared_columns(cls)} & _RESERVED_ATTRIBUTES
@@ -77,13 +76,10 @@ class Column[T](Expr[T], ConflictTarget):
     def __init__(
         self, token: object, python_type: TypeForm[T] | Callable[..., T], name: str = ""
     ) -> None:
-        # ``slots=True`` rebuilds the class the same way, and on CPython 3.13.0
-        # through 3.13.13 the methods carried over kept a ``__class__`` cell
-        # pointing at the discarded original, so the zero-argument ``super()``
-        # here raised ``TypeError`` -- declaring any relq column failed.  This
-        # window is narrower than the one ``NodeValue`` documents: the cell was
-        # repaired in 3.13.14 and no 3.14 release is affected.  Naming the class
-        # explicitly resolves against the class that survives and walks the same
+        # ``slots=True`` rebuilds the class. On CPython 3.13.0 through 3.13.13 the
+        # carried-over methods keep a ``__class__`` cell that points at the
+        # discarded original, so zero-argument ``super()`` raises ``TypeError``.
+        # Naming the class resolves against the surviving class and walks the same
         # MRO on every supported version.
         super(Column, self).__init__(token)
         object.__setattr__(self, "python_type", python_type)
@@ -111,11 +107,11 @@ class Column[T](Expr[T], ConflictTarget):
 def _declared_columns(table_type: type[Source[object]]) -> tuple[tuple[str, Column[object]], ...]:
     """Every column a relation declares, as ``(attribute, column)`` in schema order.
 
-    The whole MRO counts: a mixin's column is reachable through attribute
-    lookup exactly like one declared on the relation itself, so a mixin that
-    declares ``reference`` would shadow the property ``Column.__get__`` reads
-    and recurse forever.  Reserved-name enforcement and column discovery share
-    this walk so they cannot disagree about what a relation declares.
+    The walk covers the whole MRO. A mixin's column is reachable through
+    attribute lookup like one declared on the relation, so a mixin that declared
+    ``reference`` would shadow the property ``Column.__get__`` reads and recurse
+    forever. Reserved-name enforcement and column discovery share this walk so
+    they cannot disagree about what a relation declares.
     """
     declared: dict[str, Column[object]] = {}
     names: set[str] = set()
@@ -132,19 +128,18 @@ def _declared_columns(table_type: type[Source[object]]) -> tuple[tuple[str, Colu
 class Table[SqlRow_co = object](Source[SqlRow_co]):
     """Base class for a source-visible table declaration.
 
-    ``schema`` names the SQL namespace that owns the table.  It is compiled as
-    a separate quoted identifier (``"schema"."table"``), never as part of the
-    table's own name, and only PostgreSQL accepts it: SQLite's qualified names
-    address attached databases, which is a different thing, so relq rejects a
-    schema there rather than silently changing what the query means.
+    ``schema`` names the SQL namespace that owns the table. It compiles as a
+    separate quoted identifier, never as part of the table's own name. Only
+    PostgreSQL accepts it. SQLite's qualified names address attached databases,
+    so relq rejects a schema there instead of changing what the query means.
     """
 
     def __init__(self, name: str, *, schema: str | None = None) -> None:
         if schema == "":
             raise ValueError("table schema must not be empty")
         self.table_name = name
-        # Kept private, like the alias: a declared column named "schema" would
-        # otherwise shadow this instance attribute's descriptor.
+        # Underscore-prefixed like the alias, so a declared column named "schema"
+        # cannot shadow it.
         self._schema = schema
         self._alias: str | None = None
         initialize_node(self, TableSourceNode(name, None, schema))
@@ -195,11 +190,7 @@ class CteTable[SqlRow_co = object](DerivedTable[SqlRow_co]):
 
 
 def output_column[T](python_type: TypeForm[T] | Callable[..., T], *, name: str = "") -> Column[T]:
-    """Declare a typed output column.
-
-    Nullability belongs in ``T`` (for example ``Column[str | None]``), not in
-    redundant runtime metadata.
-    """
+    """Declare a typed output column. Nullability belongs in ``T``."""
     return _column(python_type, name, ValueNode(None))
 
 
@@ -208,23 +199,17 @@ def column[T](
     *,
     name: str = "",
 ) -> Column[T]:
-    """Declare a typed table column.
-
-    Primary-key and nullability policy belong to generated DML contracts and
-    the annotation respectively; keeping inert flags here created a false
-    impression that the core enforced them.
-    """
+    """Declare a typed table column. Nullability belongs in ``T``, not in flags."""
     return _column(python_type, name, ValueNode(None))
 
 
 def json_column(*, name: str = "") -> Column[JsonValue]:
     """Declare a JSON/JSONB column.
 
-    ``column(JsonValue)`` cannot express this one type: ``JsonValue`` is a
-    recursive type alias, and a type checker will not accept an alias object as
-    the ``TypeForm`` value ``column`` infers its result from.  ``JsonValue``
-    already admits ``None``, so a nullable JSON column needs no separate
-    spelling.
+    ``column(JsonValue)`` does not type-check because ``JsonValue`` is a
+    recursive type alias, which a type checker rejects as a ``TypeForm`` value.
+    ``JsonValue`` already admits ``None``, so a nullable JSON column needs no
+    separate spelling.
     """
     return _column(cast("TypeForm[JsonValue]", JsonValue), name, ValueNode(None))
 
@@ -268,7 +253,6 @@ def derived_table[Relation: DerivedTable[object]](
 
 
 def source_columns(source: Source[object]) -> tuple[Column[object], ...]:
-    """Return the declared columns in deterministic schema order."""
     return tuple(
         cast(Column[object], getattr(source, attribute))
         for attribute, _ in _declared_columns(type(source))

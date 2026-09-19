@@ -49,10 +49,10 @@ _BUILTIN_NAMES: frozenset[str] = frozenset(
 
 RELATION_ATTRIBUTES: frozenset[str] = frozenset(
     {
-        # Attribute names relq's own relation classes reserve.  relq-codegen
-        # deliberately does not depend on relq, so this mirrors the set that
-        # ``Source.__init_subclass__`` rejects; the codegen tests import both and
-        # assert they agree.
+        # Attribute names relq's own relation classes reserve. relq-codegen does
+        # not depend on relq, so this mirrors the set that
+        # ``Source.__init_subclass__`` rejects. The codegen tests import both and
+        # assert that they agree.
         "_alias",
         "_reference",
         "_schema",
@@ -190,11 +190,11 @@ class _Namespace:
         return self.reserved | frozenset(self.enums.values()) | self.wrappers
 
     def check(self, expressions: Iterable[RenderExpression]) -> None:
-        """Fail loudly if a rendered expression names something left unreserved.
+        """Fail if a rendered expression names something left unreserved.
 
         Every name a rendered expression resolves through the module namespace
-        must be one this pass knew about; otherwise a table or column could have
-        been allowed to shadow it.
+        must be one this pass knew about. Otherwise a table or column could
+        shadow it.
         """
         unknown = (
             frozenset[str]().union(*(expression.names() for expression in expressions))
@@ -219,9 +219,9 @@ def _plan(
     }
     wrappers: set[str] = set()
     for policy in used_wrapper_policies(tables, config):
-        # A wrapper name is the caller's own choice, so it is rejected rather
-        # than renamed: silently generating a different public name than the one
-        # configured would be worse than refusing to generate.
+        # A wrapper name is the caller's own choice, so a clash is rejected
+        # instead of renamed. Generating a different public name than the
+        # configured one would be worse than refusing to generate.
         if policy.name in taken:
             raise ValueError(
                 f"generated wrapper name collides with a name the generated module "
@@ -234,10 +234,10 @@ def _plan(
     for table in tables:
         class_name = _allocate(_class_stem(table.name), _CLASS_TEMPLATES, taken)
         instance = _allocate(_identifier(table.name), _INSTANCE_TEMPLATES, taken)
-        # Column attributes live in a class body, where they shadow only the
-        # names that body itself resolves -- the imports it calls and the type
-        # names its annotations mention -- not the module-level names allocated
-        # above, which no class body refers to.
+        # Column attributes live in a class body. They shadow only the names that
+        # body resolves, which are the imports it calls and the type names its
+        # annotations mention. They do not shadow the module-level names
+        # allocated above, because no class body refers to those.
         columns_taken = set(namespace.protected)
         allocated.append(
             _TableNames(
@@ -338,9 +338,9 @@ def render(
         insert_function = table_names.insert_function
         update_function = table_names.update_function
         exported.extend(table_names.exported())
-        # An introspected schema is part of the table's identity: dropping it
-        # would generate a module that silently resolves through search_path
-        # instead of the namespace it was read from.
+        # An introspected schema is part of the table's identity. Dropping it
+        # would generate a module that resolves through search_path instead of
+        # the namespace it was read from.
         declaration = repr(table.name)
         if table.schema is not None:
             declaration += f", schema={table.schema!r}"

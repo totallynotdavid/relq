@@ -36,10 +36,10 @@ _DECODER_KINDS: tuple[str, ...] = cast(
 
 RELQ_NAMES: frozenset[str] = frozenset(
     {
-        # Every name this module can import into a generated module.  relq_name
-        # refuses anything absent here, so the reserved-name pass downstream can
-        # never fall behind a newly emitted import.  The decoder half is derived
-        # from DecoderKind rather than spelled out; the temporal decoders are named here.
+        # Every name this module can import into a generated module. ``relq_name``
+        # refuses anything absent here, so the downstream reserved-name pass cannot
+        # fall behind a newly emitted import. The decoder names derive from
+        # ``DecoderKind``. The temporal names are listed explicitly.
         *(f"{kind}_decoder" for kind in _DECODER_KINDS),
         "AwareDateTime",
         "AwareTime",
@@ -200,8 +200,8 @@ def _resolve_builtin(
     if any(token in normalized for token in ("blob", "bytea", "binary")):
         return ResolvedType(Name("bytes"), Call(relq_name("bytes_decoder")))
     # SQLite has no timezone-aware storage, so only PostgreSQL gets the branded
-    # Aware/Naive types; a SQLite column of the same declared name falls through
-    # to the plain datetime/time handling below.
+    # Aware/Naive types. A SQLite column with the same declared name falls through
+    # to the plain datetime and time handling below.
     if dialect == "postgres":
         if normalized in {"timestamptz", "timestamp with time zone"}:
             return ResolvedType(
@@ -226,10 +226,10 @@ def _resolve_builtin(
         return ResolvedType(_attribute("datetime", "time"), Call(relq_name("time_decoder")))
     if normalized == "interval":
         if dialect == "sqlite":
-            # sqlite3 hands an interval-declared column back as text, and
-            # interval_decoder() accepts only a relq.Interval, so the generated
-            # module would fail at decode time.  A configured mapping, checked
-            # above, is the deliberate way to read such a column.
+            # sqlite3 returns an interval-declared column as text, and
+            # interval_decoder() accepts only a relq.Interval, so generated code
+            # would fail at decode time. A configured mapping, checked earlier,
+            # is how to read such a column.
             raise TypeError(
                 f"database type {sql_type.name!r} is rejected: SQLite has no interval type, "
                 "and relq.Interval is PostgreSQL-only; add an explicit relq-codegen mapping"
@@ -243,7 +243,7 @@ def _resolve_builtin(
 
 
 def _attribute(module: str, name: str) -> Attribute:
-    """Reference ``module.name`` from a standard-library module a module imports."""
+    """Reference ``module.name`` from a standard-library import."""
     if module not in STDLIB_MODULES:
         raise ValueError(
             f"{module!r} is imported into generated modules but is missing from "

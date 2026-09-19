@@ -1,9 +1,8 @@
 """Closed PostgreSQL temporal vocabulary shared by builders and validation.
 
-This module is deliberately a leaf: public expression builders re-export its
-enums while the private compiler uses the same values to defend handcrafted
-ASTs. Keeping the vocabulary here prevents the public surface and compiler
-from accepting different temporal tokens.
+This module is a leaf. Public expression builders re-export its enums and the
+compiler validates handcrafted ASTs against the same values, so the two cannot
+accept different temporal tokens.
 """
 
 import enum

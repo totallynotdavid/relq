@@ -159,14 +159,12 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
         """Add a CTE, optionally fencing it with PostgreSQL's ``AS MATERIALIZED``.
 
         ``query`` is a SELECT or a bounded ``INSERT``/``UPDATE``/``DELETE``
-        with ``RETURNING``.  A data-modifying CTE runs exactly once for the
+        with ``RETURNING``. A data-modifying CTE runs exactly once for the
         whole statement, whatever the outer query does with its rows.
 
-        ``materialized=True`` emits ``AS MATERIALIZED``, which needs SQLite 3.35.0
-        (the release that also added ``RETURNING``) or PostgreSQL 12, both below
-        relq's documented engine floors.  relq compiles a query without a
-        connection, so it cannot check a server's version here; an engine below
-        the floor rejects the statement itself.
+        ``AS MATERIALIZED`` needs SQLite 3.35.0 or PostgreSQL 12, both below
+        relq's documented engine floors. The compiler never sees a connection,
+        so an older engine rejects the statement itself.
         """
         query_node = _cte_query_node(query)
         _validate_output_schema(_output_expressions(query_node), source.output_names())
@@ -182,7 +180,7 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
         )
 
     def with_recursive[CteRow](self, source: CteTable[object], query: SelectQuery[CteRow]) -> Self:
-        """Add a recursive CTE; its query may reference its own source name."""
+        """Add a recursive CTE whose query may reference its own source name."""
         name = source.reference
         _reject_declared_model(query)
         query_node = select_node(query)
@@ -218,7 +216,7 @@ class SelectQuery[SqlRow, Row = SqlRow](_SelectQuery[SqlRow, Row]):
     """An immutable SELECT with an optional executor-only row decoder."""
 
     def decode[Model](self, model: type[Model] | RowAdapter[Model]) -> SelectQuery[SqlRow, Model]:
-        """Attach an executor-only row decoder without changing SQL semantics."""
+        """Attach a row decoder that only the executor uses. The SQL is unchanged."""
         adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
         if len(select_node(self).selections) != adapter.arity:
             raise ValueError(
@@ -317,7 +315,7 @@ def select(first: object, *rest: object, **named: object) -> object:
 
 
 def select_all_from[SqlRow](source: Source[SqlRow]) -> SelectQuery[SqlRow]:
-    """Project every declared column of one relation in its schema order."""
+    """Project every declared column of one relation in schema order."""
     columns = source_columns(source)
     if not columns:
         raise ValueError("select_all_from requires a relation with declared columns")
@@ -350,7 +348,6 @@ def _require_from_source(node: SelectNode) -> None:
 
 
 def _cte_query_node[Row](query: CteQuery[Row]) -> QueryNode:
-    """Return the AST behind a CTE definition, rejecting shapes a CTE can't honor."""
     _reject_declared_model(query)
     node = extract_query(query).node
     if not isinstance(node, SelectNode) and not node.returning:
@@ -361,9 +358,9 @@ def _cte_query_node[Row](query: CteQuery[Row]) -> QueryNode:
 def _reject_declared_model[Row](query: Query[Row]) -> None:
     """Refuse a CTE body that declares a row model.
 
-    The CTE's rows are consumed by the outer query, which owns the statement's
-    result shape, so an adapter attached here could never decode anything.
-    Accepting one and dropping it would silently lose a declared contract.
+    The outer query owns the statement's result shape, so an adapter attached
+    to a CTE body would never decode anything. Dropping it silently would lose
+    a declared contract.
     """
     if extract_query(query).adapter is not None:
         raise ValueError(
@@ -373,7 +370,6 @@ def _reject_declared_model[Row](query: Query[Row]) -> None:
 
 
 def _output_expressions(node: QueryNode) -> tuple[Node, ...]:
-    """Return the expressions a query publishes as its output relation."""
     return node.selections if isinstance(node, SelectNode) else node.returning
 
 
@@ -406,7 +402,6 @@ def _validate_output_schema(expressions: tuple[Node, ...], expected: set[str]) -
 def _validate_compound_result_shape[LeftSqlRow, LeftRow, RightSqlRow, RightRow](
     left: _SelectQuery[LeftSqlRow, LeftRow], right: _SelectQuery[RightSqlRow, RightRow]
 ) -> None:
-    """Keep the public result-type transition sound across a compound."""
     left_node = select_node(left)
     right_node = select_node(right)
     if len(left_node.selections) != len(right_node.selections):
@@ -416,7 +411,5 @@ def _validate_compound_result_shape[LeftSqlRow, LeftRow, RightSqlRow, RightRow](
         )
 
 
-# See the matching note in dml.py: the two builder modules bind each other's
-# names after defining their own, so with_()'s CteQuery annotation resolves at
-# runtime rather than only under a type checker.
+# Imported after the definitions above for the reason given in dml.py.
 from relq.dml import CteQuery

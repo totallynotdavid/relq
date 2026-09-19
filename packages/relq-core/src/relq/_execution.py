@@ -51,7 +51,6 @@ class TransactionUnavailableError(RuntimeError):
 
 
 def raise_no_result(error: Callable[[], Exception] | None) -> NoReturn:
-    """Raise the default or caller-provided exception for an empty result."""
     if error is None:
         raise NoResultError("query returned no rows")
     raise error()
@@ -73,7 +72,6 @@ def map_all[Row](query: Query[Row], rows: Iterable[tuple[object, ...]]) -> list[
 
 
 def map_row[Row](query: Query[Row], row: tuple[object, ...]) -> Row:
-    """Map one row through a query-declared adapter, or pass it through raw."""
     result_adapter = extract_query(query).adapter
     if result_adapter is None:
         return cast(Row, row)
@@ -81,7 +79,6 @@ def map_row[Row](query: Query[Row], row: tuple[object, ...]) -> Row:
 
 
 def map_one[Row](query: Query[Row], row: tuple[object, ...] | None) -> Row | None:
-    """Map one optional row through a query-declared adapter."""
     if row is None:
         return None
     return map_row(query, row)

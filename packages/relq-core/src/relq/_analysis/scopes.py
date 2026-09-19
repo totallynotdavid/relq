@@ -1,11 +1,10 @@
 """Enumeration of the query scopes nested inside a statement.
 
-A statement's own scope and the scopes below it obey different rules: a
-data-modifying CTE, for example, is only legal in the outermost ``WITH``, and a
-CTE name is only visible to the scopes that ``WITH`` already reaches.  This
-pass gives validation one place to ask "what is nested inside this statement,
-and what is bound where?" instead of re-deriving the containment shape at each
-rule.
+A statement's own scope and the scopes below it obey different rules. A
+data-modifying CTE is only legal in the outermost ``WITH``, and a CTE name is
+only visible to the scopes that ``WITH`` already reaches. This module gives
+validation one place to ask what is nested inside a statement and what is bound
+where, so no rule re-derives the containment shape.
 """
 
 from collections.abc import Iterator
@@ -32,7 +31,7 @@ def nested_queries(node: QueryNode) -> Iterator[QueryNode]:
     """Yield every query strictly inside ``node``, outermost first.
 
     CTE bodies, derived tables, compound arms, insert-from-select sources, and
-    subquery expressions each open a scope.  ``node`` itself is never yielded.
+    subquery expressions each open a scope. ``node`` itself is never yielded.
     """
     for child, _ in nested_scopes(node):
         yield child
@@ -43,10 +42,10 @@ def nested_scopes(
 ) -> Iterator[tuple[QueryNode, frozenset[str]]]:
     """Yield every query strictly inside ``node`` with the CTE names it can see.
 
-    ``visible`` is what encloses ``node`` itself.  A ``WITH`` clause binds its
-    names in declaration order, so an earlier CTE body sees fewer of them than
-    the query that follows the clause, and only a recursive CTE body sees its
-    own name.
+    ``visible`` holds the CTE names that enclose ``node`` itself. A ``WITH``
+    clause binds its names in declaration order, so an earlier CTE body sees
+    fewer of them than the query that follows the clause. Only a recursive CTE
+    body sees its own name.
     """
     for child, scope in _child_scopes(node, visible):
         yield child, scope
@@ -56,7 +55,6 @@ def nested_scopes(
 def _child_scopes(
     node: QueryNode, visible: frozenset[str]
 ) -> Iterator[tuple[QueryNode, frozenset[str]]]:
-    """Yield the queries one query directly contains, each with its own scope."""
     bound = visible
     match node:
         case SelectNode():
@@ -76,7 +74,6 @@ def _child_scopes(
 
 
 def _expressions(node: QueryNode) -> Iterator[Node]:
-    """Yield the expressions a query holds in its own scope."""
     match node:
         case SelectNode():
             yield from node.selections

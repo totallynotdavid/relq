@@ -76,22 +76,19 @@ class BooleanExpression(Expression):
 class ConflictTarget(Expression):
     """Nominal base for a value usable as an ``ON CONFLICT`` target column.
 
-    ``Column`` is generic and its value parameter is invariant, so no single
-    ``Column[...]`` annotation admits a composite target whose columns differ
-    in value type.  A conflict target never reads that value type, so this
-    un-parameterised base names exactly the capability the clause needs and
-    lets ``on_conflict`` accept an unbounded number of columns -- the same
-    shape ``BooleanExpression`` gives ``where``.
+    ``Column`` is generic with an invariant value parameter, so no single
+    ``Column[...]`` annotation admits a composite target whose columns differ in
+    value type. A conflict target never reads that value type. This
+    unparameterized base names the capability the clause needs and lets
+    ``on_conflict`` accept any number of columns, as ``BooleanExpression`` does
+    for ``where``.
 
-    ``Column`` is the only member relq declares, and the runtime gate in
-    ``relq.dml`` tests this same class, so the static and runtime contracts
-    admit exactly the same values.  Nothing seals the class against outside
-    subclasses -- a subclass can override ``__init__`` and skip the
-    construction token -- and nothing needs to: membership was never the
-    guarantee.  A target must still carry a node and resolve to a
-    ``ColumnNode`` of the INSERT table, and those value-level checks, not the
-    class, are what keep the emitted SQL correct.  Anything that fails them
-    raises ``relq.dml``'s own ``TypeError``.
+    ``Column`` is the only member relq declares. The runtime gate in ``relq.dml``
+    tests this same class, so the static and runtime contracts admit the same
+    values. Nothing seals the class. An outside subclass can override
+    ``__init__`` and skip the construction token, so class membership is not what
+    keeps the SQL correct. ``relq.dml`` requires each target to carry a node that
+    is a ``ColumnNode`` of the INSERT table and raises its own error otherwise.
     """
 
     __slots__ = ()
@@ -380,25 +377,19 @@ def justify_interval(interval: Interval | Expr[Interval]) -> Expr[Interval]:
 def add_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
     timestamp: Expr[Timestamp], delta: Interval | Expr[Interval]
 ) -> Expr[Timestamp]:
-    """Add a PostgreSQL interval to a timestamp expression.
-
-    SQLite compilation rejects this closed PostgreSQL-only operation.
-    """
+    """Add an interval to a timestamp. PostgreSQL only."""
     return _expr(TemporalArithmeticNode(node_of(timestamp), "+", _node(delta)))
 
 
 def subtract_interval[Timestamp: (NaiveDateTime, AwareDateTime)](
     timestamp: Expr[Timestamp], delta: Interval | Expr[Interval]
 ) -> Expr[Timestamp]:
-    """Subtract a PostgreSQL interval from a timestamp expression.
-
-    SQLite compilation rejects this closed PostgreSQL-only operation.
-    """
+    """Subtract an interval from a timestamp. PostgreSQL only."""
     return _expr(TemporalArithmeticNode(node_of(timestamp), "-", _node(delta)))
 
 
 def date_difference(left: Expr[datetime.date], right: Expr[datetime.date]) -> Expr[int]:
-    """Return PostgreSQL's integral day difference between two dates."""
+    """Return the integral day difference between two dates."""
     return _expr(TemporalDifferenceNode(node_of(left), node_of(right)))
 
 
@@ -636,7 +627,7 @@ def overlaps(
 
 
 def scalar[T, Row](query: SelectQuery[tuple[T], Row]) -> Expr[T | None]:
-    """Embed a one-column subquery whose empty result is SQL ``NULL``."""
+    """Embed a one-column subquery. An empty result is ``NULL``."""
     return _expr(ScalarSubqueryNode(select_node(query)))
 
 
@@ -649,12 +640,6 @@ def not_exists[SqlRow, Row](query: SelectQuery[SqlRow, Row]) -> Predicate:
 
 
 def coalesce[T](first: Expr[T], second: Expr[T], *rest: Expr[T]) -> Expr[T]:
-    """Return the first non-NULL value using portable SQL ``COALESCE``.
-
-    SQL requires at least two arguments. Every candidate has one declared
-    result type; nullable output must be declared when every candidate can be
-    NULL.
-    """
     return _expr(
         FunctionNode(
             "coalesce", (node_of(first), node_of(second), *(node_of(item) for item in rest))
@@ -663,16 +648,14 @@ def coalesce[T](first: Expr[T], second: Expr[T], *rest: Expr[T]) -> Expr[T]:
 
 
 def nullif[T](left: Expr[T], right: T | Expr[T]) -> Expr[T | None]:
-    """Return ``NULL`` when two values compare equal."""
     return _expr(FunctionNode("nullif", (node_of(left), _node(right))))
 
 
 class CaseWhen[T](Protocol):
-    """Public terminal grammar for a searched ``CASE`` expression.
+    """Public grammar for a searched ``CASE`` expression.
 
-    The concrete builder remains private: callers can add same-typed branches
-    or choose an explicit terminal result, but cannot construct values from
-    relq's private AST nodes.
+    The concrete builder is private, so callers cannot construct values from
+    relq's AST nodes.
     """
 
     def when(
@@ -685,32 +668,22 @@ class CaseWhen[T](Protocol):
 
 
 class _CaseWhen[T]:
-    """Immutable implementation of the public searched-``CASE`` grammar."""
-
     __slots__ = ("_branches",)
 
     def __init__(self, branches: tuple[tuple[Node, Node], ...]) -> None:
         self._branches = branches
 
     def when(self, condition: Predicate | NullablePredicate, then: T | Expr[T], /) -> CaseWhen[T]:
-        """Return a new builder with one additional searched branch."""
         return _CaseWhen[T]((*self._branches, (node_of(condition), _node(then))))
 
     def else_(self, otherwise: T | Expr[T], /) -> Expr[T]:
-        """Close the expression with a same-typed fallback value."""
         return _expr(CaseNode(self._branches, _node(otherwise)))
 
     def else_null(self) -> Expr[T | None]:
-        """Close the expression with an explicit SQL ``NULL`` fallback."""
         return _expr(CaseNode(self._branches, ValueNode(None)))
 
 
 def case_when[T](condition: Predicate | NullablePredicate, then: T | Expr[T], /) -> CaseWhen[T]:
-    """Start a closed, parameterized searched ``CASE`` expression.
-
-    Call :meth:`CaseWhen.when` for more branches, then terminate with
-    :meth:`CaseWhen.else_` or :meth:`CaseWhen.else_null`.
-    """
     return _CaseWhen[T](((node_of(condition), _node(then)),))
 
 
@@ -846,7 +819,7 @@ def divide(
 
 
 def divide(left: object, right: object) -> object:
-    """Return SQL division without Python's false-float rule."""
+    """SQL division. Integer operands truncate, unlike Python's ``/``."""
     return _numeric_binary(left, "/", right)
 
 

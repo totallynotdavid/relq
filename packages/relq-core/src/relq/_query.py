@@ -25,7 +25,7 @@ class _QueryState[Row]:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Query[Row]:
-    """Base for concrete public queries; direct construction is prohibited."""
+    """Base for concrete public queries. Builders create them, never callers."""
 
     __query_state: _QueryState[Row]
 
@@ -108,7 +108,6 @@ def new_query[Q, Row](
     *,
     table: object | None = None,
 ) -> Q:
-    """Create a frozen concrete query without exposing AST construction publicly."""
     query = object.__new__(query_type)
     object.__setattr__(query, "_Query__query_state", _QueryState(node, adapter))
     if table is not None:
@@ -117,12 +116,10 @@ def new_query[Q, Row](
 
 
 def extract_query[Row](query: Query[Row]) -> _QueryState[Row]:
-    """Return private query state for builders, compilers, and executors."""
     return cast(_QueryState[Row], object.__getattribute__(query, "_Query__query_state"))
 
 
 def select_node[Row](query: Query[Row]) -> SelectNode:
-    """Return a SELECT node for builder implementation code."""
     node = extract_query(query).node
     if not isinstance(node, SelectNode):  # pragma: no cover - builder invariant
         raise TypeError("expected a SELECT query")

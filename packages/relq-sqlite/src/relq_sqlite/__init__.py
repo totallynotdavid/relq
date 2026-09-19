@@ -161,9 +161,8 @@ class ControlledTransaction(Protocol):
     def execute[Row](self, query: Command[Row]) -> int: ...
 
 
-# This process-wide sequence makes every generated controlled-transaction
-# savepoint name unique across all concurrently open transactions on a
-# connection, including while multiple connections have open transactions.
+# Keeps generated savepoint names unique across every open controlled
+# transaction in the process.
 _TRANSACTION_SEQUENCE = count(1)
 
 
@@ -213,9 +212,8 @@ class _SQLiteTransactionState:
         self.savepoint_names.clear()
 
 
-# All database wrappers for one physical connection resolve to this state;
-# entries are removed once the registry is empty so a later transaction gets
-# a fresh state after the previous boundary has fully closed.
+# Every database wrapper for one physical connection shares one state. The entry
+# is dropped once its registry is empty, so the next transaction starts fresh.
 _TRANSACTION_STATES_BY_CONNECTION: dict[int, _SQLiteTransactionState] = {}
 
 
@@ -314,7 +312,6 @@ class SQLiteDatabase:
     def fetch_all_as[Row, Model](
         self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> list[Model]:
-        """Map result rows through an explicit, arity-validating adapter."""
         self._ensure_usable()
         if extract_query(query).adapter is not None:
             raise TypeError("query already declares a result model; use fetch_all()")

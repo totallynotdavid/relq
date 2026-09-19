@@ -26,9 +26,9 @@ class SQLiteMigrator:
     SQLite has no advisory lock. ``BEGIN IMMEDIATE`` obtains the database write
     lock before reading the history table, so concurrent migrators serialize.
     Each migration and its history record are one transaction. A failed
-    migration therefore leaves earlier successful migrations committed, just as
-    the PostgreSQL adapter does. The adapter supports legacy transaction control
-    and ``autocommit=True``; ``autocommit=False`` is unsupported.
+    migration therefore leaves earlier successful migrations committed, as the
+    PostgreSQL adapter does. The adapter supports legacy transaction control
+    and ``autocommit=True``. It does not support ``autocommit=False``.
     """
 
     def __init__(
@@ -168,14 +168,13 @@ def _history_text(value: object, column: str) -> str:
 
 
 def _is_transaction_control(connection: sqlite3.Connection, statement: str) -> bool:
-    """Use SQLite's compiler to reject transaction controls before execution.
+    """Detect transaction-control SQL with SQLite's own compiler, before execution.
 
-    ``sqlite3.Connection`` exposes no authorizer getter, so replacing the
-    caller's authorizer would make it impossible to restore arbitrary callback
-    state. ``EXPLAIN`` compiles the statement without applying its effects, and
-    SQLite represents BEGIN/COMMIT/ROLLBACK transaction controls with the
-    ``AutoCommit`` opcode. The actual transaction-state check remains below the
-    execute call as a defense in depth.
+    ``EXPLAIN`` compiles a statement without applying it, and SQLite compiles
+    transaction controls to the ``AutoCommit`` and ``Savepoint`` opcodes. An
+    authorizer would also work, but ``sqlite3.Connection`` has no authorizer
+    getter, so the caller's callback could not be restored afterwards. The
+    ``in_transaction`` check after each execute remains as a second defense.
     """
     if is_sql_empty(statement):
         return False

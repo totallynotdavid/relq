@@ -1,7 +1,7 @@
 """Private immutable SQL syntax tree types.
 
-Builders only construct these values.  Rendering and validation live in the
-compiler, keeping the public query objects small and dialect-independent.
+Builders only construct these values. Rendering and validation live in the
+compiler, so the public query objects stay small and dialect-independent.
 """
 
 from __future__ import annotations
@@ -15,9 +15,9 @@ class TableSourceNode:
     """A stored relation, optionally qualified by the schema that owns it.
 
     ``schema`` is the SQL namespace, rendered as its own quoted identifier.
-    ``reference`` deliberately excludes it: a qualified table's implicit
-    correlation name is still the bare table name, so column qualification and
-    duplicate-source detection stay unchanged.
+    ``reference`` excludes it, because a qualified table's implicit correlation
+    name is still the bare table name. Column qualification and duplicate-source
+    detection therefore ignore the schema.
     """
 
     name: str
@@ -220,7 +220,7 @@ class FunctionNode:
 
 @dataclass(frozen=True, slots=True)
 class CaseNode:
-    """A closed searched-CASE expression; no SQL fragments are accepted."""
+    """A searched CASE expression. Branches are nodes, never SQL fragments."""
 
     branches: tuple[tuple[Node, Node], ...]
     otherwise: Node
@@ -230,8 +230,8 @@ class CaseNode:
 class AggregateNode:
     """A portable aggregate call.
 
-    It has its own node type so only supported aggregate expressions can be
-    turned into window expressions. Generic SQL functions deliberately cannot.
+    It has its own node type so that only supported aggregates can become
+    window expressions. Generic function calls cannot.
     """
 
     name: str
@@ -252,9 +252,8 @@ class WindowNode:
 class FrameBoundaryNode:
     """A validated SQL window-frame boundary.
 
-    ``amount`` is present only for ``preceding`` and ``following``.  Keeping
-    the small closed representation in the AST means frame offsets never pass
-    through a string-based SQL escape hatch.
+    ``amount`` is present only for ``preceding`` and ``following``. Offsets are
+    numbers here, so no frame offset reaches the SQL as a string.
     """
 
     kind: str
@@ -282,9 +281,9 @@ class AliasNode:
 class NullableResultNode:
     """A type-only marker for a result that SQL may NULL-extend.
 
-    The renderer deliberately erases this node.  It exists so validation can
-    require an explicit public acknowledgement when an outer join changes an
-    expression's result domain without changing its SQL spelling.
+    The renderer erases this node. It exists so validation can require an
+    explicit acknowledgement when an outer join changes an expression's result
+    domain without changing its SQL.
     """
 
     expression: Node
@@ -333,8 +332,7 @@ class ExcludedNode:
 class JsonTextNode:
     """PostgreSQL ``->>``: read one JSON member as text.
 
-    The member key is an ordinary bound value, so it is parameterized like any
-    other operand rather than spliced into the statement.
+    The member key is an ordinary operand, so it is bound as a parameter.
     """
 
     value: Node
@@ -354,8 +352,8 @@ class RegexMatchNode:
 class UuidCastNode:
     """PostgreSQL ``::uuid``, rendered as a standard ``CAST`` to one fixed type.
 
-    The target type is fixed by the node, not chosen from a caller-supplied
-    type name; every further cast relq supports needs its own named node.
+    The node fixes the target type, so a caller never supplies a type name.
+    Every further cast relq supports needs its own named node.
     """
 
     value: Node
@@ -381,8 +379,8 @@ class CteNode:
 
     ``query`` is a ``SELECT`` or a bounded data-modifying statement whose
     ``RETURNING`` list becomes the binding's output relation.  ``materialized``
-    requests the ``AS MATERIALIZED`` optimizer fence; leaving it false emits a
-    plain ``AS (...)`` and lets the planner decide.
+    requests the ``AS MATERIALIZED`` optimizer fence. Otherwise the CTE renders
+    as a plain ``AS (...)`` and the planner decides.
     """
 
     name: str
@@ -462,10 +460,9 @@ class InsertNode:
 class ConflictNode:
     """An ``ON CONFLICT`` clause and its two independent predicate slots.
 
-    ``target_where`` is the arbiter's index predicate, matching a partial
-    unique index; ``update_where`` narrows the ``DO UPDATE`` action itself.
-    They are separate SQL clauses in separate positions, so they are separate
-    fields rather than one conflated predicate.
+    ``target_where`` is the arbiter's index predicate and matches a partial
+    unique index. ``update_where`` narrows the ``DO UPDATE`` action itself. They
+    are separate SQL clauses in separate positions, so they stay separate fields.
     """
 
     columns: tuple[str, ...]

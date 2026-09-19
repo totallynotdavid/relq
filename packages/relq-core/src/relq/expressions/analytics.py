@@ -150,11 +150,11 @@ def sum(expression: Expr[decimal.Decimal]) -> AggregateExpr[DecimalDialectNumber
 
 
 def sum(expression: object) -> object:
-    """Return the dialect-faithful SQL ``SUM`` result.
+    """SQL ``SUM``, typed as each engine returns it.
 
-    SQLite does not retain a Decimal runtime value through arithmetic, while
-    PostgreSQL ``numeric`` does. Use a declared row adapter when a Decimal
-    domain value is required across both engines.
+    SQLite does not keep a Decimal runtime value through arithmetic, and
+    PostgreSQL ``numeric`` does. Use a declared row adapter when a Decimal is
+    required on both engines.
     """
     if not isinstance(expression, Expression):
         raise TypeError("sum() requires a SQL expression")
@@ -165,7 +165,6 @@ def sum(expression: object) -> object:
 def avg(
     expression: Expr[int] | Expr[float] | Expr[decimal.Decimal],
 ) -> AggregateExpr[AverageResult]:
-    """Return the dialect-native average type without a false float promise."""
     return _aggregate(AggregateNode("avg", (node_of(expression),)))
 
 

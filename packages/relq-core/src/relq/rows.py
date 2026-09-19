@@ -184,7 +184,7 @@ def uuid_decoder() -> Decoder[uuid.UUID]:
 
 
 def inet_decoder() -> Decoder[Inet]:
-    """Decode asyncpg's exact ``inet`` result values at the row trust boundary."""
+    """Decode the ``inet`` values asyncpg returns."""
 
     inet_types = (
         ipaddress.IPv4Address,
@@ -257,8 +257,8 @@ def json_decoder() -> Decoder[JsonValue]:
     def decode(value: object) -> JsonValue:
         if isinstance(value, (str, bytes, bytearray)):
             return _json_value(cast(object, json.loads(value)))
-        # Drivers that decode JSON return arbitrary Python values. Re-encoding
-        # validates that shape before applying the same typed parse path.
+        # A driver that decodes JSON itself returns arbitrary Python values.
+        # Re-encoding checks that shape and reuses the typed parse path.
         return _json_value(cast(object, json.loads(json.dumps(value))))
 
     return Decoder("JSON", decode)
@@ -296,7 +296,7 @@ def list_decoder[Value](decoder: Decoder[Value]) -> Decoder[list[Value]]:
 def domain_decoder[Base, Domain](
     name: str, base: Decoder[Base], wrap: Callable[[Base], Domain]
 ) -> Decoder[Domain]:
-    """Decode a domain's base value, then apply its deliberate wrapper."""
+    """Decode a domain's base value, then apply its wrapper."""
     return Decoder(name, lambda value: wrap(base.decode(value)))
 
 

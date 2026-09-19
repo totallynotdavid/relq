@@ -1,8 +1,8 @@
 """Portable analytic and grouped-query validation.
 
-SQLite accepts many grouped queries that PostgreSQL rejects.  This module
-defines the smaller common contract instead of allowing an arbitrary SQLite
-row to leak into a supposedly portable query result.
+SQLite accepts many grouped queries that PostgreSQL rejects. This module
+enforces the smaller common contract, so a portable query never returns an
+arbitrary SQLite row.
 """
 
 from relq._analysis.walk import children
@@ -10,7 +10,7 @@ from relq._ast import AggregateNode, AliasNode, ColumnNode, Node, SelectNode, Wi
 
 
 def validate_analytic_clauses(node: SelectNode) -> None:
-    """Reject analytic placements both supported dialects reject."""
+    """Reject aggregate and window placements that both dialects reject."""
     if _contains_aggregate_or_window(node.where):
         raise ValueError(
             "WHERE cannot contain aggregate or window expressions; use HAVING or a subquery"
@@ -36,11 +36,10 @@ def validate_grouping(node: SelectNode) -> None:
 
     A grouped or aggregate query may use a local column outside an aggregate
     only when that column is structurally determined by its ``GROUP BY``
-    expression.  Nested SELECTs validate separately; correlated outer columns
-    are constants for this SELECT scope and therefore do not need grouping.
-    ``validate_sources`` already proves every column reference reaching this
-    function is either local to this SELECT or a correlated outer reference,
-    so "not local" is sufficient to exempt a column here.
+    expression. Nested SELECTs validate separately. Correlated outer columns
+    are constants in this SELECT and need no grouping. ``validate_sources``
+    already proves that every column reference reaching this function is local
+    or a correlated outer reference, so "not local" is enough to exempt one.
     """
     has_aggregate = any(
         _contains_aggregate(expression)

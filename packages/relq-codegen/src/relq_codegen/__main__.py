@@ -53,7 +53,7 @@ def main() -> None:
 
 
 def _validated_arguments(arguments: argparse.Namespace) -> _SqliteArguments | _PostgresArguments:
-    """Turn argparse's dynamic namespace into a checked, typed command shape."""
+    """Narrow argparse's untyped namespace to one of the typed argument shapes."""
     dialect = getattr(arguments, "dialect", None)
     output = getattr(arguments, "output", None)
     check = getattr(arguments, "check", None)
@@ -72,7 +72,7 @@ def _validated_arguments(arguments: argparse.Namespace) -> _SqliteArguments | _P
 
 
 def _write_if_changed(output: Path, generated: str) -> None:
-    """Avoid needless timestamp-only diffs when a migration changes nothing."""
+    """Leave an unchanged file alone so its modification time does not move."""
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists() and output.read_text() == generated:
         return

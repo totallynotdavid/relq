@@ -5,7 +5,7 @@ from relq._ast import ColumnNode, Node
 
 
 def referenced_sources(node: Node | None) -> set[str]:
-    """Return local sources; nested SELECT scopes are deliberately excluded."""
+    """Return local sources. Nested SELECT scopes are excluded."""
     if node is None:
         return set()
     return {item.source for item in walk(node) if isinstance(item, ColumnNode)}

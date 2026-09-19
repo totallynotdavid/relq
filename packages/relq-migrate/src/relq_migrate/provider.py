@@ -13,10 +13,10 @@ _FILENAME_RE = re.compile(r"^(?P<version>[0-9]{4})_(?P<label>[a-z0-9_]+)\.sql$")
 class FileMigrationProvider:
     """Load contiguous, ordered ``0001_name.sql`` files from a folder.
 
-    Non-SQL files are ignored so README files and editor metadata can live
-    beside migrations. SQL files must match the migration filename convention;
-    matching files must start at ``0001`` and have no gaps or duplicate numeric
-    versions.
+    Non-SQL files are ignored, so README files and editor metadata can live
+    beside migrations. SQL files must match the migration filename convention.
+    The matching files must start at ``0001`` and have no gaps or duplicate
+    numeric versions.
     """
 
     def __init__(self, folder: Path) -> None:

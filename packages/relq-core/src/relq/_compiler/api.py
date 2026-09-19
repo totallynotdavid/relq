@@ -28,7 +28,6 @@ def compile_postgres[Row](query: Query[Row]) -> CompiledQuery:
 
 
 def _compile[Row](query: Query[Row], dialect: Dialect) -> CompiledQuery:
-    """Run relq's complete AST-only compilation pipeline for one fixed dialect."""
     node = extract_query(query).node
     validate_query(node, dialect)
     return render_query(node, dialect)

@@ -42,9 +42,9 @@ class PostgresMigrator:
     """Apply filesystem migrations through asyncpg.
 
     The advisory lock is session-scoped and held across each migration's own
-    transaction. This preserves successful earlier migrations if a later file
-    fails while ensuring another migrator cannot observe or apply the same
-    pending file concurrently.
+    transaction. Earlier successful migrations stay committed if a later file
+    fails, and no other migrator can observe or apply the same pending file
+    concurrently.
     """
 
     def __init__(
@@ -110,7 +110,8 @@ class PostgresMigrator:
                             int, await connection.fetchval("SELECT txid_current()")
                         )
                         # Split incrementally and re-read the session setting after each
-                        # statement; static SET/RESET checks are only an early diagnostic.
+                        # statement. The static SET/RESET checks are only an early
+                        # diagnostic.
                         remaining_sql = migration.sql
                         while remaining_sql:
                             standard_conforming_strings = await _standard_conforming_strings(
@@ -196,7 +197,7 @@ def _is_pool(connection: object) -> TypeIs[_Pool]:
 
 
 async def _history_table_reference(connection: _Connection, table_name: str) -> tuple[str, str]:
-    """Resolve the history schema once for this physical PostgreSQL session."""
+    """Resolve the history table's schema, cached per physical session."""
     physical_connection = _physical_connection(connection)
     schema_cache = _SESSION_SCHEMA_CACHE.setdefault(physical_connection, {})
     schema_name = schema_cache.get(table_name)
@@ -249,7 +250,7 @@ def _quote_database_identifier(identifier: str) -> str:
 
 
 def _advisory_lock_key(table_identity: str) -> int:
-    """Return a stable 64-bit key for the physical history table."""
+    """Return a stable 64-bit lock key for one history table."""
     return (_LOCK_NAMESPACE << 32) | zlib.crc32(table_identity.encode("utf-8"))
 
 
@@ -409,7 +410,10 @@ def _next_postgres_keyword(sql: str, index: int) -> str | None:
 def _iter_postgres_statements(
     sql: str, *, standard_conforming_strings: bool = True
 ) -> Iterator[tuple[str, int]]:
-    """Split PostgreSQL SQL without treating quoted semicolons as boundaries."""
+    """Yield each statement with the number of characters consumed through it.
+
+    Semicolons inside quoted text and atomic blocks do not end a statement.
+    """
     buffer: list[str] = []
     state = "normal"
     block_depth = 0
@@ -539,7 +543,7 @@ def _iter_postgres_statements(
 def _split_postgres_statements(  # pyright: ignore[reportUnusedFunction]
     sql: str, *, standard_conforming_strings: bool = True
 ) -> Iterator[str]:
-    """Split PostgreSQL SQL without treating quoted semicolons as boundaries."""
+    """Split PostgreSQL SQL into statements, discarding the offsets."""
     for statement, _ in _iter_postgres_statements(
         sql, standard_conforming_strings=standard_conforming_strings
     ):

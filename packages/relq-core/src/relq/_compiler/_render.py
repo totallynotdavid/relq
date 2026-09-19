@@ -151,7 +151,6 @@ def _compile_cte_body(
     parameters: list[object],
     outer_sources: frozenset[str],
 ) -> str:
-    """Render one ``WITH`` binding's body, gating data-modifying statements."""
     if isinstance(cte.query, SelectNode):
         return _compile_select(cte.query, dialect, parameters, outer_sources)
     if not dialect.supports_data_modifying_ctes:
@@ -239,18 +238,16 @@ _INDEX_PREDICATE_UNARY: Final = frozenset(
 def _compile_index_predicate(node: Node) -> str:
     """Render a conflict arbiter's predicate with constants, never parameters.
 
-    PostgreSQL infers the arbiter index by proving the index's own stored
-    predicate from this one, and that proof compares parsed expression trees.
-    A cached generic plan leaves ``$n`` parameters unfolded, so a parameterized
-    arbiter predicate matches while the plan is custom and then stops matching
-    once PostgreSQL switches to a generic plan -- the statement starts raising
-    "no unique or exclusion constraint matching the ON CONFLICT specification"
-    partway through a process's life.  Constants keep inference stable.
+    PostgreSQL infers the arbiter index by proving the index's stored predicate
+    from this one, and the proof compares parsed expression trees. A generic
+    plan leaves ``$n`` parameters unfolded, so a parameterized predicate stops
+    matching and PostgreSQL rejects the statement with "no unique or exclusion
+    constraint matching the ON CONFLICT specification". Constants keep inference
+    stable across plan types.
 
-    The accepted node set is closed and narrower than ``_compile_node``: it is
-    roughly what PostgreSQL itself allows in an index predicate, so an
-    expression that could never match one is rejected here instead of at the
-    database.
+    The accepted nodes are a closed set, narrower than ``_compile_node``. It is
+    roughly what PostgreSQL allows in an index predicate, so an expression that
+    could never match one fails here instead of at the database.
     """
     match node:
         case ColumnNode(source, name):
@@ -282,7 +279,6 @@ def _compile_index_predicate(node: Node) -> str:
 
 
 def _constant(value: object) -> str:
-    """Render one inlined index-predicate constant from a closed set of types."""
     match value:
         case None:
             return "null"
@@ -589,7 +585,6 @@ def _compile_node(
 
 
 def _require_postgres_expression(dialect: Dialect, name: str) -> None:
-    """Keep PostgreSQL-only expressions out of every other dialect's SQL."""
     if not dialect.supports_postgres_expressions:
         raise ValueError(f"{dialect.name} does not support the PostgreSQL-only {name} expression")
 
@@ -599,7 +594,7 @@ def _identifier(value: str) -> str:
 
 
 def _sql_literal(value: str) -> str:
-    """Render a closed compiler-owned text token, never user SQL."""
+    """Quote a compiler-owned token. Never pass user text."""
     return "'" + value.replace("'", "''") + "'"
 
 

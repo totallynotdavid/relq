@@ -127,21 +127,18 @@ class _PostgresTransactionState:
         self.savepoint_names.discard(_savepoint_name_key(name))
 
 
-# All database wrappers for one physical connection resolve to this state;
-# entries are removed once the registry is empty so a later transaction gets
-# a fresh state after the previous boundary has fully closed.
+# Every database wrapper for one physical connection shares one state. The entry
+# is dropped once its registry is empty, so the next transaction starts fresh.
 _TRANSACTION_STATES_BY_CONNECTION: dict[int, _PostgresTransactionState] = {}
 
 
-# For each physical connection key, this weak set contains every controlled
-# transaction whose construction has completed and whose _close() has not run.
-# ControlledTransaction.__init__ is the only registration point, and _close()
-# is the only explicit removal point. Recovery only reads this map: it may
-# snapshot handles before invalidating them, so the snapshot remains
-# responsible for releasing any pooled connections even if _close() removes a
-# handle from the live set while recovery is in progress. A recovery caller
-# may also pass a just-closed handle through ``extra`` without mutating the
-# map.
+# Controlled transactions that are constructed and not yet closed, per connection
+# key. ``ControlledTransaction.__init__`` is the only place that adds one and
+# ``_close()`` is the only place that removes one. Recovery only reads this map.
+# It snapshots the handles before invalidating them, so the snapshot still
+# releases pooled connections if ``_close()`` drops a handle meanwhile. A
+# recovery caller can pass a just-closed handle through ``extra`` without
+# changing the map.
 _TRANSACTIONS_BY_CONNECTION: dict[int, weakref.WeakSet[ControlledTransaction]] = {}
 
 
@@ -156,13 +153,12 @@ class Savepoint(Protocol):
 class PostgresDatabase:
     """Execute relq queries through an existing asyncpg pool or connection.
 
-    The caller owns pool and connection lifecycle. Transactions on a pool
-    acquire one connection for their complete scope; transactions on a direct
-    connection reuse that connection. If that pool or connection sits behind
-    pgbouncer in ``transaction`` or ``statement`` pooling mode, pass
-    ``statement_cache_size=0`` to ``asyncpg.connect``/``create_pool``:
-    asyncpg's automatic prepared-statement cache does not survive that pooling
-    mode.
+    The caller owns the pool or connection lifecycle. A transaction on a pool
+    acquires one connection for its whole scope. A transaction on a direct
+    connection reuses that connection. Behind pgbouncer in ``transaction`` or
+    ``statement`` pooling mode, pass ``statement_cache_size=0`` to
+    ``asyncpg.connect`` or ``create_pool``, because asyncpg's automatic
+    prepared-statement cache does not survive that mode.
     """
 
     def __init__(
@@ -294,7 +290,6 @@ class PostgresDatabase:
     async def fetch_all_as[Row, Model](
         self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> list[Model]:
-        """Map result rows through an explicit, arity-validating adapter."""
         self._ensure_usable()
         if extract_query(query).adapter is not None:
             raise TypeError("query already declares a result model; use fetch_all()")
@@ -402,12 +397,11 @@ class PostgresDatabase:
 
     @asynccontextmanager
     async def fetch_iter[Row](self, query: Query[Row]) -> AsyncGenerator[AsyncIterator[Row]]:
-        """Stream rows through a server-side cursor instead of materializing them.
+        """Stream rows through a server-side cursor.
 
-        PostgreSQL cursors are only valid inside a transaction, so this opens
-        one for the scope of iteration (nesting as a savepoint inside an outer
-        relq transaction) and, on a pool, holds one acquired connection for
-        that same scope.
+        A PostgreSQL cursor is only valid inside a transaction. This opens one for
+        the whole iteration, as a savepoint when a relq transaction is already
+        open. On a pool it also holds one acquired connection for that scope.
         """
         self._ensure_usable()
         compiled = compile_postgres(query)
@@ -462,10 +456,9 @@ class PostgresDatabase:
         compiled = compile_postgres(query)
         started = perf_counter()
         try:
-            # execute() with bound parameters shares asyncpg's prepared-statement
-            # cache with fetch()/fetchrow() (both route through Connection._execute).
-            # Only zero-parameter calls (e.g. DEFAULT VALUES) skip it, via
-            # asyncpg's simple-query protocol.
+            # With bound parameters, execute() shares asyncpg's prepared-statement
+            # cache with fetch() and fetchrow(). Only a call without parameters,
+            # such as DEFAULT VALUES, bypasses it through the simple-query protocol.
             async with self._connection_scope() as connection:
                 status = await connection.execute(compiled.sql, *compiled.parameters)
             count = _command_count(status)
@@ -794,10 +787,10 @@ class ControlledTransaction(PostgresDatabase):
 
     async def _recover_after_control_failure(self, operation_error: BaseException) -> NoReturn:
         try:
-            # asyncpg marks the transaction FAILED after a control-operation
-            # error and refuses to recover it through Transaction.rollback().
-            # A raw ROLLBACK resets the connection and clears asyncpg's
-            # top-transaction pointer; recovery also invalidates its registry.
+            # After a control-operation error asyncpg marks the transaction FAILED
+            # and refuses to roll it back through Transaction.rollback(). A raw
+            # ROLLBACK resets the connection and clears asyncpg's top-transaction
+            # pointer. Recovery also invalidates the registry.
             await self._recover_connection()
         except BaseException as recovery_error:
             raise recovery_error from operation_error
@@ -996,9 +989,9 @@ async def _recover_asyncpg_connection(
         None if underlying is None else underlying._top_xact  # pyright: ignore[reportPrivateUsage]
     )
     if not handles and current_top_transaction is not owned_transaction:
-        # There is no relq handle and the attempted transaction did not become
-        # asyncpg's top transaction. The connection may contain caller-owned
-        # work, so recovery must not issue a raw ROLLBACK here.
+        # No relq handle exists and the attempted transaction never became
+        # asyncpg's top transaction. The connection may hold caller-owned work,
+        # so recovery must not issue a raw ROLLBACK.
         return
 
     if (
