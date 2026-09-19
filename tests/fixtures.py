@@ -29,6 +29,21 @@ class ActiveEmployees(CteTable):
     id: Column[int] = output_column(int)
 
 
+class CompositeKeys(Table):
+    """A conflict target wider than any per-position overload ladder."""
+
+    tenant: Column[int] = column(int)
+    queue: Column[str] = column(str)
+    dedupe_key: Column[str | None] = column(str)
+    active: Column[bool] = column(bool)
+    epoch: Column[int] = column(int)
+    day: Column[str] = column(str)
+    payload: Column[str] = column(str)
+
+
+composite_keys = CompositeKeys("composite_keys")
+
+
 class EmployeeArchive(Table):
     id: Column[int] = column(int)
     name: Column[str] = column(str)

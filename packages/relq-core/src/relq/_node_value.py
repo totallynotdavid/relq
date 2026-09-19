@@ -35,6 +35,10 @@ class _NodeBridge(NodeValue[object]):
     def node[N](value: NodeValue[N]) -> N:
         return value._state.node
 
+    @staticmethod
+    def initialized[N](value: NodeValue[N]) -> bool:
+        return hasattr(value, "_state")
+
 
 def construction_token() -> object:
     """Return the token accepted by private builder constructors."""
@@ -54,3 +58,16 @@ def node_of[N](value: NodeValue[N]) -> N:
 def expression_node(value: NodeValue[Node]) -> Node:
     """Extract a scalar expression node without exposing its value parameter."""
     return node_of(value)
+
+
+def has_node[N](value: NodeValue[N]) -> bool:
+    """Report whether a builder factory ever attached this value's node.
+
+    Every value relq constructs has one, because the factories are the only
+    way past the constructor token.  A class declared outside relq can still
+    inherit a nominal public base such as ``ConflictTarget`` and skip that
+    token by overriding ``__init__``, so a builder that accepts a base rather
+    than a concrete type asks this first and raises its own error instead of
+    letting a private attribute surface.
+    """
+    return _NodeBridge.initialized(value)

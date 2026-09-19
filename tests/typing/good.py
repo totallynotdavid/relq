@@ -10,6 +10,8 @@ from relq import (
     AwareTime,
     CaseWhen,
     Column,
+    ConflictTarget,
+    ConflictUpdateQuery,
     CteTable,
     DerivedTable,
     Expr,
@@ -237,7 +239,83 @@ upsert = (
     .on_conflict(users.email)
     .do_update(email=excluded(users.email))
 )
-assert_type(upsert, InsertQuery[tuple[()], Literal[False]])
+assert_type(upsert, ConflictUpdateQuery[tuple[()], Literal[False]])
+guarded = (
+    insert_into(users)
+    .values(id=1, email="a@example.com", active=True)
+    .on_conflict(users.email)
+    .where(users.active.is_true())
+    .do_update(email=excluded(users.email))
+    .where(users.active.is_true())
+)
+assert_type(guarded, InsertQuery[tuple[()], Literal[False]])
+assert_type(guarded.returning(users.id), InsertQuery[tuple[int], Literal[True]])
+
+
+class Composite(Table):
+    """A composite unique key wider than any per-position overload ladder."""
+
+    tenant: Column[int] = column(int)
+    queue: Column[str] = column(str)
+    dedupe_key: Column[str | None] = column(str)
+    active: Column[bool] = column(bool)
+    epoch: Column[int] = column(int)
+    day: Column[datetime.date] = column(datetime.date)
+
+
+composite = Composite("composite")
+
+# ON CONFLICT has no arity limit in SQL and none here: six target columns
+# spanning five value types, one of them nullable.  ConflictTarget is
+# un-parameterised, so mixing value types needs no shared solution for
+# Column's invariant parameter.
+wide_target = (
+    insert_into(composite)
+    .values(
+        tenant=1,
+        queue="default",
+        dedupe_key=None,
+        active=True,
+        epoch=7,
+        day=datetime.date(2026, 1, 1),
+    )
+    .on_conflict(
+        composite.tenant,
+        composite.queue,
+        composite.dedupe_key,
+        composite.active,
+        composite.epoch,
+        composite.day,
+    )
+    .do_nothing()
+)
+assert_type(wide_target, InsertQuery[tuple[()], Literal[False]])
+
+wide_guarded = (
+    insert_into(composite)
+    .values(
+        tenant=1,
+        queue="default",
+        dedupe_key=None,
+        active=True,
+        epoch=7,
+        day=datetime.date(2026, 1, 1),
+    )
+    .on_conflict(
+        composite.tenant,
+        composite.queue,
+        composite.dedupe_key,
+        composite.active,
+        composite.epoch,
+    )
+    .where(composite.dedupe_key.is_not_null())
+    .do_update(epoch=excluded(composite.epoch))
+    .where(composite.active.is_true())
+)
+assert_type(wide_guarded, InsertQuery[tuple[()], Literal[False]])
+
+# Every Column is a ConflictTarget whatever its value type.
+conflict_targets: list[ConflictTarget] = [composite.tenant, composite.dedupe_key, composite.day]
 
 
 class Totals(DerivedTable):

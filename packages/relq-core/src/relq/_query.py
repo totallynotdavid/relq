@@ -9,7 +9,7 @@ from relq.rows import RowAdapter
 if TYPE_CHECKING:
     from typing import Literal
 
-    from relq.dml import DeleteQuery, InsertQuery, UpdateQuery
+    from relq.dml import ConflictUpdateQuery, DeleteQuery, InsertQuery, UpdateQuery
     from relq.query import SelectQuery
 
 
@@ -39,6 +39,16 @@ def new_query[SqlRow, Row](
     *,
     table: object | None = None,
 ) -> SelectQuery[SqlRow, Row]: ...
+
+
+@overload
+def new_query[Row, Returns: (Literal[True], Literal[False])](
+    query_type: type[ConflictUpdateQuery[Row, Returns]],
+    node: QueryNode,
+    adapter: RowAdapter[Row] | None = None,
+    *,
+    table: object | None = None,
+) -> ConflictUpdateQuery[Row, Returns]: ...
 
 
 @overload

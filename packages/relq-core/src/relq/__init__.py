@@ -1,6 +1,7 @@
 """relq: typed SQL queries for Python 3.15+."""
 
 from relq.dml import (
+    ConflictUpdateQuery,
     DeleteQuery,
     InsertQuery,
     UpdateQuery,
@@ -13,6 +14,7 @@ from relq.expressions import (
     BooleanExpression,
     CaseWhen,
     Column,
+    ConflictTarget,
     CteTable,
     DerivedTable,
     Expr,
@@ -133,6 +135,8 @@ __all__ = [
     "BooleanExpression",
     "CaseWhen",
     "Column",
+    "ConflictTarget",
+    "ConflictUpdateQuery",
     "CteTable",
     "Decoder",
     "DeleteQuery",

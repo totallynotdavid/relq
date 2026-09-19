@@ -3,11 +3,11 @@
 import sqlite3
 
 import pytest
-from relq import delete_from, excluded, insert_into, select, update
+from relq import ConflictTarget, delete_from, excluded, insert_into, select, update, value
 from relq._compiler import compile_postgres, compile_sqlite
 from relq_sqlite import SQLiteDatabase
 
-from tests.fixtures import EmployeeRow, employee_archive, employees
+from tests.fixtures import EmployeeRow, composite_keys, employee_archive, employees
 
 
 def test_dml_returning_and_execution() -> None:
@@ -126,3 +126,166 @@ def test_declared_result_models_support_wide_projection_and_returning() -> None:
         .decode(EmployeeRow)
         .where(employees.id.eq(1))
     ) == EmployeeRow(1, "Ada")
+
+
+def test_conflict_predicates_are_rejected_outside_their_valid_shapes() -> None:
+    postgres_only = (
+        insert_into(employees)
+        .values(id=1, name="Ada")
+        .on_conflict(employees.name)
+        .do_update(salary=excluded(employees.salary))
+        .where(employees.salary.lt(100))
+    )
+    assert 'do update set "salary" = excluded."salary" where ("employees"."salary" < $3)' in (
+        compile_postgres(postgres_only).sql
+    )
+    with pytest.raises(ValueError, match="sqlite does not support ON CONFLICT predicates"):
+        compile_sqlite(postgres_only)
+
+    with pytest.raises(ValueError, match="at least one conflict target column"):
+        insert_into(employees).values(id=1).on_conflict().where(employees.id.eq(1))
+    with pytest.raises(ValueError, match=r"where\(\) can only be specified once"):
+        (
+            insert_into(employees)
+            .values(id=1)
+            .on_conflict(employees.id)
+            .where(employees.id.eq(1))
+            .where(employees.id.eq(2))
+        )
+    # The action predicate is applied once by construction: do_update().where()
+    # hands back a plain InsertQuery, so a second where() is not expressible.
+    narrowed = (
+        insert_into(employees)
+        .values(id=1)
+        .on_conflict(employees.id)
+        .do_update(name="Ada")
+        .where(employees.id.eq(1))
+    )
+    assert not hasattr(narrowed, "where")
+
+
+def test_conflict_target_predicates_inline_constants_and_stay_closed() -> None:
+    inlined = (
+        insert_into(employees)
+        .values(id=1, name="Ada")
+        .on_conflict(employees.name)
+        .where(employees.manager_id.is_not_null() & employees.salary.in_((10, 20)))
+        .do_nothing()
+    )
+    compiled = compile_postgres(inlined)
+    assert (
+        'on conflict ("name") where (("employees"."manager_id" is not null) '
+        'and ("employees"."salary" in (10, 20))) do nothing' in compiled.sql
+    )
+    assert compiled.parameters == (1, "Ada")
+
+    quoted = (
+        insert_into(employees)
+        .values(id=1)
+        .on_conflict(employees.id)
+        .where(employees.name.eq("O'Hara\\x"))
+        .do_nothing()
+    )
+    assert "E'O''Hara\\\\x'" in compile_postgres(quoted).sql
+
+    unsupported = (
+        insert_into(employees)
+        .values(id=1)
+        .on_conflict(employees.id)
+        .where(employees.name.like("a%"))
+        .do_nothing()
+    )
+    with pytest.raises(ValueError, match="must repeat a partial index predicate"):
+        compile_postgres(unsupported)
+
+    excluded_target = (
+        insert_into(employees)
+        .values(id=1)
+        .on_conflict(employees.id)
+        .where(excluded(employees.id).eq(1))
+        .do_nothing()
+    )
+    with pytest.raises(ValueError, match="excluded\\(\\) cannot appear in a conflict-target"):
+        compile_postgres(excluded_target)
+
+
+def test_conflict_target_accepts_any_number_of_columns() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "create table composite_keys (tenant integer not null, queue text not null, "
+        "dedupe_key text not null, active integer not null, epoch integer not null, "
+        "day text not null, payload text not null)"
+    )
+    connection.execute(
+        "create unique index composite_keys_key on composite_keys "
+        "(tenant, queue, dedupe_key, active, epoch, day)"
+    )
+    database = SQLiteDatabase(connection)
+    database.execute(
+        insert_into(composite_keys).values(
+            tenant=1,
+            queue="default",
+            dedupe_key="k",
+            active=True,
+            epoch=7,
+            day="2026-01-01",
+            payload="first",
+        )
+    )
+    upsert = (
+        insert_into(composite_keys)
+        .values(
+            tenant=1,
+            queue="default",
+            dedupe_key="k",
+            active=True,
+            epoch=7,
+            day="2026-01-01",
+            payload="second",
+        )
+        .on_conflict(
+            composite_keys.tenant,
+            composite_keys.queue,
+            composite_keys.dedupe_key,
+            composite_keys.active,
+            composite_keys.epoch,
+            composite_keys.day,
+        )
+        .do_update(payload=excluded(composite_keys.payload))
+    )
+    # Six target columns: past the four the old overload ladder could spell,
+    # and spanning four value types including a nullable one.
+    assert (
+        'on conflict ("tenant", "queue", "dedupe_key", "active", "epoch", "day")'
+        in compile_sqlite(upsert).sql
+    )
+    assert database.execute(upsert) == 1
+    assert database.fetch_all(select(composite_keys.payload).from_(composite_keys)) == [("second",)]
+
+
+def test_conflict_target_gate_matches_its_annotation_exactly() -> None:
+    insert = insert_into(composite_keys).values(tenant=1, queue="q", payload="p")
+
+    # ConflictTarget is narrower than Expression: a value expression is one
+    # but not the other, and is refused at runtime just as it is statically.
+    with pytest.raises(TypeError, match="must be table columns"):
+        insert.on_conflict(composite_keys.tenant, value(1))  # pyright: ignore[reportArgumentType]
+
+    # A ConflictTarget declared outside relq type-checks, so the runtime must
+    # answer for it rather than leaking a private attribute.  Inheriting the
+    # base does not confer a node; skipping the construction token is exactly
+    # how a subclass would try.
+    class Unbuilt(ConflictTarget):
+        __slots__ = ()
+
+        def __init__(self) -> None:
+            pass
+
+    with pytest.raises(TypeError, match="must be table columns"):
+        insert.on_conflict(Unbuilt())
+
+    # A real Column still has to belong to the INSERT table.
+    with pytest.raises(ValueError, match="must belong to the INSERT table"):
+        insert.on_conflict(employees.id)
+    with pytest.raises(ValueError, match="cannot contain duplicates"):
+        insert.on_conflict(composite_keys.tenant, composite_keys.tenant)

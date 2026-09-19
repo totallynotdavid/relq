@@ -15,7 +15,7 @@ from relq._ast import (
     ValueNode,
 )
 from relq._node_value import NodeValue, construction_token, initialize_node, node_of
-from relq.expressions.core import Expr
+from relq.expressions.core import ConflictTarget, Expr
 from relq.rows import JsonValue
 
 _RESERVED_ATTRIBUTES = frozenset(
@@ -64,7 +64,7 @@ class Source[SqlRow_co = object](NodeValue[SourceNode]):
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class Column[T](Expr[T]):
+class Column[T](Expr[T], ConflictTarget):
     """A declared table column, bound to a source when accessed."""
 
     python_type: TypeForm[T] | Callable[..., T]

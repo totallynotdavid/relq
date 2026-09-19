@@ -12,6 +12,7 @@ class Dialect:
     supports_returning: bool = True
     supports_row_locking: bool = False
     supports_temporal_arithmetic: bool = False
+    supports_conflict_predicates: bool = False
     max_parameters: int | None = None
     supports_schema_qualified_tables: bool = False
     supports_data_modifying_ctes: bool = False

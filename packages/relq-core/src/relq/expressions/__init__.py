@@ -25,6 +25,7 @@ from relq.expressions.analytics import (
 from relq.expressions.core import (
     BooleanExpression,
     CaseWhen,
+    ConflictTarget,
     Expr,
     Expression,
     NullablePredicate,
@@ -89,6 +90,7 @@ __all__ = [
     "BooleanExpression",
     "CaseWhen",
     "Column",
+    "ConflictTarget",
     "CteTable",
     "DerivedTable",
     "Expr",

@@ -73,6 +73,30 @@ class BooleanExpression(Expression):
     __slots__ = ()
 
 
+class ConflictTarget(Expression):
+    """Nominal base for a value usable as an ``ON CONFLICT`` target column.
+
+    ``Column`` is generic and its value parameter is invariant, so no single
+    ``Column[...]`` annotation admits a composite target whose columns differ
+    in value type.  A conflict target never reads that value type, so this
+    un-parameterised base names exactly the capability the clause needs and
+    lets ``on_conflict`` accept an unbounded number of columns -- the same
+    shape ``BooleanExpression`` gives ``where``.
+
+    ``Column`` is the only member relq declares, and the runtime gate in
+    ``relq.dml`` tests this same class, so the static and runtime contracts
+    admit exactly the same values.  Nothing seals the class against outside
+    subclasses -- a subclass can override ``__init__`` and skip the
+    construction token -- and nothing needs to: membership was never the
+    guarantee.  A target must still carry a node and resolve to a
+    ``ColumnNode`` of the INSERT table, and those value-level checks, not the
+    class, are what keep the emitted SQL correct.  Anything that fails them
+    raises ``relq.dml``'s own ``TypeError``.
+    """
+
+    __slots__ = ()
+
+
 class Expr(Expression, Generic[T]):  # noqa: UP046 -- expressions require an invariant value parameter.
     """A SQL expression whose evaluated value has Python type ``T``."""
 
