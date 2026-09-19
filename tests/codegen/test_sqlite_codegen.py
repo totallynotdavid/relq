@@ -38,7 +38,7 @@ def test_sqlite_codegen_emits_nullable_and_primary_key_types() -> None:
         'create table "user-events" (id integer primary key, "display name" text, active boolean)'
     )
     generated = generate_sqlite(connection)
-    assert "class UserEvents(Table):" in generated
+    assert "class UserEvents(Table[tuple[int, str | None, bool | None]]):" in generated
     assert "id: Column[int] = column(int)" in generated
     assert "display_name: Column[str | None] = column(str, name='display name')" in generated
     namespace: dict[str, object] = {}
@@ -294,7 +294,7 @@ def test_a_table_named_after_an_import_does_not_rebind_it() -> None:
     connection.execute("create table json_value (id integer primary key, payload jsonb)")
     generated = generate_sqlite(connection)
 
-    assert "class JsonValue_(Table):" in generated
+    assert "class JsonValue_(Table[" in generated
     assert "json_value = JsonValue_('json_value')" in generated
     namespace: dict[str, object] = {}
     exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
@@ -370,7 +370,7 @@ def test_a_configured_import_reserves_its_name_against_generated_classes() -> No
     generated = render((table,), config=config, dialect="sqlite")
 
     assert "from app.ids import EventId" in generated
-    assert "class EventId_(Table):" in generated
+    assert "class EventId_(Table[" in generated
 
 
 def test_codegen_reserves_exactly_the_attributes_relq_relations_claim() -> None:
@@ -418,7 +418,9 @@ def test_a_dunder_shaped_name_never_reaches_generated_code(name: str) -> None:
 
     namespace: dict[str, object] = {}
     exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
-    tables = [value for value in namespace.values() if isinstance(value, Table)]
+    tables = cast(
+        list[Table[object]], [value for value in namespace.values() if isinstance(value, Table)]
+    )
     assert len(tables) == 1
     assert tables[0].table_name == name
     assert tables[0].column_names() == {"id", "__annotations__"}

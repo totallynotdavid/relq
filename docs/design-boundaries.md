@@ -24,8 +24,8 @@ category of bug unrepresentable. Some is just scope relq hasn't grown into yet.
   individual `execute` calls inside a transaction.
 - **No implicit result decoding.** Raw fetches return exact driver tuples.
   Turning those into application values requires an explicit `RowAdapter`,
-  either passed to `fetch_*_as` or embedded by `select_model` /
-  `returning_model`. There is no result-type union.
+  either passed to `fetch_*_as` or embedded by `.decode(...)`. There is no
+  result-type union.
 - **No Python arithmetic operator overloading for SQL.** `add`, `subtract`,
   `multiply`, and `divide` are typed functions, not `+`/`-`/`*`/`/`. See
   [Expressions](./expressions.md).
@@ -72,8 +72,9 @@ at compile time for SQLite rather than ignored:
   SQLite has no such statement. See [Queries](./queries.md).
 
 CTE materialization (`with_(..., materialized=True)`) is *not* in this group: it
-compiles for both engines at relq's documented version floors: SQLite 3.35.0
-(the release that also added `RETURNING`) and PostgreSQL 12. See
+compiles for both engines within relq's documented version floors: it needs
+SQLite 3.35.0 (the release that also added `RETURNING`) and PostgreSQL 12, both
+below those floors. See
 [Engine versions](./installation.md#engine-versions).
 
 ## Not yet

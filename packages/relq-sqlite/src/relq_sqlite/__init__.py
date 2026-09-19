@@ -12,18 +12,18 @@ from relq import RowAdapter
 from relq._compiler.api import compile_sqlite
 from relq._execution import (
     Command,
-    MappedResultQuery,
     NoResultError,
     QueryEvent,
     QueryObserver,
-    RawResultQuery,
+    ReturningQuery,
     TransactionUnavailableError,
     map_all,
     map_one,
     raise_no_result,
     require_command,
 )
-from relq._query import extract_query
+from relq._query import Query, extract_query
+from relq.query import SelectQuery
 
 __all__ = [
     "ControlledTransaction",
@@ -97,38 +97,60 @@ class ControlledTransaction(Protocol):
     def transaction(self) -> AbstractContextManager[SQLiteDatabase]: ...
 
     @overload
-    def fetch_all[Row](self, query: RawResultQuery[Row]) -> list[Row]: ...
+    def fetch_all[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> list[Row]: ...
 
     @overload
-    def fetch_all[Model](self, query: MappedResultQuery[Model]) -> list[Model]: ...
+    def fetch_all[Row](self, query: ReturningQuery[Row]) -> list[Row]: ...
 
     @overload
-    def fetch_one[Row](self, query: RawResultQuery[Row]) -> Row | None: ...
+    def fetch_one[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> Row | None: ...
 
     @overload
-    def fetch_one[Model](self, query: MappedResultQuery[Model]) -> Model | None: ...
+    def fetch_one[Row](self, query: ReturningQuery[Row]) -> Row | None: ...
 
-    def fetch_all_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+    @overload
+    def fetch_all_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
     ) -> list[Model]: ...
 
-    def fetch_one_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+    @overload
+    def fetch_all_as[Row, Model](
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
+
+    @overload
+    def fetch_one_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
     ) -> Model | None: ...
 
     @overload
-    def fetch_one_or_raise[Row](
-        self, query: RawResultQuery[Row], *, error: Callable[[], Exception] | None = None
+    def fetch_one_as[Row, Model](
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
+
+    @overload
+    def fetch_one_or_raise[SqlRow, Row](
+        self, query: SelectQuery[SqlRow, Row], *, error: Callable[[], Exception] | None = None
     ) -> Row: ...
 
     @overload
-    def fetch_one_or_raise[Model](
-        self, query: MappedResultQuery[Model], *, error: Callable[[], Exception] | None = None
+    def fetch_one_or_raise[Row](
+        self, query: ReturningQuery[Row], *, error: Callable[[], Exception] | None = None
+    ) -> Row: ...
+
+    @overload
+    def fetch_one_as_or_raise[SqlRow, Row, Model](
+        self,
+        query: SelectQuery[SqlRow, Row],
+        adapter: RowAdapter[Model],
+        *,
+        error: Callable[[], Exception] | None = None,
     ) -> Model: ...
 
+    @overload
     def fetch_one_as_or_raise[Row, Model](
         self,
-        query: RawResultQuery[Row],
+        query: ReturningQuery[Row],
         adapter: RowAdapter[Model],
         *,
         error: Callable[[], Exception] | None = None,
@@ -238,12 +260,12 @@ class SQLiteDatabase:
         return started
 
     @overload
-    def fetch_all[Row](self, query: RawResultQuery[Row]) -> list[Row]: ...
+    def fetch_all[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> list[Row]: ...
 
     @overload
-    def fetch_all[Model](self, query: MappedResultQuery[Model]) -> list[Model]: ...
+    def fetch_all[Row](self, query: ReturningQuery[Row]) -> list[Row]: ...
 
-    def fetch_all(self, query: RawResultQuery[object] | MappedResultQuery[object]) -> object:
+    def fetch_all[Row](self, query: Query[Row]) -> list[Row]:
         self._ensure_usable()
         compiled = compile_sqlite(query)
         started = perf_counter()
@@ -258,12 +280,12 @@ class SQLiteDatabase:
         return result
 
     @overload
-    def fetch_one[Row](self, query: RawResultQuery[Row]) -> Row | None: ...
+    def fetch_one[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> Row | None: ...
 
     @overload
-    def fetch_one[Model](self, query: MappedResultQuery[Model]) -> Model | None: ...
+    def fetch_one[Row](self, query: ReturningQuery[Row]) -> Row | None: ...
 
-    def fetch_one(self, query: RawResultQuery[object] | MappedResultQuery[object]) -> object:
+    def fetch_one[Row](self, query: Query[Row]) -> Row | None:
         self._ensure_usable()
         compiled = compile_sqlite(query)
         started = perf_counter()
@@ -277,8 +299,18 @@ class SQLiteDatabase:
         self._observe(compiled.sql, compiled.parameters, started, 0 if row is None else 1, None)
         return result
 
+    @overload
+    def fetch_all_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
+
+    @overload
     def fetch_all_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
+
+    def fetch_all_as[Row, Model](
+        self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> list[Model]:
         """Map result rows through an explicit, arity-validating adapter."""
         self._ensure_usable()
@@ -296,8 +328,18 @@ class SQLiteDatabase:
         self._observe(compiled.sql, compiled.parameters, started, len(rows), None)
         return result
 
+    @overload
+    def fetch_one_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
+
+    @overload
     def fetch_one_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
+
+    def fetch_one_as[Row, Model](
+        self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> Model | None:
         self._ensure_usable()
         if extract_query(query).adapter is not None:
@@ -314,18 +356,18 @@ class SQLiteDatabase:
         return result
 
     @overload
-    def fetch_one_or_raise[Row](
-        self, query: RawResultQuery[Row], *, error: Callable[[], Exception] | None = None
+    def fetch_one_or_raise[SqlRow, Row](
+        self, query: SelectQuery[SqlRow, Row], *, error: Callable[[], Exception] | None = None
     ) -> Row: ...
 
     @overload
-    def fetch_one_or_raise[Model](
-        self, query: MappedResultQuery[Model], *, error: Callable[[], Exception] | None = None
-    ) -> Model: ...
+    def fetch_one_or_raise[Row](
+        self, query: ReturningQuery[Row], *, error: Callable[[], Exception] | None = None
+    ) -> Row: ...
 
     def fetch_one_or_raise(
         self,
-        query: RawResultQuery[object] | MappedResultQuery[object],
+        query: SelectQuery[object, object] | ReturningQuery[object],
         *,
         error: Callable[[], Exception] | None = None,
     ) -> object:
@@ -334,13 +376,31 @@ class SQLiteDatabase:
             raise_no_result(error)
         return result
 
-    def fetch_one_as_or_raise[Row, Model](
+    @overload
+    def fetch_one_as_or_raise[SqlRow, Row, Model](
         self,
-        query: RawResultQuery[Row],
+        query: SelectQuery[SqlRow, Row],
         adapter: RowAdapter[Model],
         *,
         error: Callable[[], Exception] | None = None,
-    ) -> Model:
+    ) -> Model: ...
+
+    @overload
+    def fetch_one_as_or_raise[Row, Model](
+        self,
+        query: ReturningQuery[Row],
+        adapter: RowAdapter[Model],
+        *,
+        error: Callable[[], Exception] | None = None,
+    ) -> Model: ...
+
+    def fetch_one_as_or_raise(
+        self,
+        query: SelectQuery[object, object] | ReturningQuery[object],
+        adapter: RowAdapter[object],
+        *,
+        error: Callable[[], Exception] | None = None,
+    ) -> object:
         result = self.fetch_one_as(query, adapter)
         if result is None:
             raise_no_result(error)

@@ -28,21 +28,24 @@ transaction bookkeeping to recover failed controlled transactions. The package
 therefore pins asyncpg to `>=0.31,<0.32`; upgrade beyond that range only after
 the private transaction attributes used by the executor have been revalidated.
 
-## Raw and mapped results are different states
+## Raw and decoded results
 
 `select(...)` and `.returning(...)` are raw-result queries: `fetch_all` /
 `fetch_one` return the exact tuple type you selected, with the driver's own
 values (SQLite's `0`/`1` for booleans, text timestamps, and so on).
-`select_model(Model, ...)` and `.returning_model(Model, ...)` are mapped-result
-queries: `fetch_all` / `fetch_one` return exactly the declared dataclass or
-`NamedTuple`. There is no result-type union and no implicit driver-to-domain
-conversion.
+`.decode(Model)` attaches a declared decoder to the same SELECT or DML builder.
+It preserves the query's SQL projection and every valid composition operation,
+but `fetch_all` / `fetch_one` return the declared dataclass or `NamedTuple`.
+Decoding never changes what a query can mean in SQL.
 
 ```python
 @dataclass
 class UserEmail:
     id: int
     email: str
+
+
+decoded = select(users.id, users.email).from_(users).decode(UserEmail)
 
 
 rows = database.fetch_all_as(
@@ -52,8 +55,8 @@ rows = database.fetch_all_as(
 ```
 
 `fetch_all_as` / `fetch_one_as` are the explicit, one-off adapter path for a raw
-query. `row_adapter(Model)` validates arity against the model before any row is
-decoded.
+query. Embedded decoders are for reusable query contracts; executor-time decoders
+are for one call. `row_adapter(Model)` validates arity before any row is decoded.
 
 `fetch_one_or_raise` and `fetch_one_as_or_raise` are the required-row variants.
 They raise `NoResultError` when the query returns no row, or raise the exception

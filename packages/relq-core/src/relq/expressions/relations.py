@@ -40,7 +40,7 @@ _RESERVED_ATTRIBUTES = frozenset(
 )
 
 
-class Source(NodeValue[SourceNode]):
+class Source[SqlRow_co = object](NodeValue[SourceNode]):
     """A relation that can appear in ``FROM`` or ``JOIN``."""
 
     __slots__ = ()
@@ -48,7 +48,9 @@ class Source(NodeValue[SourceNode]):
     def __init_subclass__(cls) -> None:
         """Reject a declared column that would shadow relq's own attributes."""
         super().__init_subclass__()
-        clashes = sorted(_declared_columns(cls).keys() & _RESERVED_ATTRIBUTES)
+        clashes = sorted(
+            {attribute for attribute, _ in _declared_columns(cls)} & _RESERVED_ATTRIBUTES
+        )
         if clashes:
             names = ", ".join(clashes)
             raise TypeError(
@@ -94,8 +96,8 @@ class Column[T](Expr[T]):
         return self._name or attribute
 
 
-def _declared_columns(table_type: type[Source]) -> dict[str, Column[object]]:
-    """Every column a relation declares, keyed by attribute name.
+def _declared_columns(table_type: type[Source[object]]) -> tuple[tuple[str, Column[object]], ...]:
+    """Every column a relation declares, as ``(attribute, column)`` in schema order.
 
     The whole MRO counts: a mixin's column is reachable through attribute
     lookup exactly like one declared on the relation itself, so a mixin that
@@ -103,15 +105,19 @@ def _declared_columns(table_type: type[Source]) -> dict[str, Column[object]]:
     and recurse forever.  Reserved-name enforcement and column discovery share
     this walk so they cannot disagree about what a relation declares.
     """
-    columns: dict[str, Column[object]] = {}
+    declared: dict[str, Column[object]] = {}
+    names: set[str] = set()
     for base in reversed(table_type.__mro__):
         for attribute, member in cast(dict[str, object], vars(base)).items():
             if isinstance(member, Column):
-                columns[attribute] = cast("Column[object]", member)
-    return columns
+                declared[attribute] = cast(Column[object], member)
+                names.add(member.declared_name(attribute))
+    if len(names) != len(declared):
+        raise TypeError("relation declarations cannot contain duplicate column names")
+    return tuple(declared.items())
 
 
-class Table(Source):
+class Table[SqlRow_co = object](Source[SqlRow_co]):
     """Base class for a source-visible table declaration.
 
     ``schema`` names the SQL namespace that owns the table.  It is compiled as
@@ -149,7 +155,7 @@ class Table(Source):
         return _declared_column_names(type(self))
 
 
-class DerivedTable(Source):
+class DerivedTable[SqlRow_co = object](Source[SqlRow_co]):
     """Base class for a typed relation bound to a query projection."""
 
     _reference: str
@@ -166,7 +172,7 @@ class DerivedTable(Source):
         return _declared_column_names(cls)
 
 
-class CteTable(DerivedTable):
+class CteTable[SqlRow_co = object](DerivedTable[SqlRow_co]):
     def __init__(self, name: str) -> None:
         if type(self) is CteTable:
             raise TypeError("CteTable must be subclassed and declare output_column fields")
@@ -227,18 +233,18 @@ def _column[T](python_type: TypeForm[T] | Callable[..., T], name: str, node: Nod
     return column_
 
 
-def source_node(source: Source) -> SourceNode:
+def source_node(source: Source[object]) -> SourceNode:
     return node_of(source)
 
 
-def table_node(table: Table) -> TableSourceNode:
+def table_node(table: Table[object]) -> TableSourceNode:
     node = node_of(table)
     if not isinstance(node, TableSourceNode):
         raise TypeError("Table must contain a TableSourceNode")
     return node
 
 
-def derived_table[Relation: DerivedTable](
+def derived_table[Relation: DerivedTable[object]](
     relation_type: type[Relation], source: SourceNode, alias: str
 ) -> Relation:
     if not alias:
@@ -249,8 +255,13 @@ def derived_table[Relation: DerivedTable](
     return relation
 
 
-def _declared_column_names(table_type: type[Source]) -> set[str]:
-    return {
-        column.declared_name(attribute)
-        for attribute, column in _declared_columns(table_type).items()
-    }
+def source_columns(source: Source[object]) -> tuple[Column[object], ...]:
+    """Return the declared columns in deterministic schema order."""
+    return tuple(
+        cast(Column[object], getattr(source, attribute))
+        for attribute, _ in _declared_columns(type(source))
+    )
+
+
+def _declared_column_names(table_type: type[Source[object]]) -> set[str]:
+    return {column.declared_name(attribute) for attribute, column in _declared_columns(table_type)}

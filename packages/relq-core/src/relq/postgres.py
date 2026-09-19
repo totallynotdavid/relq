@@ -20,7 +20,7 @@ one of this module's extensions.
 """
 
 import uuid
-from typing import overload
+from typing import cast, overload
 
 from relq._ast import JsonTextNode, Node, RegexMatchNode, UuidCastNode, ValueNode
 from relq._node_value import construction_token, expression_node, initialize_node
@@ -82,5 +82,7 @@ def cast_uuid(value: object) -> object:
     """
     if not isinstance(value, Expr):
         raise TypeError("cast_uuid requires a SQL text expression")
-    result: Expr[uuid.UUID | None] = _expr(UuidCastNode(expression_node(value)))
+    result: Expr[uuid.UUID | None] = _expr(
+        UuidCastNode(expression_node(cast("Expr[object]", value)))
+    )
     return result

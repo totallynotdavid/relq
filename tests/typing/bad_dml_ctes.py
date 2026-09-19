@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from relq import count, cte, delete_from, select, select_model, update
+from relq import count, cte, delete_from, select, update
 
 from .good import DocumentIds, documents
 
@@ -25,14 +25,8 @@ class DocumentRow:
 
 
 select(count()).from_(removed).with_(
-    removed,
-    delete_from(documents)
-    .where(documents.owner.eq("ada"))
-    .returning_model(DocumentRow, documents.id),
-)
-select(count()).from_(removed).with_(
-    removed, select_model(DocumentRow, documents.id).from_(documents)
+    removed, select(documents.id).decode(DocumentRow).from_(documents)
 )
 select(removed.id).from_(removed).with_recursive(
-    removed, select_model(DocumentRow, documents.id).from_(documents)
+    removed, select(documents.id).decode(DocumentRow).from_(documents)
 )

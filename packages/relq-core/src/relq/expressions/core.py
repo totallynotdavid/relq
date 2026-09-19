@@ -96,10 +96,10 @@ class Expr(Expression, Generic[T]):  # noqa: UP046 -- expressions require an inv
     def gte(self, other: T | Expr[T]) -> NullablePredicate:
         return _nullable_predicate(BinaryNode(node_of(self), ">=", _node(other)))
 
-    def in_(self, values: Iterable[T] | SelectQuery[tuple[T]]) -> NullablePredicate:
+    def in_[Row](self, values: Iterable[T] | SelectQuery[tuple[T], Row]) -> NullablePredicate:
         return _membership(self, values, False)
 
-    def not_in(self, values: Iterable[T] | SelectQuery[tuple[T]]) -> NullablePredicate:
+    def not_in[Row](self, values: Iterable[T] | SelectQuery[tuple[T], Row]) -> NullablePredicate:
         return _membership(self, values, True)
 
     def between(self, lower: T | Expr[T], upper: T | Expr[T]) -> NullablePredicate:
@@ -611,16 +611,16 @@ def overlaps(
     )
 
 
-def scalar[T](query: SelectQuery[tuple[T]]) -> Expr[T | None]:
+def scalar[T, Row](query: SelectQuery[tuple[T], Row]) -> Expr[T | None]:
     """Embed a one-column subquery whose empty result is SQL ``NULL``."""
     return _expr(ScalarSubqueryNode(select_node(query)))
 
 
-def exists[Row](query: SelectQuery[Row]) -> Predicate:
+def exists[SqlRow, Row](query: SelectQuery[SqlRow, Row]) -> Predicate:
     return _predicate(ExistsNode(select_node(query)))
 
 
-def not_exists[Row](query: SelectQuery[Row]) -> Predicate:
+def not_exists[SqlRow, Row](query: SelectQuery[SqlRow, Row]) -> Predicate:
     return _predicate(ExistsNode(select_node(query), negated=True))
 
 
@@ -698,8 +698,8 @@ def _comparison_node(expression: Node, operator: str, other: object) -> Nullable
     return _nullable_predicate(BinaryNode(expression, operator, _node(other)))
 
 
-def _membership[T](
-    expression: Expr[T], values: Iterable[T] | SelectQuery[tuple[T]], negated: bool
+def _membership[T, Row](
+    expression: Expr[T], values: Iterable[T] | SelectQuery[tuple[T], Row], negated: bool
 ) -> NullablePredicate:
     from relq.query import SelectQuery
 

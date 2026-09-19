@@ -67,10 +67,13 @@ active_or_pending = users_query.union(pending_query)
 ```
 
 `union`, `union_all`, `intersect`, and `except_` require both queries to share
-the same declared row type; relq rejects mismatched projection widths before
-compilation. A tuple query can't be compounded with a declared-model query, and
-two model queries must share the same model and decoder. Compound arms can't
-carry `ORDER BY`, `LIMIT`, or `OFFSET`. Bind the compound to a declared
+the same raw row type; relq rejects mismatched projection widths before
+compilation. `decode()` only attaches an executor-side decoder and never changes
+the SQL, so a plain query and a decoded one (or two queries decoded into
+different models) compound and compile like any other pair. The compound keeps
+the left-hand query's decoder, if it has one, and drops the right-hand arm's.
+Compound arms can't carry `ORDER BY`, `LIMIT`, `OFFSET`, or a row-locking
+clause. Bind the compound to a declared
 `DerivedTable` and order or paginate the outer query over its named output
 columns instead.
 
@@ -103,10 +106,9 @@ optimizer fence that stops the planner from inlining the CTE into its
 references. Leaving it unset emits a plain `AS (...)` and leaves the choice to
 the planner.
 
-Both engines accept the modifier at relq's documented version floors: SQLite
-added it in 3.35.0, the same release that added `RETURNING`, so it costs SQLite
-nothing relq did not already require; PostgreSQL added it in 12, which is what
-sets relq's PostgreSQL floor. An older server rejects the statement itself; see
+Both engines accept the modifier within relq's documented version floors:
+SQLite added it in 3.35.0, the same release that added `RETURNING`, and
+PostgreSQL added it in 12, so it raises neither engine's floor. An older server rejects the statement itself; see
 [Engine versions](./installation.md#engine-versions).
 
 ### Data-modifying CTEs
@@ -159,9 +161,10 @@ before it.
 
 ### CTE bodies and row models
 
-`with_` and `with_recursive` take the tuple builders (`select`, `returning`),
-never `select_model` / `returning_model`. A CTE's output relation is declared by
-its `CteTable`, and the statement's result shape belongs to the outer query, so
-an adapter attached to a CTE body would have nothing to decode. Passing one is a
-type error, and a runtime error at the builder boundary, rather than a silently
-dropped contract. Decode the outer query instead.
+`with_` and `with_recursive` take the plain tuple builders (`select`,
+`returning`), never a query that has been through `decode()`. A CTE's output
+relation is declared by its `CteTable`, and the statement's result shape belongs
+to the outer query, so an adapter attached to a CTE body would have nothing to
+decode. Passing one is a runtime error at the builder boundary, rather than a
+silently dropped contract, and a type error for a `SELECT` body. Decode the
+outer query instead.

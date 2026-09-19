@@ -299,12 +299,25 @@ def render(
     for table, table_names in zip(tables, names.tables, strict=True):
         class_name = table_names.class_name
         exported.append(class_name)
-        body.append(f"class {class_name}(Table):")
+        resolved_columns = tuple(
+            (field, resolve_type(field.sql_type, enum_types, config, dialect))
+            for field in table.columns
+        )
+        for _, resolved in resolved_columns:
+            imports.update(resolved.imports())
+        row_shape = ", ".join(
+            (
+                f"{resolved.annotation.render()} | None"
+                if field.nullable
+                else resolved.annotation.render()
+            )
+            for field, resolved in resolved_columns
+        )
+        table_shape = f"tuple[{row_shape}]" if row_shape else "tuple[()]"
+        body.append(f"class {class_name}(Table[{table_shape}]):")
         if not table.columns:
             body.append("    pass")
-        for field, attribute in zip(table.columns, table_names.columns, strict=True):
-            resolved = resolve_type(field.sql_type, enum_types, config, dialect)
-            imports.update(resolved.imports())
+        for (field, resolved), attribute in zip(resolved_columns, table_names.columns, strict=True):
             rendered.append(resolved.annotation)
             annotation = (
                 f"{resolved.annotation.render()} | None"

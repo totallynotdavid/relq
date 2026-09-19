@@ -13,11 +13,10 @@ from relq import Interval, RowAdapter
 from relq._compiler.api import compile_postgres
 from relq._execution import (
     Command,
-    MappedResultQuery,
     NoResultError,
     QueryEvent,
     QueryObserver,
-    RawResultQuery,
+    ReturningQuery,
     TransactionUnavailableError,
     map_all,
     map_one,
@@ -26,6 +25,7 @@ from relq._execution import (
     require_command,
 )
 from relq._query import Query, extract_query
+from relq.query import SelectQuery
 
 __all__ = [
     "Connection",
@@ -238,12 +238,12 @@ class PostgresDatabase:
         yield self._connection
 
     @overload
-    async def fetch_all[Row](self, query: RawResultQuery[Row]) -> list[Row]: ...
+    async def fetch_all[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> list[Row]: ...
 
     @overload
-    async def fetch_all[Model](self, query: MappedResultQuery[Model]) -> list[Model]: ...
+    async def fetch_all[Row](self, query: ReturningQuery[Row]) -> list[Row]: ...
 
-    async def fetch_all(self, query: RawResultQuery[object] | MappedResultQuery[object]) -> object:
+    async def fetch_all[Row](self, query: Query[Row]) -> list[Row]:
         self._ensure_usable()
         compiled = compile_postgres(query)
         started = perf_counter()
@@ -259,12 +259,12 @@ class PostgresDatabase:
         return result
 
     @overload
-    async def fetch_one[Row](self, query: RawResultQuery[Row]) -> Row | None: ...
+    async def fetch_one[SqlRow, Row](self, query: SelectQuery[SqlRow, Row]) -> Row | None: ...
 
     @overload
-    async def fetch_one[Model](self, query: MappedResultQuery[Model]) -> Model | None: ...
+    async def fetch_one[Row](self, query: ReturningQuery[Row]) -> Row | None: ...
 
-    async def fetch_one(self, query: RawResultQuery[object] | MappedResultQuery[object]) -> object:
+    async def fetch_one[Row](self, query: Query[Row]) -> Row | None:
         self._ensure_usable()
         compiled = compile_postgres(query)
         started = perf_counter()
@@ -279,8 +279,18 @@ class PostgresDatabase:
         self._observe(compiled.sql, compiled.parameters, started, 0 if row is None else 1, None)
         return result
 
+    @overload
+    async def fetch_all_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
+
+    @overload
     async def fetch_all_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> list[Model]: ...
+
+    async def fetch_all_as[Row, Model](
+        self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> list[Model]:
         """Map result rows through an explicit, arity-validating adapter."""
         self._ensure_usable()
@@ -299,8 +309,18 @@ class PostgresDatabase:
         self._observe(compiled.sql, compiled.parameters, started, len(rows), None)
         return result
 
+    @overload
+    async def fetch_one_as[SqlRow, Row, Model](
+        self, query: SelectQuery[SqlRow, Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
+
+    @overload
     async def fetch_one_as[Row, Model](
-        self, query: RawResultQuery[Row], adapter: RowAdapter[Model]
+        self, query: ReturningQuery[Row], adapter: RowAdapter[Model]
+    ) -> Model | None: ...
+
+    async def fetch_one_as[Row, Model](
+        self, query: Query[Row], adapter: RowAdapter[Model]
     ) -> Model | None:
         self._ensure_usable()
         if extract_query(query).adapter is not None:
@@ -318,18 +338,18 @@ class PostgresDatabase:
         return result
 
     @overload
-    async def fetch_one_or_raise[Row](
-        self, query: RawResultQuery[Row], *, error: Callable[[], Exception] | None = None
+    async def fetch_one_or_raise[SqlRow, Row](
+        self, query: SelectQuery[SqlRow, Row], *, error: Callable[[], Exception] | None = None
     ) -> Row: ...
 
     @overload
-    async def fetch_one_or_raise[Model](
-        self, query: MappedResultQuery[Model], *, error: Callable[[], Exception] | None = None
-    ) -> Model: ...
+    async def fetch_one_or_raise[Row](
+        self, query: ReturningQuery[Row], *, error: Callable[[], Exception] | None = None
+    ) -> Row: ...
 
     async def fetch_one_or_raise(
         self,
-        query: RawResultQuery[object] | MappedResultQuery[object],
+        query: SelectQuery[object, object] | ReturningQuery[object],
         *,
         error: Callable[[], Exception] | None = None,
     ) -> object:
@@ -338,32 +358,48 @@ class PostgresDatabase:
             raise_no_result(error)
         return result
 
-    async def fetch_one_as_or_raise[Row, Model](
+    @overload
+    async def fetch_one_as_or_raise[SqlRow, Row, Model](
         self,
-        query: RawResultQuery[Row],
+        query: SelectQuery[SqlRow, Row],
         adapter: RowAdapter[Model],
         *,
         error: Callable[[], Exception] | None = None,
-    ) -> Model:
+    ) -> Model: ...
+
+    @overload
+    async def fetch_one_as_or_raise[Row, Model](
+        self,
+        query: ReturningQuery[Row],
+        adapter: RowAdapter[Model],
+        *,
+        error: Callable[[], Exception] | None = None,
+    ) -> Model: ...
+
+    async def fetch_one_as_or_raise(
+        self,
+        query: SelectQuery[object, object] | ReturningQuery[object],
+        adapter: RowAdapter[object],
+        *,
+        error: Callable[[], Exception] | None = None,
+    ) -> object:
         result = await self.fetch_one_as(query, adapter)
         if result is None:
             raise_no_result(error)
         return result
 
     @overload
-    def fetch_iter[Row](
-        self, query: RawResultQuery[Row]
+    def fetch_iter[SqlRow, Row](
+        self, query: SelectQuery[SqlRow, Row]
     ) -> AbstractAsyncContextManager[AsyncIterator[Row]]: ...
 
     @overload
-    def fetch_iter[Model](
-        self, query: MappedResultQuery[Model]
-    ) -> AbstractAsyncContextManager[AsyncIterator[Model]]: ...
+    def fetch_iter[Row](
+        self, query: ReturningQuery[Row]
+    ) -> AbstractAsyncContextManager[AsyncIterator[Row]]: ...
 
     @asynccontextmanager
-    async def fetch_iter(
-        self, query: RawResultQuery[object] | MappedResultQuery[object]
-    ) -> AsyncGenerator[AsyncIterator[object]]:
+    async def fetch_iter[Row](self, query: Query[Row]) -> AsyncGenerator[AsyncIterator[Row]]:
         """Stream rows through a server-side cursor instead of materializing them.
 
         PostgreSQL cursors are only valid inside a transaction, so this opens

@@ -10,7 +10,7 @@ from relq import str_decoder
 from typing import Literal, NotRequired, Required, TypedDict
 import datetime
 
-class SnapshotUsers(Table):
+class SnapshotUsers(Table[tuple[int, str, datetime.datetime | None]]):
     id: Column[int] = column(int)
     email: Column[str] = column(str)
     created_at: Column[datetime.datetime | None] = column(datetime.datetime)

@@ -47,8 +47,8 @@ Both floors are older than every release either project still supports:
 
 | Engine | Minimum | What sets it |
 | --- | --- | --- |
-| SQLite | 3.35.0 (2021-03-12) | `RETURNING` and CTE `AS MATERIALIZED` both arrived in this release, so a build that rejects one rejects the other. Window frame `EXCLUDE` and `GROUPS` need 3.28.0. |
-| PostgreSQL | 12 (2019-10-03) | CTE `AS MATERIALIZED`. Window frame `EXCLUDE` and `GROUPS` need 11; everything else relq emits is older still. |
+| SQLite | 3.39.0 (2022-06-25) | `right_join` and `full_join` need `RIGHT`/`FULL OUTER JOIN`, which arrived in this release. `RETURNING` and CTE `AS MATERIALIZED` both need 3.35.0, so a build that rejects one rejects the other. Window frame `EXCLUDE` and `GROUPS` need 3.28.0. |
+| PostgreSQL | 14 (2021-09-30) | `date_bin` needs 14. CTE `AS MATERIALIZED` needs 12. Window frame `EXCLUDE` and `GROUPS` need 11; everything else relq emits is older still. |
 
 These are a documented contract, not a runtime gate. relq's compiler never sees
 a connection (it takes a query and returns SQL), so it cannot check a server's

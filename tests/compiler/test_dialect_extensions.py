@@ -21,7 +21,6 @@ from relq import (
     row_number,
     scalar,
     select,
-    select_model,
     update,
 )
 from relq._compiler import compile_postgres, compile_sqlite
@@ -290,12 +289,13 @@ def test_a_cte_source_cannot_declare_a_row_model() -> None:
     modelled_delete = (
         delete_from(documents)
         .where(documents.owner.eq("ada"))
-        .returning_model(DocumentRow, documents.id)
+        .returning(documents.id)
+        .decode(DocumentRow)
     )
-    modelled_select = select_model(DocumentRow, documents.id).from_(documents)
+    modelled_select = select(documents.id).decode(DocumentRow).from_(documents)
 
     with pytest.raises(ValueError, match="cannot declare a row model"):
-        select(count()).from_(removed).with_(removed, modelled_delete)  # pyright: ignore[reportArgumentType]
+        select(count()).from_(removed).with_(removed, modelled_delete)
     with pytest.raises(ValueError, match="cannot declare a row model"):
         select(count()).from_(removed).with_(removed, modelled_select)  # pyright: ignore[reportArgumentType]
     with pytest.raises(ValueError, match="cannot declare a row model"):

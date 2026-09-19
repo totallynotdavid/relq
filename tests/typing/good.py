@@ -17,8 +17,6 @@ from relq import (
     InsertQuery,
     Interval,
     JsonValue,
-    ModelInsertQuery,
-    ModelSelectQuery,
     NaiveDateTime,
     NaiveTime,
     NullablePredicate,
@@ -71,7 +69,6 @@ from relq import (
     row_number,
     scalar,
     select,
-    select_model,
     statement_timestamp,
     subtract_interval,
     sum,
@@ -212,6 +209,13 @@ insert_query = (
     insert_into(users).values(id=1, email="a@example.com", active=True).returning(users.id)
 )
 assert_type(insert_query, InsertQuery[tuple[int], Literal[True]])
+assert_type(
+    insert_into(users)
+    .values(id=1, email="a@example.com", active=True)
+    .returning(users.id, users.id, users.id, users.id, users.id, users.id, users.id, users.id),
+    InsertQuery[tuple[int, int, int, int, int, int, int, int], Literal[True]],
+)
+
 
 copied = insert_into(users).from_select(
     select(users.id, users.email).from_(users), users.id, users.email
@@ -263,11 +267,12 @@ class OuterJoinResult:
 
 manager_for_result = users.as_("manager_for_result")
 outer_join_result = (
-    select_model(OuterJoinResult, users.id, manager_for_result.id.nullable())
+    select(users.id, manager_for_result.id.nullable())
+    .decode(OuterJoinResult)
     .from_(users)
     .left_join(manager_for_result, on=users.id.eq(manager_for_result.id))
 )
-assert_type(outer_join_result, ModelSelectQuery[OuterJoinResult])
+assert_type(outer_join_result, SelectQuery[tuple[int, int | None], OuterJoinResult])
 
 
 def assert_executor_result_types(database: SQLiteDatabase) -> None:
@@ -295,9 +300,10 @@ async def assert_postgres_transaction_types(database: PostgresDatabase) -> None:
 model_insert = (
     insert_into(users)
     .values(id=3, email="lin@example.com", active=True)
-    .returning_model(OuterJoinResult, users.id, users.id)
+    .returning(users.id, users.id)
+    .decode(OuterJoinResult)
 )
-assert_type(model_insert, ModelInsertQuery[OuterJoinResult])
+assert_type(model_insert, InsertQuery[OuterJoinResult, Literal[True]])
 
 
 class Documents(Table):

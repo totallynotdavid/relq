@@ -34,8 +34,8 @@ query = select(users.id, users.email).from_(users).where(users.active.is_true())
   functions on both engines.
 - SQL truth kept honest: `Predicate` (`bool`) vs `NullablePredicate`
   (`bool | None`), matching SQL's `UNKNOWN`.
-- Raw driver results and typed model results are distinct static states, with no
-  implicit decoding.
+- Raw driver tuples or explicitly decoded model results, with decoding separate
+  from SQL composition.
 - Schema-qualified tables, materialized CTEs, and data-modifying CTEs
   (`WITH removed AS (DELETE ... RETURNING id) SELECT count(*) FROM removed`).
 - `relq-codegen` generates committed schema modules from an existing database.
