@@ -25,6 +25,49 @@ packages rather than sharing a base class: their cursor and transaction
 semantics genuinely differ (sync vs async, `sqlite3` vs `asyncpg`
 prepared-statement caching).
 
+The executors nevertheless use the same transaction-boundary model. Each
+maintains an ordered transaction stack and one registry for controlled
+transactions and savepoints, invalidates descendants when a database boundary
+destroys them, and reserves active savepoint names. The registry is the source
+of truth for descendant invalidation; there is no second child tree that can
+drift out of sync. The lifecycle invariant is:
+
+1. A handle is `unregistered` until its transaction boundary has started and
+   its constructor has registered it. It is then `open` and appears in the
+   registry for its physical connection. A successful transaction-level
+   `commit()` or `rollback()` moves it to `closed`; a successful savepoint
+   `release()` does the same, while savepoint-level `rollback()` leaves that
+   savepoint open and usable until it is released. Descendant invalidation or
+   connection recovery moves a handle to `invalidated`. Both terminal states
+   remove the handle and its active savepoint-name reservations, and all later
+   operations reject the handle.
+2. `begin()` and `savepoint()` append entries only after their driver boundary
+   has started successfully. `commit()` and `rollback()` invalidate later
+   entries in registry order as part of their boundary path; transaction
+   boundaries pre-invalidate descendants before their driver command, while
+   savepoint rollback/release invalidates them after the driver command
+   succeeds. A failed transaction boundary invalidates the whole registry
+   before connection recovery.
+3. The state registry is keyed by physical connection identity, not by a
+   `Database` wrapper. Thus wrappers around one connection share ordering,
+   name reservations, and invalidation. When its registry becomes empty, its
+   per-connection state is removed. PostgreSQL's additional weak set contains
+   exactly the handles that are open and fully constructed for that physical
+   connection; construction is its only registration point and `_close()` its
+   only explicit removal point. Recovery snapshots that set before invalidating
+   and releasing the captured handles.
+4. Registry mutations contain no await point, so an event-loop task cannot
+   interleave them. For overlapping operations, list order is the order in
+   which successful boundaries register, and a destructive boundary invalidates
+   every later entry present when it performs that mutation. The drivers still
+   serialize operations on a connection; relq does not make concurrent raw
+   driver operations safe, and a driver failure follows the recovery rules
+   above.
+
+The implementations remain separate only at the driver-facing operations and
+observer timing; the bookkeeping terminology and lifecycle rules are
+intentionally parallel.
+
 ## relq-core module dependency graph
 
 ```text
