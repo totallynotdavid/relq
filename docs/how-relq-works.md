@@ -42,6 +42,10 @@ and a raw fetch can never be silently mistaken for a decoded domain object. See
 [Design boundaries](./design-boundaries.md) for the complete list of what this
 rules out.
 
-Application code should only ever import from the top-level `relq` package; its
+Application query code should import from the top-level `relq` package; its
 internal module layout is described in [architecture.md](../architecture.md) for
 contributors working on relq itself.
+
+Schema lifecycle code is the deliberate exception: applications using
+migrations import `relq_migrate` directly, while query construction remains
+owned by the top-level `relq` package.

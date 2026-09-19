@@ -10,10 +10,21 @@ uv add "relq[postgres]"
 uv add "relq[sqlite,postgres]"
 ```
 
+Schema migrations are provided by the separate `relq-migrate` package:
+
+```bash
+uv add relq-migrate
+# For PostgreSQL migrations:
+uv add "relq-migrate[postgres]"
+```
+
 `relq` itself has no dependencies. The `sqlite` extra pins `relq-sqlite`, which
 wraps the standard library's `sqlite3`. The `postgres` extra pins
 `relq-postgres`, which wraps `asyncpg`. Both extras pin an exact version of
 their executor.
+
+`relq-migrate` is dependency-free for SQLite; install its `postgres` extra only
+when using the asynchronous PostgreSQL migrator.
 
 Schema generation is a separate, independent development tool. Run it with
 `uv tool run` from the application repository, not from a checkout of relq:

@@ -29,6 +29,7 @@ reportUnusedCallResult = "none"
 include = [
   "packages/relq-core/src",
   "packages/relq-codegen/src",
+  "packages/relq-migrate/src",
   "packages/relq-sqlite/src",
   "packages/relq-postgres/src",
   "tests",
