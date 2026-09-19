@@ -43,6 +43,7 @@ from relq import (
     sum,
 )
 from relq.postgres import cast_uuid, json_text, regex_match
+from relq_postgres import ControlledTransaction, PostgresDatabase
 from relq_sqlite import SQLiteDatabase
 
 
@@ -149,6 +150,23 @@ assert_type(outer_join_result, ModelSelectQuery[OuterJoinResult])
 def assert_executor_result_types(database: SQLiteDatabase) -> None:
     assert_type(database.fetch_all(query), list[tuple[int, str]])
     assert_type(database.fetch_all(outer_join_result), list[OuterJoinResult])
+    with database.transaction() as transaction:
+        assert_type(transaction, SQLiteDatabase)
+        assert_type(transaction.fetch_all(query), list[tuple[int, str]])
+
+
+async def assert_postgres_transaction_types(database: PostgresDatabase) -> None:
+    async with database.transaction() as transaction:
+        assert_type(transaction, PostgresDatabase)
+        assert_type(await transaction.fetch_all(query), list[tuple[int, str]])
+
+    controlled = await database.begin()
+    assert_type(controlled, ControlledTransaction)
+    async with controlled.transaction() as transaction:
+        assert_type(transaction, PostgresDatabase)
+        assert_type(await transaction.fetch_all(query), list[tuple[int, str]])
+    async with controlled.transaction_connection() as connection:
+        await connection.execute("select 1")
 
 
 model_insert = (
