@@ -38,7 +38,7 @@ jobs:
           uv run --no-sync python -c 'from importlib.metadata import version;
           from os import environ; tag = environ["RELEASE_TAG"].removeprefix("v"); versions =
           {version(name) for name in ("relq", "relq-sqlite", "relq-postgres",
-          "relq-codegen")}; assert versions == {tag}, f"tag {tag!r} does not
+          "relq-codegen", "relq-migrate")}; assert versions == {tag}, f"tag {tag!r} does not
           match distribution versions {versions!r}"'
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync ruff check .
@@ -48,6 +48,7 @@ jobs:
       - run: uv build --package relq-sqlite --out-dir dist
       - run: uv build --package relq-postgres --out-dir dist
       - run: uv build --package relq-codegen --out-dir dist
+      - run: uv build --package relq-migrate --out-dir dist
       - name: Verify release artifacts install outside the workspace
         run: scripts/check-install.sh "$PWD/dist"
       - uses: actions/upload-artifact@v5

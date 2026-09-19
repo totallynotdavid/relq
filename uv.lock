@@ -6,6 +6,7 @@ requires-python = ">=3.15"
 members = [
     "relq",
     "relq-codegen",
+    "relq-migrate",
     "relq-postgres",
     "relq-sqlite",
     "relq-workspace",
@@ -161,6 +162,20 @@ provides-extras = ["sqlite", "postgres", "all"]
 name = "relq-codegen"
 version = "0.0.1"
 source = { editable = "packages/relq-codegen" }
+
+[package.optional-dependencies]
+postgres = [
+    { name = "asyncpg" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.31" }]
+provides-extras = ["postgres"]
+
+[[package]]
+name = "relq-migrate"
+version = "0.0.1"
+source = { editable = "packages/relq-migrate" }
 
 [package.optional-dependencies]
 postgres = [
