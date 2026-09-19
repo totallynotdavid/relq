@@ -9,8 +9,7 @@ mise install
 uv sync --locked --all-packages
 ```
 
-`mise.toml` pins the Python, uv, and PostgreSQL versions this project develops
-against.
+`mise.toml` pins the Python, uv, and PostgreSQL versions used for development.
 
 ## Workspace layout
 
@@ -32,24 +31,26 @@ mise release          # clean wheel install/import/codegen verification
 mise check            # every gate above; required before submitting a change
 ```
 
-`mise check` provisions an ephemeral PostgreSQL instance, runs the complete
-SQLite + PostgreSQL test matrix, and installs the built wheels into fresh
-SQLite-only and PostgreSQL-only environments, so a PostgreSQL dependency can
-never leak into the SQLite-only install path by accident.
+`mise check` starts an ephemeral PostgreSQL instance, runs the full SQLite and
+PostgreSQL test matrix, and installs the built wheels into fresh SQLite-only and
+PostgreSQL-only environments. That last step catches a PostgreSQL dependency
+leaking into the SQLite-only install.
 
 ## Tests
 
-Test layout mirrors the runtime pipeline, not delivery order:
+- `tests/compiler`: builders, query composition, and compiler contracts.
+- `tests/semantics`: query analysis and AST traversal.
+- `tests/codegen`: SQLite rendering and CLI freshness.
+- `tests/migrate`: migration providers and the PostgreSQL migrator.
+- `tests/typing`: the type-checker fixtures. `test_typing_fixtures.py` runs
+  them.
+- `tests/integration/sqlite` and `tests/integration/postgres`: real-driver
+  execution, DML, decoding, catalog, and analytic contracts.
 
-- `tests/contract`: SQLite-backed builder, DML, decoding, and compiler contracts
-- `tests/semantics`: query analysis and validation, directly
-- `tests/codegen`: SQLite rendering and CLI freshness
-- `tests/integration/postgres`: real-driver harness, execution, catalog, and
-  analytic contracts
-
-Shared schemas live in `tests/fixtures`; portable relational DDL/data lives
-beside each backend matrix adapter. The matrix itself contains assertions only,
-so PostgreSQL lifecycle cleanup stays independent of behavioral tests.
-PostgreSQL integration tests are opt-in through `RELQ_TEST_POSTGRES_DSN`;
-`RELQ_KEEP_TEST_SCHEMA=1` preserves the test schema after a local run for
-debugging.
+Shared schemas live in `tests/fixtures.py`, and `tests/snapshots` holds the
+generated schema modules that the codegen tests compare against. The relational
+matrix in `tests/relational_matrix.py` contains assertions only, and each backend
+supplies its own DDL and data through a `matrix_fixture.py` next to its tests.
+PostgreSQL lifecycle cleanup therefore stays independent of the behavior tests.
+The PostgreSQL integration tests run only when `RELQ_TEST_POSTGRES_DSN` is set.
+`RELQ_KEEP_TEST_SCHEMA=1` keeps the test schema after a local run for debugging.

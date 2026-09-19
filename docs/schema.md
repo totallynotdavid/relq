@@ -17,19 +17,18 @@ class Users(Table):
 users = Users("users")
 ```
 
-`column(python_type)` binds the column's Python result type; nullability lives
-in the annotation (`Column[int | None]`), not in separate runtime metadata.
-`Column[T]` is a typed descriptor: `users.id` is `Column[int]`. Pass
-`name="..."` when the SQL column name differs from the Python attribute.
+`column(python_type)` binds the column's Python result type. Nullability belongs
+in the annotation, as in `Column[int | None]`. `Column[T]` is a typed
+descriptor, so `users.id` is a `Column[int]`. Pass `name="..."` when the SQL
+column name differs from the Python attribute.
 
-A declared column cannot take an attribute name relq itself uses on a relation
-(`table_name`, `reference`, `node`, `as_`, `_schema`, ...); `Column` is a
-non-data descriptor, so such an attribute would silently replace it. That is a
-`TypeError` at class-definition time, and it covers a column a shared mixin
-declares as well as one on the relation itself, because attribute lookup finds
-both. Rename the attribute and keep the SQL name with
-`column(str, name="_schema")`. `relq-codegen` applies the same rename
-automatically.
+A column cannot use an attribute name that relq uses on a relation, such as
+`table_name`, `reference`, `node`, `as_`, or `_schema`. `Column` is a non-data
+descriptor, so an instance attribute with the same name would replace it. relq
+raises `TypeError` when the class is defined. The check covers columns declared
+in a shared mixin as well, because attribute lookup finds them too. Rename the
+attribute and keep the SQL name with `column(str, name="_schema")`.
+`relq-codegen` applies the same rename automatically.
 
 ## Schema-qualified tables
 
@@ -41,21 +40,20 @@ queue_jobs = QueueJobs("jobs", schema="rqueue")
 compute_jobs = ComputeJobs("jobs", schema="compute")
 ```
 
-The schema compiles to its own quoted identifier, `"rqueue"."jobs"`, never as
-part of the table's name, and it applies to `SELECT` sources and DML targets
-alike. The table's correlation name is still the bare table name, so columns
-stay `"jobs"."id"`; two same-named tables in different schemas therefore need
-`.as_(...)` aliases, exactly as SQL requires.
+The schema compiles to its own quoted identifier, `"rqueue"."jobs"`, and never as
+part of the table's name. It applies to `SELECT` sources and DML targets alike.
+The correlation name is still the bare table name, so columns render as
+`"jobs"."id"`. Two same-named tables in different schemas therefore need
+`.as_(...)` aliases, as SQL requires.
 
-This is PostgreSQL-only. SQLite has qualified names too, but they address
-attached databases rather than schemas, so compiling a schema-qualified table
-for SQLite is a compile-time error instead of a query that quietly means
-something else.
+Schemas are PostgreSQL-only. SQLite's qualified names address attached databases
+instead of schemas, so compiling a schema-qualified table for SQLite raises an
+error instead of producing a query with a different meaning.
 
 ## Aliases and self-joins
 
-`.as_("name")` returns a same-class, shallow copy bound to a SQL alias. Types
-stay exact:
+`.as_("name")` returns a shallow copy of the same class, bound to a SQL alias.
+The column types are unchanged:
 
 ```python
 manager = users.as_("manager")
@@ -70,7 +68,7 @@ query = (
 
 ## Derived tables and CTEs
 
-A reusable, typed relation over a query's output is a small `DerivedTable` or
+A typed, reusable relation over a query's output is a small `DerivedTable` or
 `CteTable` subclass with `output_column` fields:
 
 ```python
@@ -90,20 +88,19 @@ totals = (
 )
 ```
 
-`query.as_(Totals, "totals")` binds a declared relation to a projection;
-`cte(Active, "active")` gives a typed CTE source for use with `.with_(...)`.
-Both validate that declared output names match the query's selected column or
-alias names before the query compiles. `totals.reports` is now a typed
-`Column[int]`, usable anywhere a normal column is, without redeclaring the
-projection at every call site.
+`query.as_(Totals, "totals")` binds a declared relation to a projection.
+`cte(Active, "active")` gives a typed CTE source for `.with_(...)`. Both check
+that the declared output names match the query's selected column or alias names
+before the query compiles. `totals.reports` is then a `Column[int]` that works
+anywhere a normal column does.
 
-There is no dynamic `cte("name")`, `query.as_("alias")` as an untyped relation,
-or `.column("name")` accessor. A relation's output schema always comes from a
+There is no untyped `cte("name")`, no untyped `query.as_("alias")`, and no
+`.column("name")` accessor. A relation's output schema always comes from a
 declared class, so both the type checker and the compiler can validate against
 it.
 
-## Codegen-generated schema
+## Generated schemas
 
-`relq-codegen` generates `Table` declarations, plus DML payload contracts,
-directly from database metadata, so schema modules don't have to be handwritten
-and kept in sync by hand. See [Code generation](./codegen.md).
+`relq-codegen` generates `Table` declarations and DML payload contracts from
+database metadata, so nobody writes or updates schema modules by hand. See
+[Code generation](./codegen.md).

@@ -1,6 +1,6 @@
 # How relq works
 
-relq has four layers, and each is a separate package concern:
+relq has four layers:
 
 ```text
 handwritten declarations or database metadata
@@ -14,38 +14,32 @@ handwritten declarations or database metadata
 ```
 
 1. **Schema.** A relation's shape is declared with `Table`, `DerivedTable`, or
-   `CteTable`, never built at runtime from column-name strings. A table alias is
-   a typed, shallow copy of the same class, so `users.as_("manager").id` stays
-   statically `Column[int]`. See [Schema](./schema.md).
+   `CteTable`. It is never built at runtime from column-name strings. A table
+   alias is a typed shallow copy of the same class, so `users.as_("manager").id`
+   is still a `Column[int]`. See [Schema](./schema.md).
 2. **Builders.** `select`, `insert_into`, `update`, and `delete_from` construct
    frozen AST nodes. `SelectQuery`, `InsertQuery`, `UpdateQuery`, and
-   `DeleteQuery` are persistent values: every method returns a new query, and
-   clauses that would otherwise silently replace meaning (`from_`, `values`,
-   `limit`, `returning`, ...) are single-assignment.
+   `DeleteQuery` are persistent values, so every method returns a new query.
+   Clauses that would replace an earlier one (`from_`, `values`, `limit`,
+   `returning`, and others) can be set only once.
 3. **Compiler.** Validation and rendering run over the immutable AST. A query is
-   checked once and rendered for exactly one dialect, SQLite or PostgreSQL.
-   Nothing about the AST or the renderer's internal state is public.
+   validated once and rendered for exactly one dialect, SQLite or PostgreSQL.
+   The AST and the renderer's state are private.
 4. **Executor.** `relq-sqlite` and `relq-postgres` consume queries through a
-   private execution boundary, not AST or builder internals. `fetch_all` /
-   `fetch_one` accept `SELECT` and `RETURNING` queries; `execute` accepts only
-   non-row-producing DML. An unadapted fetch returns the driver's own tuple
-   values (SQLite's `0`/`1` for booleans, text timestamps, and so on) instead of
-   pretending they're already Python domain objects. `row_adapter(Model)` is the
-   explicit, arity-checked conversion boundary for `fetch_all_as` /
-   `fetch_one_as`; `.decode(...)` embeds that adapter directly into a query.
-   See [Execution](./execution.md).
+   private execution boundary and never touch AST or builder internals.
+   `fetch_all` and `fetch_one` accept `SELECT` and `RETURNING` queries. `execute`
+   accepts only DML that returns no rows. An unadapted fetch returns the driver's
+   own values, such as SQLite's `0` and `1` for booleans and text timestamps.
+   `row_adapter(Model)` is the explicit conversion for `fetch_all_as` and
+   `fetch_one_as`. It checks the row width first. `.decode(...)` embeds an
+   adapter in the query. See [Execution](./execution.md).
 
-This split exists to make a category of bug unrepresentable rather than just
-discouraged: schema shape can't be assembled from user input at runtime, SQL
-structure is only ever composed from closed builders with parameterized values,
-and a raw fetch can never be silently mistaken for a decoded domain object. See
-[Design boundaries](./design-boundaries.md) for the complete list of what this
-rules out.
+The split makes three kinds of bug unrepresentable. Schema shape cannot be built
+from user input at runtime. SQL structure comes only from closed builders with
+parameterized values. A raw fetch is never mistaken for a decoded domain object.
+[Design boundaries](./design-boundaries.md) lists everything this rules out.
 
-Application query code should import from the top-level `relq` package; its
-internal module layout is described in [architecture.md](../architecture.md) for
-contributors working on relq itself.
-
-Schema lifecycle code is the deliberate exception: applications using
-migrations import `relq_migrate` directly, while query construction remains
-owned by the top-level `relq` package.
+Application query code imports from the top-level `relq` package. Its internal
+module layout is described in [architecture.md](../architecture.md), for
+contributors to relq. Applications that use migrations also import
+`relq_migrate` directly.

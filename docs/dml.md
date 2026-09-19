@@ -15,12 +15,11 @@ insert_into(users).values_many(
 )
 ```
 
-`values_many` materializes its input once, validates every row has the same
-ordered column shape, and compiles to a single `INSERT ... VALUES (...), (...)`
-statement: one round trip instead of one statement per row, with coherent
-`RETURNING` semantics. SQLite's 999-parameter ceiling and PostgreSQL's
-65,535-parameter ceiling are both checked at compile time, so callers chunk
-intentionally instead of hitting an opaque driver failure.
+`values_many` reads its input once, requires every row to have the same columns
+in the same order, and compiles to one `INSERT ... VALUES (...), (...)`
+statement. The compiler checks SQLite's 999-parameter limit and PostgreSQL's
+65,535-parameter limit, so a batch that is too large fails with a relq error
+before it reaches the driver. Split large batches yourself.
 
 ```python
 copied = insert_into(user_archive).from_select(
@@ -45,17 +44,17 @@ upsert = (
 )
 ```
 
-`on_conflict(...)` is shared by SQLite and PostgreSQL and must be completed with
-`.do_nothing()` or `.do_update(...)`; `excluded(column)` refers to the proposed
-row. Named constraints as a conflict target aren't part of this surface yet. See
+`on_conflict(...)` works on both SQLite and PostgreSQL. It must be completed with
+`.do_nothing()` or `.do_update(...)`. `excluded(column)` refers to the proposed
+row. Named constraints are not supported as a conflict target yet. See
 [Design boundaries](./design-boundaries.md).
 
 The target takes any number of columns, because a composite unique index does.
-They are typed as `ConflictTarget`, the un-parameterised base every `Column`
-inherits, so one target can mix value types -- `(queue, dedupe_key)` with
-`dedupe_key` nullable, say. `from_select(...)` and `returning(...)` do cap their
-arity, because there each position feeds the result tuple; a conflict target
-feeds nothing, so it has no such cap.
+Its columns are typed as `ConflictTarget`, the unparameterized base that every
+`Column` inherits, so one target can mix value types and nullability. A
+`(queue, dedupe_key)` target with a nullable `dedupe_key` is an example.
+`from_select(...)` and `returning(...)` limit their arity because each position
+feeds the result tuple. A conflict target does not, so it has no limit.
 
 ### Conflict predicates (PostgreSQL only)
 
@@ -73,18 +72,22 @@ positions the SQL clauses occupy:
 )
 ```
 
-The first `.where(...)` is the *arbiter* predicate: it repeats a partial unique
-index's own predicate so PostgreSQL can infer that index, and it is required
-whenever the unique index is partial. The second is the *action* predicate: the
+The first `.where(...)` is the arbiter predicate. It repeats a partial unique
+index's own predicate so that PostgreSQL can infer the index, and it is required
+whenever that index is partial. The second is the action predicate. The
 conflicting row is updated only where it holds, which makes `do_update` a
-compare-and-swap rather than an unconditional overwrite.
+compare-and-swap instead of an unconditional overwrite.
 
-`.do_update(...)` returns a `ConflictUpdateQuery`, which is already executable;
-its `.where(...)` must come before `.returning(...)`, matching SQL's own order.
+The arbiter predicate compiles with inlined constants, not parameters, because a
+generic plan would otherwise stop matching the index. It accepts only columns,
+text, integer, boolean, and `NULL` constants, comparisons, `IN`, `BETWEEN`, `IS`
+checks, `AND`, and `OR`.
+
+`.do_update(...)` returns a `ConflictUpdateQuery`, which is already executable.
+Its `.where(...)` must come before `.returning(...)`, matching SQL's own order.
 `excluded(column)` is allowed in the action predicate and rejected in the
-arbiter predicate, which describes stored rows rather than the proposed one.
-Compiling either predicate for SQLite raises: relq only emits them for
-PostgreSQL.
+arbiter predicate, which describes stored rows instead of the proposed one.
+Compiling either predicate for SQLite raises an error.
 
 ## Update and delete
 
@@ -94,9 +97,9 @@ update(users).values(login_count=add(users.login_count, 1)).where(users.id.eq(42
 delete_from(users).where(users.id.eq(42))
 ```
 
-Neither compiles until `.where(...)` bounds it or `.all_rows()` records an
-intentional full-table operation. An accidental unbounded `UPDATE`/`DELETE` is a
-build-time error, not a production incident.
+Neither compiles until `.where(...)` bounds it or `.all_rows()` marks a
+deliberate full-table operation. An unbounded `UPDATE` or `DELETE` is a build
+error.
 
 ## Returning
 
@@ -105,11 +108,9 @@ insert_into(users).values(email="ada@example.com").returning(users.id, users.ema
 ```
 
 `.returning(...)` turns a DML builder into a row-producing query, so it goes to
-`fetch_all`/`fetch_one`, not `execute`. Tuple `returning` overloads stop at eight
-expressions, matching `select`. `.decode(Model)` attaches its decoder after the
-projection is built, so it does not raise either limit: `select(...)` and
-`returning(...)` accept at most eight expressions whether or not a decoder
-follows. For a declared relation wider than eight columns, use
-`select_all_from(relation)` before decoding; its declared row shape remains
-exact. That is the only way past the limit, and only for a whole relation:
-`returning` has no wider form.
+`fetch_all` or `fetch_one`, not `execute`. It takes at most eight expressions,
+like `select`. `.decode(Model)` does not raise that limit, because it attaches a
+decoder to a projection that already exists. For a declared relation with more
+than eight columns, use `select_all_from(relation)` before decoding. That is the
+only way past the limit, and it covers a whole relation only. `returning` has no
+wider form.

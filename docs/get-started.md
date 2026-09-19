@@ -1,6 +1,6 @@
 # Get started
 
-Declare your tables, build a query, and run it:
+Declare a table, build a query, and run it:
 
 ```python
 import sqlite3
@@ -23,13 +23,13 @@ database = SQLiteDatabase(sqlite3.connect("app.db"))
 rows = database.fetch_all(query)  # list[tuple[int, str]]
 ```
 
-`query` is an immutable value: every builder method (`.from_`, `.where`,
-`.limit`, ...) returns a new query rather than mutating the one it was called
-on. `fetch_all` returns exactly the tuple shape you selected: here,
-`list[tuple[int, str]]`, checked statically, not `list[tuple[object, ...]]`.
+`query` is immutable. Every builder method, such as `.from_`, `.where`, and
+`.limit`, returns a new query. `fetch_all` returns the tuple shape you selected.
+Here that is `list[tuple[int, str]]`, checked statically, not
+`list[tuple[object, ...]]`.
 
-If your database already exists, generate the table declarations instead of
-writing them by hand: see [Code generation](./codegen.md).
+If the database already exists, generate the table declarations instead of
+writing them by hand. See [Code generation](./codegen.md).
 
-Continue to [How relq works](./how-relq-works.md) for the full pipeline, or jump
-straight to [Queries](./queries.md) and [Data manipulation](./dml.md).
+[How relq works](./how-relq-works.md) describes the whole pipeline.
+[Queries](./queries.md) and [Data manipulation](./dml.md) cover the builders.
