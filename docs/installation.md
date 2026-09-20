@@ -28,7 +28,7 @@ version.
 for the asynchronous PostgreSQL migrator.
 
 Schema generation is a separate development tool. Run it with `uv tool run` from
-the application repository, not from a checkout of relq:
+the application repository:
 
 ```bash
 uv tool run relq-codegen sqlite path/to/app.db src/my_app/db_schema.py

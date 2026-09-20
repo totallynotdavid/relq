@@ -3,8 +3,7 @@
 `relq-codegen` reads database metadata and renders a deterministic Python module
 that you commit. The module holds table declarations, DML payload contracts, row
 models, and typed helpers. It is a development tool, not a runtime dependency.
-Run it with `uv tool run` from the application repository, not from a checkout
-of relq.
+Run it with `uv tool run` from the application repository.
 
 ```bash
 uv tool run relq-codegen sqlite path/to/app.db src/my_app/db_schema.py
