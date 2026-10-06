@@ -177,7 +177,12 @@ def value[T](item: T) -> Expr[T]:
 def now() -> Expr[datetime.datetime]:
     """Return PostgreSQL's transaction timestamp.
 
-    SQLite compilation rejects this closed PostgreSQL-only expression.
+    This is a closed PostgreSQL-only expression, enforced only at compile
+    time: ``compile_sqlite()`` raises ``ValueError`` wherever it appears in a
+    query. Unlike ``SelectQuery.for_update()``, that restriction is not
+    tracked in the type system, since it would require threading a dialect
+    parameter through every expression combinator; composing this into a
+    query does not change the query's static type.
     """
     return Expr(NowNode())
 
@@ -187,7 +192,9 @@ def add_interval(
 ) -> Expr[datetime.datetime]:
     """Add a PostgreSQL interval to a timestamp expression.
 
-    SQLite compilation rejects this closed PostgreSQL-only operation.
+    This is a closed PostgreSQL-only operation, enforced only at compile
+    time: ``compile_sqlite()`` raises ``ValueError`` wherever it appears in a
+    query. See :func:`now` for why this is a runtime check, not a static one.
     """
     return Expr(TemporalBinaryNode(timestamp.node(), "+", _node(delta)))
 
@@ -197,7 +204,9 @@ def subtract_interval(
 ) -> Expr[datetime.datetime]:
     """Subtract a PostgreSQL interval from a timestamp expression.
 
-    SQLite compilation rejects this closed PostgreSQL-only operation.
+    This is a closed PostgreSQL-only operation, enforced only at compile
+    time: ``compile_sqlite()`` raises ``ValueError`` wherever it appears in a
+    query. See :func:`now` for why this is a runtime check, not a static one.
     """
     return Expr(TemporalBinaryNode(timestamp.node(), "-", _node(delta)))
 

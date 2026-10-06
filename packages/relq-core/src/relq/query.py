@@ -169,6 +169,8 @@ class SelectQuery[Row, Target: Literal["portable", "postgres"] = Literal["portab
 ):
     """A SELECT that exposes raw driver tuples."""
 
+    # Not on the shared _SelectQuery base: Self can't reparametrize just
+    # Target while keeping Row fixed, so each concrete class needs its own copy.
     def for_update(
         self, *, of: Table | None = None, skip_locked: bool = False
     ) -> SelectQuery[Row, Literal["postgres"]]:
@@ -195,6 +197,8 @@ class ModelSelectQuery[Model, Target: Literal["portable", "postgres"] = Literal[
 ):
     """A SELECT whose rows are decoded into one declared model."""
 
+    # Not on the shared _SelectQuery base: Self can't reparametrize just
+    # Target while keeping Model fixed, so each concrete class needs its own copy.
     def for_update(
         self, *, of: Table | None = None, skip_locked: bool = False
     ) -> ModelSelectQuery[Model, Literal["postgres"]]:
@@ -357,11 +361,14 @@ def _validate_output_schema(node: SelectNode, expected: set[str]) -> None:
         )
 
 
-def _validate_compound_result_shape[
-    LeftTarget: Literal["portable", "postgres"],
-    RightTarget: Literal["portable", "postgres"],
-](left: _SelectQuery[object, LeftTarget], right: _SelectQuery[object, RightTarget]) -> None:
-    """Keep the public result-type transition sound across a compound."""
+def _validate_compound_result_shape[Target: Literal["portable", "postgres"]](
+    left: _SelectQuery[object, Target], right: _SelectQuery[object, Target]
+) -> None:
+    """Keep the public result-type transition sound across a compound.
+
+    ``_compound`` always calls this with ``other: Self``, so both sides are
+    already forced to share one ``Target`` before this function ever runs.
+    """
     left_node = select_node(left)
     right_node = select_node(right)
     if len(left_node.selections) != len(right_node.selections):
