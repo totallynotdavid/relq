@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from collections.abc import Iterator
 from typing import cast
 
 from ._model import (
+    Migration,
     MigrationError,
     MigrationReport,
     MigrationResult,
@@ -29,6 +31,17 @@ class SQLiteMigrator:
     migration therefore leaves earlier successful migrations committed, as the
     PostgreSQL adapter does. The adapter supports legacy transaction control
     and ``autocommit=True``. It does not support ``autocommit=False``.
+
+    ``busy_timeout`` is how many seconds a migrator waits for another writer's
+    lock before failing. It applies for the whole run and the connection's own
+    setting is restored afterwards. It should exceed your slowest migration,
+    because a second migrator waits for the first one's whole transaction.
+
+    A migration whose header says ``-- relq: foreign_keys = off`` runs with
+    foreign-key enforcement off, as SQLite's table-rebuild procedure requires.
+    SQLite ignores that pragma inside a transaction, so the migrator sets it
+    before ``BEGIN``, runs ``PRAGMA foreign_key_check`` before ``COMMIT``
+    (any violation rolls the migration back), and restores enforcement last.
     """
 
     def __init__(
@@ -37,21 +50,48 @@ class SQLiteMigrator:
         provider: FileMigrationProvider,
         *,
         table_name: str = "relq_migrations",
+        busy_timeout: float = 30.0,
     ) -> None:
         _validate_connection_mode(connection)
+        if not math.isfinite(busy_timeout) or busy_timeout < 0:
+            raise ValueError("busy_timeout must be a non-negative number of seconds")
         self._connection = connection
         self._provider = provider
         self._table_name = validate_identifier(table_name, kind="history table")
+        self._busy_timeout_ms = round(busy_timeout * 1000)
+
+    def pending(self) -> tuple[str, ...]:
+        """Name the migrations ``migrate_to_latest`` would apply, writing nothing.
+
+        It raises ``MigrationError`` for the history problems a run would also
+        reject, and works on a read-only connection. A database without a
+        history table has every migration pending.
+        """
+        migrations = self._provider.migrations()
+        table = quote_identifier(self._table_name)
+        has_history = self._connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (self._table_name,),
+        ).fetchall()
+        applied = _read_applied(self._connection, table) if has_history else {}
+        return tuple(migration.name for migration in pending_migrations(migrations, applied))
 
     def migrate_to_latest(self) -> MigrationReport:
         _validate_connection_mode(self._connection)
-        table = quote_identifier(self._table_name)
-        results: list[MigrationResult] = []
-
         if self._connection.in_transaction:
             raise RuntimeError(
                 "SQLiteMigrator requires a connection outside a caller-owned transaction"
             )
+        previous_timeout = _pragma_value(self._connection, "busy_timeout")
+        self._connection.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
+        try:
+            return self._migrate()
+        finally:
+            self._connection.execute(f"PRAGMA busy_timeout = {previous_timeout}")
+
+    def _migrate(self) -> MigrationReport:
+        table = quote_identifier(self._table_name)
+        results: list[MigrationResult] = []
 
         try:
             migrations = self._provider.migrations()
@@ -66,42 +106,103 @@ class SQLiteMigrator:
 
         for index, migration in enumerate(pending):
             try:
-                self._connection.execute("BEGIN IMMEDIATE")
-                applied = _read_applied(self._connection, table)
-                pending_now = pending_migrations(migrations, applied)
-                if migration.name in applied:
-                    _commit(self._connection)
-                    results.append(MigrationResult(migration.name, MigrationStatus.NOT_EXECUTED))
-                    continue
-                if not pending_now or pending_now[0].name != migration.name:
-                    raise MigrationError(
-                        f"migration {migration.name!r} is not the next pending migration"
-                    )
-                for statement in _split_sql_statements(migration.sql):
-                    if _is_transaction_control(self._connection, statement):
-                        raise MigrationError(
-                            f"migration {migration.name!r} contains transaction-control SQL"
-                        )
-                    self._connection.execute(statement)
-                    if not self._connection.in_transaction:
-                        raise MigrationError(
-                            f"migration {migration.name!r} ended the migrator's transaction"
-                        )
-                self._connection.execute(
-                    f"INSERT INTO {table} (migration_name, checksum) VALUES (?, ?)",
-                    (migration.name, migration_checksum(migration)),
-                )
-                _commit(self._connection)
+                executed = self._apply(migration, migrations, table)
             except Exception as error:  # noqa: BLE001 - report migration failures
                 results.append(MigrationResult(migration.name, MigrationStatus.ERROR, error))
                 results.extend(
                     MigrationResult(later.name, MigrationStatus.NOT_EXECUTED)
                     for later in pending[index + 1 :]
                 )
-                _rollback(self._connection)
                 return MigrationReport(error, tuple(results))
-            results.append(MigrationResult(migration.name, MigrationStatus.SUCCESS))
+            results.append(
+                MigrationResult(
+                    migration.name,
+                    MigrationStatus.SUCCESS if executed else MigrationStatus.NOT_EXECUTED,
+                )
+            )
         return MigrationReport(None, tuple(results))
+
+    def _apply(self, migration: Migration, migrations: tuple[Migration, ...], table: str) -> bool:
+        """Run one migration in its own transaction; ``False`` if another run did it first."""
+        enforcement_was_on = not migration.foreign_keys and _disable_foreign_keys(self._connection)
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            applied = _read_applied(self._connection, table)
+            pending_now = pending_migrations(migrations, applied)
+            if migration.name in applied:
+                _commit(self._connection)
+                return False
+            if not pending_now or pending_now[0].name != migration.name:
+                raise MigrationError(
+                    f"migration {migration.name!r} is not the next pending migration"
+                )
+            for statement in _split_sql_statements(migration.sql):
+                if _is_transaction_control(self._connection, statement):
+                    raise MigrationError(
+                        f"migration {migration.name!r} contains transaction-control SQL"
+                    )
+                self._connection.execute(statement)
+                if not self._connection.in_transaction:
+                    raise MigrationError(
+                        f"migration {migration.name!r} ended the migrator's transaction"
+                    )
+            self._connection.execute(
+                f"INSERT INTO {table} (migration_name, checksum) VALUES (?, ?)",
+                (migration.name, migration_checksum(migration)),
+            )
+            if not migration.foreign_keys:
+                _check_foreign_keys(self._connection, migration.name)
+            _commit(self._connection)
+            return True
+        except BaseException:
+            _rollback(self._connection)
+            raise
+        finally:
+            if enforcement_was_on:
+                _enable_foreign_keys(self._connection)
+
+
+def _pragma_value(connection: sqlite3.Connection, name: str) -> int:
+    cursor = connection.cursor()
+    cursor.row_factory = None
+    try:
+        row = cast(object, cursor.execute(f"PRAGMA {name}").fetchone())
+    finally:
+        cursor.close()
+    if not isinstance(row, tuple) or not isinstance(cast(tuple[object, ...], row)[0], int):
+        raise MigrationError(f"PRAGMA {name} did not return an integer")
+    return cast(tuple[int], row)[0]
+
+
+def _disable_foreign_keys(connection: sqlite3.Connection) -> bool:
+    """Turn enforcement off outside any transaction; return whether it was on."""
+    was_on = _pragma_value(connection, "foreign_keys") == 1
+    if was_on:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        if _pragma_value(connection, "foreign_keys") != 0:
+            raise MigrationError("SQLite did not turn foreign key enforcement off")
+    return was_on
+
+
+def _enable_foreign_keys(connection: sqlite3.Connection) -> None:
+    connection.execute("PRAGMA foreign_keys = ON")
+    if _pragma_value(connection, "foreign_keys") != 1:
+        raise MigrationError("SQLite did not restore foreign key enforcement")
+
+
+def _check_foreign_keys(connection: sqlite3.Connection, migration_name: str) -> None:
+    cursor = connection.cursor()
+    cursor.row_factory = None
+    try:
+        violations = cast(list[object], cursor.execute("PRAGMA foreign_key_check").fetchall())
+    finally:
+        cursor.close()
+    if violations:
+        first = cast(tuple[object, ...], violations[0])
+        raise MigrationError(
+            f"migration {migration_name!r} left {len(violations)} foreign key violation(s), "
+            f"the first in table {first[0]!r}"
+        )
 
 
 def _validate_connection_mode(connection: sqlite3.Connection) -> None:

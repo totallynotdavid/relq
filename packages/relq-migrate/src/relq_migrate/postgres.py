@@ -62,6 +62,25 @@ class PostgresMigrator:
             max_bytes=_POSTGRES_IDENTIFIER_MAX_BYTES,
         )
 
+    async def pending(self) -> tuple[str, ...]:
+        """Name the migrations ``migrate_to_latest`` would apply, writing nothing.
+
+        It raises ``MigrationError`` for the history problems a run would also
+        reject. A database without a history table has every migration pending.
+        """
+        if _is_pool(self._connection):
+            async with self._connection.acquire() as connection:
+                return await self._pending_on(connection)
+        return await self._pending_on(self._connection)
+
+    async def _pending_on(self, connection: _Connection) -> tuple[str, ...]:
+        migrations = self._provider.migrations()
+        table, _ = await _history_table_reference(connection, self._table_name)
+        applied: dict[str, str] = {}
+        if await connection.fetchval("SELECT pg_catalog.to_regclass($1)", table) is not None:
+            applied = await _read_history(connection, table)
+        return tuple(migration.name for migration in pending_migrations(migrations, applied))
+
     async def migrate_to_latest(self) -> MigrationReport:
         if _is_pool(self._connection):
             async with self._connection.acquire() as connection:
@@ -90,18 +109,14 @@ class PostgresMigrator:
                 )
                 """
             )
-            rows = await connection.fetch(f"SELECT migration_name, checksum FROM {table}")
-            applied: dict[str, str] = {}
-            for row in rows:
-                migration_name = cast(object, row["migration_name"])
-                checksum = cast(object, row["checksum"])
-                if not isinstance(migration_name, str) or not isinstance(checksum, str):
-                    raise MigrationError(
-                        "migration history contains a malformed row; "
-                        "migration_name and checksum must be text"
-                    )
-                applied[migration_name] = checksum
+            applied = await _read_history(connection, table)
             pending = pending_migrations(migrations, applied)
+            for migration in pending:
+                if not migration.foreign_keys:
+                    raise MigrationError(
+                        f"migration {migration.name!r} asks for foreign_keys = off, "
+                        "which only SQLiteMigrator supports"
+                    )
             results: list[MigrationResult] = []
             for index, migration in enumerate(pending):
                 try:
@@ -226,6 +241,21 @@ async def _history_table_reference(connection: _Connection, table_name: str) -> 
         schema_cache[table_name] = schema_name
     table = _qualified_history_table(schema_name, table_name)
     return table, schema_name
+
+
+async def _read_history(connection: _Connection, table: str) -> dict[str, str]:
+    rows = await connection.fetch(f"SELECT migration_name, checksum FROM {table}")
+    applied: dict[str, str] = {}
+    for row in rows:
+        migration_name = cast(object, row["migration_name"])
+        checksum = cast(object, row["checksum"])
+        if not isinstance(migration_name, str) or not isinstance(checksum, str):
+            raise MigrationError(
+                "migration history contains a malformed row; "
+                "migration_name and checksum must be text"
+            )
+        applied[migration_name] = checksum
+    return applied
 
 
 def _physical_connection(connection: _Connection) -> object:

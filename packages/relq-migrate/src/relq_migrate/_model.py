@@ -18,10 +18,15 @@ class MigrationError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class Migration:
-    """One forward-only SQL migration file."""
+    """One forward-only SQL migration file.
+
+    ``foreign_keys`` is ``False`` for a file whose header says
+    ``-- relq: foreign_keys = off``. Only ``SQLiteMigrator`` can honor it.
+    """
 
     name: str
     sql: str
+    foreign_keys: bool = True
 
 
 class MigrationStatus(StrEnum):
