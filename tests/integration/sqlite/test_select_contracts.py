@@ -29,9 +29,9 @@ from relq_sqlite import SQLiteDatabase
 
 
 class Users(Table):
-    id: Column[int] = column(int)
-    email: Column[str] = column(str)
-    active: Column[bool] = column(bool)
+    id: Column[int] = column()
+    email: Column[str] = column()
+    active: Column[bool] = column()
 
 
 users = Users("users")
@@ -118,7 +118,7 @@ def test_postgres_row_locking_and_timestamp_arithmetic_are_closed_features() -> 
 
 def test_for_update_rejects_non_lockable_query_shapes_and_unknown_tables() -> None:
     class Accounts(Table):
-        id: Column[int] = column(int)
+        id: Column[int] = column()
 
     accounts = Accounts("accounts")
     with pytest.raises(ValueError, match="DISTINCT"):
@@ -168,7 +168,7 @@ def test_distinct_and_nullable_aggregate_result() -> None:
 
 def test_rejects_columns_from_tables_outside_the_source_scope() -> None:
     class Accounts(Table):
-        id: Column[int] = column(int)
+        id: Column[int] = column()
 
     accounts = Accounts("accounts")
     query = select(users.id, accounts.id).from_(users)
@@ -178,7 +178,7 @@ def test_rejects_columns_from_tables_outside_the_source_scope() -> None:
 
 def test_outer_join_requires_an_explicit_nullable_result_marker() -> None:
     class Accounts(Table):
-        id: Column[int] = column(int)
+        id: Column[int] = column()
 
     accounts = Accounts("accounts")
     unmarked = (
@@ -200,7 +200,7 @@ def test_outer_join_requires_an_explicit_nullable_result_marker() -> None:
 
 def test_outer_join_requires_marker_for_arithmetic_results() -> None:
     class Accounts(Table):
-        id: Column[int] = column(int)
+        id: Column[int] = column()
 
     accounts = Accounts("accounts")
     query = (
@@ -260,7 +260,7 @@ def test_single_assignment_builder_clauses_reject_accidental_replacement() -> No
 
 
 class UserIds(CteTable):
-    id: Column[int] = output_column(int)
+    id: Column[int] = output_column()
 
 
 def test_a_materialized_cte_is_portable_and_actually_executes_on_sqlite() -> None:
@@ -285,7 +285,7 @@ def test_sqlite_rejects_the_postgresql_only_query_surface_before_the_database_se
     purge = (
         select(count())
         .from_(removed)
-        .with_(removed, delete_from(users).where(users.id.eq(1)).returning(users.id))
+        .with_modifying(removed, delete_from(users).where(users.id.eq(1)).returning(users.id))
     )
 
     with pytest.raises(ValueError, match="sqlite does not support schema-qualified tables"):

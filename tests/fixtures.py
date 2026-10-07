@@ -11,42 +11,42 @@ from relq import Column, CteTable, DerivedTable, Table, column, output_column
 
 
 class Employees(Table):
-    id: Column[int] = column(int)
-    manager_id: Column[int | None] = column(int)
-    name: Column[str] = column(str)
-    salary: Column[int] = column(int)
+    id: Column[int] = column()
+    manager_id: Column[int | None] = column()
+    name: Column[str] = column()
+    salary: Column[int] = column()
 
 
 employees = Employees("employees")
 
 
 class ManagerTotals(DerivedTable):
-    manager_id: Column[int | None] = output_column(int)
-    reports: Column[int] = output_column(int)
+    manager_id: Column[int | None] = output_column()
+    reports: Column[int] = output_column()
 
 
 class ActiveEmployees(CteTable):
-    id: Column[int] = output_column(int)
+    id: Column[int] = output_column()
 
 
 class CompositeKeys(Table):
     """A conflict target wider than any per-position overload ladder."""
 
-    tenant: Column[int] = column(int)
-    queue: Column[str] = column(str)
-    dedupe_key: Column[str | None] = column(str)
-    active: Column[bool] = column(bool)
-    epoch: Column[int] = column(int)
-    day: Column[str] = column(str)
-    payload: Column[str] = column(str)
+    tenant: Column[int] = column()
+    queue: Column[str] = column()
+    dedupe_key: Column[str | None] = column()
+    active: Column[bool] = column()
+    epoch: Column[int] = column()
+    day: Column[str] = column()
+    payload: Column[str] = column()
 
 
 composite_keys = CompositeKeys("composite_keys")
 
 
 class EmployeeArchive(Table):
-    id: Column[int] = column(int)
-    name: Column[str] = column(str)
+    id: Column[int] = column()
+    name: Column[str] = column()
 
 
 employee_archive = EmployeeArchive("employee_archive")
@@ -67,11 +67,11 @@ class DecodedState(enum.StrEnum):
 
 
 class DecodedValues(Table):
-    id: Column[str] = column(str)
-    amount: Column[str] = column(str)
-    occurred_at: Column[str] = column(str)
-    payload: Column[str | None] = column(str)
-    state: Column[str] = column(str)
+    id: Column[str] = column()
+    amount: Column[str] = column()
+    occurred_at: Column[str] = column()
+    payload: Column[str | None] = column()
+    state: Column[str] = column()
 
 
 decoded_values = DecodedValues("decoded_values")

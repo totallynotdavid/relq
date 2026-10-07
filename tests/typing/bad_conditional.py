@@ -2,8 +2,8 @@ from relq import Column, Table, case_when, coalesce, column
 
 
 class Users(Table):
-    id: Column[int] = column(int)
-    active: Column[bool] = column(bool)
+    id: Column[int] = column()
+    active: Column[bool] = column()
 
 
 users = Users("users")

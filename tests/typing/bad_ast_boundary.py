@@ -5,7 +5,7 @@ from relq._ast import Node
 
 
 class Users(Table):
-    id: Column[int] = column(int)
+    id: Column[int] = column()
 
 
 @dataclass

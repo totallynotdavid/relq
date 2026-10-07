@@ -6,11 +6,11 @@ from relq._compiler import compile_sqlite
 
 
 class Items(Table):
-    id: Column[int] = column(int)
+    id: Column[int] = column()
 
 
 class ItemIds(CteTable):
-    id: Column[int] = output_column(int)
+    id: Column[int] = output_column()
 
 
 items = Items("items")

@@ -23,12 +23,12 @@ from relq import (
 
 
 class Temporal(Table):
-    date_value: Column[datetime.date] = column(datetime.date)
-    naive_value: Column[NaiveDateTime] = column(NaiveDateTime)
-    aware_value: Column[AwareDateTime] = column(AwareDateTime)
-    naive_time: Column[NaiveTime] = column(NaiveTime)
-    aware_time: Column[AwareTime] = column(AwareTime)
-    interval_value: Column[Interval] = column(Interval)
+    date_value: Column[datetime.date] = column()
+    naive_value: Column[NaiveDateTime] = column()
+    aware_value: Column[AwareDateTime] = column()
+    naive_time: Column[NaiveTime] = column()
+    aware_time: Column[AwareTime] = column()
+    interval_value: Column[Interval] = column()
 
 
 temporal = Temporal("temporal")

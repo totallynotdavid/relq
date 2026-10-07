@@ -8,8 +8,8 @@ from pathlib import Path
 from subprocess import run
 from typing import cast
 
-from relq.dml import CteQuery, DeleteQuery, InsertQuery, UpdateQuery
-from relq.query import SelectQuery
+from relq.dml import DeleteQuery, InsertQuery, ModifyingCteBody, UpdateQuery
+from relq.query import ModifyingQuery, SelectQuery
 
 ROOT = Path(__file__).parents[1]
 GOOD = ROOT / "tests" / "typing" / "good.json"
@@ -54,17 +54,16 @@ def _json_object(text: str) -> dict[str, object]:
     return cast(dict[str, object], payload)
 
 
-def test_the_cte_query_alias_resolves_at_runtime() -> None:
+def test_the_modifying_cte_alias_resolves_at_runtime() -> None:
     """A type alias in a public signature must be introspectable, not a NameError.
 
-    ``CteQuery`` names the DML builders, which import the SELECT builder, so a
-    ``TYPE_CHECKING``-only definition would leave its value unevaluatable.
+    ``ModifyingCteBody`` names the DML builders, which import the SELECT builder,
+    so a ``TYPE_CHECKING``-only definition would leave its value unevaluatable.
     """
-    value = cast(object, CteQuery.__value__)
+    value = cast(object, ModifyingCteBody.__value__)
     arms = cast(tuple[object, ...], typing.get_args(value))
 
     assert {typing.get_origin(arm) or arm for arm in arms} == {
-        SelectQuery,
         InsertQuery,
         UpdateQuery,
         DeleteQuery,
@@ -73,8 +72,10 @@ def test_the_cte_query_alias_resolves_at_runtime() -> None:
 
 def _assert_signature_resolves(owner: type, name: str) -> None:
     function = cast(Callable[..., object], inspect.getattr_static(owner, name))
-    assert cast(dict[str, object], typing.get_type_hints(function))
-    assert inspect.signature(function, eval_str=True).parameters
+    # A method's annotations may name its class's own type parameters.
+    class_parameters = {parameter.__name__: parameter for parameter in owner.__type_params__}
+    assert cast(dict[str, object], typing.get_type_hints(function, localns=class_parameters))
+    assert inspect.signature(function, eval_str=True, locals=class_parameters).parameters
 
 
 def test_public_builder_signatures_resolve_at_runtime() -> None:
@@ -86,6 +87,8 @@ def test_public_builder_signatures_resolve_at_runtime() -> None:
     """
     _assert_signature_resolves(SelectQuery, "with_")
     _assert_signature_resolves(SelectQuery, "with_recursive")
+    _assert_signature_resolves(SelectQuery, "with_modifying")
+    _assert_signature_resolves(ModifyingQuery, "with_modifying")
     _assert_signature_resolves(InsertQuery, "from_select")
     _assert_signature_resolves(UpdateQuery, "returning")
     _assert_signature_resolves(DeleteQuery, "returning")
@@ -150,6 +153,15 @@ def test_non_row_dml_is_not_fetchable() -> None:
     rules = {diagnostic.get("rule") for diagnostic in diagnostics}
     assert returncode != 0
     assert "reportCallIssue" in rules
+
+
+def test_a_returning_statement_is_not_streamable() -> None:
+    returncode, diagnostics = _basedpyright(BAD_EXECUTION)
+    streaming = [
+        diagnostic for diagnostic in diagnostics if "@fetch_iter" in str(diagnostic["message"])
+    ]
+    assert returncode != 0
+    assert [diagnostic.get("rule") for diagnostic in streaming] == ["reportArgumentType"]
 
 
 def test_generated_batch_helper_type_checks() -> None:

@@ -19,13 +19,13 @@ from relq import (
     Column,
     CteTable,
     JsonValue,
+    ModifyingQuery,
     SelectQuery,
     Table,
     column,
     count,
     cte,
     delete_from,
-    json_column,
     output_column,
     select,
 )
@@ -35,26 +35,26 @@ _COMPUTE_JOB_ID = "compute_job_id"
 
 
 class QueueJobs(Table):
-    id: Column[uuid.UUID] = column(uuid.UUID)
-    queue: Column[str] = column(str)
-    state: Column[str] = column(str)
-    payload: Column[JsonValue] = json_column()
-    finished_at: Column[datetime.datetime] = column(datetime.datetime)
+    id: Column[uuid.UUID] = column()
+    queue: Column[str] = column()
+    state: Column[str] = column()
+    payload: Column[JsonValue] = column()
+    finished_at: Column[datetime.datetime] = column()
 
 
 class ComputeJobs(Table):
-    id: Column[uuid.UUID] = column(uuid.UUID)
-    status: Column[str] = column(str)
+    id: Column[uuid.UUID] = column()
+    status: Column[str] = column()
 
 
 class Candidates(CteTable):
-    id: Column[uuid.UUID] = output_column(uuid.UUID)
-    compute_job_id: Column[uuid.UUID | None] = output_column(uuid.UUID)
-    finished_at: Column[datetime.datetime] = output_column(datetime.datetime)
+    id: Column[uuid.UUID] = output_column()
+    compute_job_id: Column[uuid.UUID | None] = output_column()
+    finished_at: Column[datetime.datetime] = output_column()
 
 
 class Removed(CteTable):
-    id: Column[uuid.UUID] = output_column(uuid.UUID)
+    id: Column[uuid.UUID] = output_column()
 
 
 def eligible_queue_job_ids(
@@ -105,7 +105,7 @@ def delete_queue_job_ids(
     queue: str,
     terminal_states: Sequence[str],
     cutoff: datetime.datetime,
-) -> SelectQuery[tuple[int]]:
+) -> ModifyingQuery[tuple[int]]:
     """Delete the prechecked queue rows and count them in one statement."""
     queue_jobs = QueueJobs("jobs", schema=queue_schema)
     removed = cte(Removed, "removed")
@@ -119,4 +119,4 @@ def delete_queue_job_ids(
         )
         .returning(queue_jobs.id)
     )
-    return select(count()).from_(removed).with_(removed, deleted)
+    return select(count()).from_(removed).with_modifying(removed, deleted)

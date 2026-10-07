@@ -7,7 +7,7 @@ select(users.id).from_(users).union_all(select(users.email).from_(users))
 
 
 class Recursive(CteTable):
-    id: Column[int] = output_column(int)
+    id: Column[int] = output_column()
 
 
 recursive = cte(Recursive, "recursive")

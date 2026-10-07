@@ -4,7 +4,7 @@ import datetime
 import uuid
 
 import pytest
-from relq import SelectQuery
+from relq import ModifyingQuery, SelectQuery
 from relq._compiler import compile_postgres, compile_sqlite
 
 from tests.retention_shapes import delete_queue_job_ids, eligible_queue_job_ids
@@ -27,7 +27,7 @@ def _eligible() -> SelectQuery[tuple[uuid.UUID]]:
     )
 
 
-def _purge() -> SelectQuery[tuple[int]]:
+def _purge() -> ModifyingQuery[tuple[int]]:
     return delete_queue_job_ids(
         queue_schema="rqueue",
         job_ids=[JOB_ID],

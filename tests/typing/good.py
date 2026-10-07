@@ -19,6 +19,7 @@ from relq import (
     InsertQuery,
     Interval,
     JsonValue,
+    ModifyingQuery,
     NaiveDateTime,
     NaiveTime,
     NullablePredicate,
@@ -52,7 +53,6 @@ from relq import (
     excluded,
     extract,
     insert_into,
-    json_column,
     justify_days,
     justify_hours,
     justify_interval,
@@ -86,9 +86,9 @@ from relq_sqlite import SQLiteDatabase
 
 
 class Users(Table):
-    id: Column[int] = column(int)
-    email: Column[str] = column(str)
-    active: Column[bool] = column(bool)
+    id: Column[int] = column()
+    email: Column[str] = column()
+    active: Column[bool] = column()
 
 
 users = Users("users")
@@ -97,12 +97,12 @@ rows: list[tuple[int, str]]
 
 
 class Temporal(Table):
-    date_value: Column[datetime.date] = column(datetime.date)
-    naive_value: Column[NaiveDateTime] = column(NaiveDateTime)
-    aware_value: Column[AwareDateTime] = column(AwareDateTime)
-    naive_time: Column[NaiveTime] = column(NaiveTime)
-    aware_time: Column[AwareTime] = column(AwareTime)
-    interval_value: Column[Interval] = column(Interval)
+    date_value: Column[datetime.date] = column()
+    naive_value: Column[NaiveDateTime] = column()
+    aware_value: Column[AwareDateTime] = column()
+    naive_time: Column[NaiveTime] = column()
+    aware_time: Column[AwareTime] = column()
+    interval_value: Column[Interval] = column()
 
 
 temporal = Temporal("temporal")
@@ -255,12 +255,12 @@ assert_type(guarded.returning(users.id), InsertQuery[tuple[int], Literal[True]])
 class Composite(Table):
     """A composite unique key wider than any per-position overload ladder."""
 
-    tenant: Column[int] = column(int)
-    queue: Column[str] = column(str)
-    dedupe_key: Column[str | None] = column(str)
-    active: Column[bool] = column(bool)
-    epoch: Column[int] = column(int)
-    day: Column[datetime.date] = column(datetime.date)
+    tenant: Column[int] = column()
+    queue: Column[str] = column()
+    dedupe_key: Column[str | None] = column()
+    active: Column[bool] = column()
+    epoch: Column[int] = column()
+    day: Column[datetime.date] = column()
 
 
 composite = Composite("composite")
@@ -319,8 +319,8 @@ conflict_targets: list[ConflictTarget] = [composite.tenant, composite.dedupe_key
 
 
 class Totals(DerivedTable):
-    user_id: Column[int] = output_column(int)
-    total: Column[int] = output_column(int)
+    user_id: Column[int] = output_column()
+    total: Column[int] = output_column()
 
 
 totals = select(users.id.as_("user_id"), count().as_("total")).from_(users).as_(Totals, "totals")
@@ -329,7 +329,7 @@ assert_type(totals.total, Column[int])
 
 
 class Active(CteTable):
-    id: Column[int] = output_column(int)
+    id: Column[int] = output_column()
 
 
 active = cte(Active, "active")
@@ -385,13 +385,13 @@ assert_type(model_insert, InsertQuery[OuterJoinResult, Literal[True]])
 
 
 class Documents(Table):
-    id: Column[uuid.UUID] = column(uuid.UUID)
-    owner: Column[str] = column(str)
-    payload: Column[JsonValue] = json_column()
+    id: Column[uuid.UUID] = column()
+    owner: Column[str] = column()
+    payload: Column[JsonValue] = column()
 
 
 class DocumentIds(CteTable):
-    id: Column[uuid.UUID] = output_column(uuid.UUID)
+    id: Column[uuid.UUID] = output_column()
 
 
 documents = Documents("documents", schema="archive")
@@ -404,11 +404,11 @@ assert_type(regex_match(documents.owner, "^a", insensitive=True), NullablePredic
 assert_type(
     select(count())
     .from_(removed)
-    .with_(
+    .with_modifying(
         removed,
         delete_from(documents).where(documents.owner.eq("ada")).returning(documents.id),
     ),
-    SelectQuery[tuple[int]],
+    ModifyingQuery[tuple[int]],
 )
 assert_type(
     select(removed.id)
@@ -424,18 +424,14 @@ class Coordinates(TypedDict):
 
 
 class Readings(Table):
-    samples: Column[list[int]] = column(list[int])
-    place: Column[Coordinates] = column(Coordinates)
+    samples: Column[list[int]] = column()
+    place: Column[Coordinates] = column()
+    payload: Column[JsonValue] = column()
 
 
-# ``column`` and ``output_column`` take a type expression, not only a class
-# object.  A subscripted generic and a ``TypedDict`` are both rejected by the
-# narrower ``type[T]`` spelling, so these declarations are what holds the
-# parameter at ``TypeForm[T]``; ``Temporal`` above pins the ``NewType`` forms.
-assert_type(column(list[int]), Column[list[int]])
-assert_type(column(Coordinates), Column[Coordinates])
-assert_type(output_column(Coordinates), Column[Coordinates])
+# The annotation supplies the value type, including for recursive aliases.
 readings = Readings("readings")
+assert_type(readings.payload, Column[JsonValue])
 assert_type(
     select(readings.samples, readings.place).from_(readings),
     SelectQuery[tuple[list[int], Coordinates], tuple[list[int], Coordinates]],

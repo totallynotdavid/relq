@@ -3,7 +3,7 @@ from relq._compiler import compile_sqlite
 
 
 class Users(Table):
-    id: Column[int] = column(int)
+    id: Column[int] = column()
 
 
 users = Users("users")

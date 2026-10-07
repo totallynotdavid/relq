@@ -35,47 +35,47 @@ class MatrixDatabase(Protocol):
 
 
 class MatrixLeft(Table):
-    id: Column[int] = column(int)
+    id: Column[int] = column()
 
 
 class MatrixRight(Table):
-    id: Column[int] = column(int)
+    id: Column[int] = column()
 
 
 class MatrixThird(Table):
-    id: Column[int] = column(int)
+    id: Column[int] = column()
 
 
 class MatrixPeople(Table):
-    id: Column[int] = column(int)
-    manager_id: Column[int | None] = column(int)
-    active: Column[bool] = column(bool)
+    id: Column[int] = column()
+    manager_id: Column[int | None] = column()
+    active: Column[bool] = column()
 
 
 class MatrixSemantics(Table):
-    id: Column[int] = column(int)
-    nullable_value: Column[int | None] = column(int)
-    numerator: Column[int] = column(int)
-    denominator: Column[int] = column(int)
-    ratio: Column[float] = column(float)
-    price: Column[decimal.Decimal] = column(decimal.Decimal)
+    id: Column[int] = column()
+    nullable_value: Column[int | None] = column()
+    numerator: Column[int] = column()
+    denominator: Column[int] = column()
+    ratio: Column[float] = column()
+    price: Column[decimal.Decimal] = column()
 
 
 class MatrixIds(DerivedTable):
-    id: Column[int] = output_column(int)
+    id: Column[int] = output_column()
 
 
 class MatrixActiveReports(DerivedTable):
-    active: Column[bool] = output_column(bool)
-    reports: Column[int] = output_column(int)
+    active: Column[bool] = output_column()
+    reports: Column[int] = output_column()
 
 
 class MatrixActiveIds(CteTable):
-    id: Column[int] = output_column(int)
+    id: Column[int] = output_column()
 
 
 class MatrixNumbers(CteTable):
-    n: Column[int] = output_column(int)
+    n: Column[int] = output_column()
 
 
 @dataclass(frozen=True)

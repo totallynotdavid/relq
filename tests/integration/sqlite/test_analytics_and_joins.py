@@ -31,17 +31,17 @@ from tests.compiler_fixtures import assert_compiles
 
 
 class Users(Table):
-    id: Column[int] = column(int)
-    account_id: Column[int] = column(int)
-    score: Column[int] = column(int)
+    id: Column[int] = column()
+    account_id: Column[int] = column()
+    score: Column[int] = column()
 
 
 users = Users("users")
 
 
 class GroupedScores(DerivedTable):
-    account_id: Column[int] = output_column(int)
-    total: Column[int | None] = output_column(int)
+    account_id: Column[int] = output_column()
+    total: Column[int | None] = output_column()
 
 
 def test_window_sql_contracts_cover_empty_partition_and_ordered_forms() -> None:

@@ -117,7 +117,7 @@ async def test_a_later_data_modifying_cte_consumes_an_earlier_one(
     """PostgreSQL's move-rows shape: one DELETE CTE feeding an INSERT CTE, then a count."""
 
     class Purged(Table):
-        id: Column[uuid.UUID] = column(uuid.UUID)
+        id: Column[uuid.UUID] = column()
 
     await _populate(postgres_admin, postgres_queue_schema)
     await postgres_admin.execute("create table purged (id uuid primary key)")
@@ -129,11 +129,11 @@ async def test_a_later_data_modifying_cte_consumes_an_earlier_one(
     moved = await PostgresDatabase(postgres_admin).fetch_one(
         select(count())
         .from_(copied)
-        .with_(
+        .with_modifying(
             removed,
             delete_from(queue_jobs).where(queue_jobs.queue.eq(QUEUE)).returning(queue_jobs.id),
         )
-        .with_(
+        .with_modifying(
             copied,
             insert_into(purged)
             .from_select(select(removed.id).from_(removed), purged.id)
@@ -195,8 +195,8 @@ async def test_a_generated_style_schema_bound_table_reaches_a_non_default_namesp
     """codegen now emits exactly this declaration for a non-default schema."""
 
     class Jobs(Table):
-        id: Column[uuid.UUID] = column(uuid.UUID)
-        state: Column[str] = column(str)
+        id: Column[uuid.UUID] = column()
+        state: Column[str] = column()
 
     await _populate(postgres_admin, postgres_queue_schema)
     jobs = Jobs("jobs", schema=postgres_queue_schema)

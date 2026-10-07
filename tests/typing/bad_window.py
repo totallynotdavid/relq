@@ -2,7 +2,7 @@ from relq import Column, Table, column, row_number, select
 
 
 class Users(Table):
-    id: Column[int] = column(int)
+    id: Column[int] = column()
 
 
 users = Users("users")

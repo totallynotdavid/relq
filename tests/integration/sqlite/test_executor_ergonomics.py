@@ -9,8 +9,8 @@ from relq_sqlite import NoResultError, QueryEvent, SQLiteDatabase, TransactionUn
 
 
 class ErgonomicUsers(Table):
-    id: Column[int] = column(int)
-    name: Column[str] = column(str)
+    id: Column[int] = column()
+    name: Column[str] = column()
 
 
 users = ErgonomicUsers("ergonomic_users")

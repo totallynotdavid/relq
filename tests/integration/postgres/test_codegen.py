@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import decimal
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -63,11 +64,8 @@ async def test_codegen_preserves_type_identity_and_generated_batch_helpers(
     )
     assert "TenantId = NewType('TenantId', int)" in generated
     assert "states: Column[list[RelqIntegrationState]]" in generated
-    assert "payload: Column[JsonValue | None] = json_column()" in generated
-    assert (
-        "origin: Column[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Interface | ipaddress.IPv6Interface | None]"
-        in generated
-    )
+    assert "payload: Column[JsonValue | None] = column()" in generated
+    assert "origin: Column[Inet | None] = column()" in generated
     namespace: dict[str, object] = {"select_all_from": select_all_from}
     exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
     assert "def insert_relq_codegen_values_many" in generated
@@ -141,6 +139,48 @@ async def test_codegen_cli_detects_changed_schema(
         await asyncio.to_thread(codegen_main)
 
 
+async def test_codegen_cli_reports_an_unmapped_domain_and_reads_the_toml_mapping(
+    postgres_codegen_admin: asyncpg.Connection,
+    postgres_codegen_schema: str,
+    tmp_path: Path,
+) -> None:
+    await postgres_codegen_admin.execute("create domain tenant_id as integer check (value > 0)")
+    await postgres_codegen_admin.execute("create table accounts (id integer, tenant tenant_id)")
+    output = tmp_path / "schema.py"
+    arguments = [
+        sys.executable,
+        "-m",
+        "relq_codegen",
+        "postgres",
+        configured_harness().dsn,
+        str(output),
+        "--schema",
+        postgres_codegen_schema,
+    ]
+
+    unmapped = await asyncio.to_thread(
+        subprocess.run, arguments, capture_output=True, check=False, text=True
+    )
+    assert unmapped.returncode == 1
+    assert unmapped.stderr.splitlines() == [
+        (
+            f"relq-codegen: unsupported database type {postgres_codegen_schema}.tenant_id; "
+            "map it in a relq-codegen --config file"
+        )
+    ]
+
+    config = tmp_path / "relq-codegen.toml"
+    config.write_text(
+        f'[types."{postgres_codegen_schema}.tenant_id"]\n'
+        'wrapper = "TenantId"\npython = "int"\ndecoder = "int"\n'
+    )
+    mapped = await asyncio.to_thread(
+        subprocess.run, [*arguments, "--config", str(config)], capture_output=True, text=True
+    )
+    assert mapped.returncode == 0, mapped.stderr
+    assert "tenant: Column[TenantId | None] = column()" in output.read_text()
+
+
 async def test_codegen_changed_schema_regeneration_is_focused(
     database: PostgresDatabase, postgres_admin: asyncpg.Connection, postgres_schema: str
 ) -> None:
@@ -149,5 +189,5 @@ async def test_codegen_changed_schema_regeneration_is_focused(
     await postgres_admin.execute("alter table relq_codegen_values add column metadata jsonb")
     after = await generate_postgres(postgres_admin, schema=postgres_schema, config=config)
     assert after != before
-    assert "metadata: Column[JsonValue | None] = json_column()" in after
+    assert "metadata: Column[JsonValue | None] = column()" in after
     assert "metadata: NotRequired[JsonValue | None]" in after

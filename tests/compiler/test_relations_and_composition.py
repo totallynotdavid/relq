@@ -129,10 +129,10 @@ def test_recursive_ctes_require_a_seed_and_recursive_union_all_arm() -> None:
 
 def test_cte_visibility_and_compound_diagnostics() -> None:
     class Earlier(CteTable):
-        id: Column[int] = output_column(int)
+        id: Column[int] = output_column()
 
     class Later(CteTable):
-        id: Column[int] = output_column(int)
+        id: Column[int] = output_column()
 
     earlier = cte(Earlier, "earlier")
     later = cte(Later, "later")
@@ -142,7 +142,7 @@ def test_cte_visibility_and_compound_diagnostics() -> None:
         )
 
     class Numbers(CteTable):
-        n: Column[int] = output_column(int)
+        n: Column[int] = output_column()
 
     numbers = cte(Numbers, "numbers")
     recursive = (
@@ -185,31 +185,31 @@ def test_a_declared_column_cannot_shadow_relation_internals() -> None:
     with pytest.raises(TypeError, match="column attribute\\(s\\) reserved by relq: _schema"):
 
         class SchemaShadow(Table):  # pyright: ignore[reportUnusedClass]
-            _schema: Column[str] = column(str)
+            _schema: Column[str] = column()
 
     with pytest.raises(TypeError, match="reserved by relq: reference"):
 
         class ReferenceShadow(Table):  # pyright: ignore[reportUnusedClass]
             # A type checker rejects this too; the runtime guard covers the
             # attributes that are only instance state.
-            reference: Column[str] = column(str)  # pyright: ignore[reportIncompatibleMethodOverride]
+            reference: Column[str] = column()  # pyright: ignore[reportIncompatibleMethodOverride]
 
     with pytest.raises(TypeError, match="reserved by relq: _source"):
 
         class SourceShadow(CteTable):  # pyright: ignore[reportUnusedClass]
-            _source: Column[str] = output_column(str)
+            _source: Column[str] = output_column()
 
     with pytest.raises(TypeError, match="reserved by relq: _state"):
 
         class StateShadow(Table):  # pyright: ignore[reportUnusedClass]
-            _state: Column[str] = column(str)  # pyright: ignore[reportIncompatibleVariableOverride]
+            _state: Column[str] = column()  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
 def test_a_mixin_cannot_smuggle_a_reserved_column_past_the_guard() -> None:
     """Column discovery walks the MRO, so the guard has to walk it too."""
 
     class ReferenceMixin:
-        reference: Column[str] = column(str)
+        reference: Column[str] = column()
 
     with pytest.raises(TypeError, match="reserved by relq: reference"):
         # A type checker rejects the shadowing too; the runtime guard is what
@@ -217,17 +217,17 @@ def test_a_mixin_cannot_smuggle_a_reserved_column_past_the_guard() -> None:
         class Records(  # pyright: ignore[reportUnusedClass, reportIncompatibleVariableOverride]
             ReferenceMixin, Table
         ):
-            id: Column[int] = column(int)
+            id: Column[int] = column()
 
 
 def test_a_mixin_may_share_ordinary_columns() -> None:
     """The MRO walk rejects reserved names, not inheritance itself."""
 
     class TimestampsMixin:
-        created_at: Column[str] = column(str)
+        created_at: Column[str] = column()
 
     class Records(TimestampsMixin, Table):
-        id: Column[int] = column(int)
+        id: Column[int] = column()
 
     records = Records("records")
     assert records.column_names() == {"id", "created_at"}
@@ -238,7 +238,7 @@ def test_a_mixin_may_share_ordinary_columns() -> None:
 
 def test_a_reserved_sql_column_name_is_still_reachable_through_an_alias() -> None:
     class Renamed(Table):
-        schema_column: Column[str] = column(str, name="_schema")
+        schema_column: Column[str] = column(name="_schema")
 
     renamed = Renamed("renamed")
     assert renamed.column_names() == {"_schema"}

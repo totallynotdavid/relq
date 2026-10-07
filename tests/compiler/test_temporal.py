@@ -66,13 +66,13 @@ from relq._node_value import node_of
 
 
 class TemporalRows(Table):
-    id: Column[int] = column(int)
-    date_value: Column[datetime.date] = column(datetime.date)
-    naive_value: Column[NaiveDateTime] = column(NaiveDateTime)
-    aware_value: Column[AwareDateTime] = column(AwareDateTime)
-    naive_time: Column[NaiveTime] = column(NaiveTime)
-    aware_time: Column[AwareTime] = column(AwareTime)
-    interval_value: Column[Interval] = column(Interval)
+    id: Column[int] = column()
+    date_value: Column[datetime.date] = column()
+    naive_value: Column[NaiveDateTime] = column()
+    aware_value: Column[AwareDateTime] = column()
+    naive_time: Column[NaiveTime] = column()
+    aware_time: Column[AwareTime] = column()
+    interval_value: Column[Interval] = column()
 
 
 temporal_rows = TemporalRows("temporal_rows")
@@ -330,7 +330,7 @@ def test_sqlite_rejects_temporal_nodes_at_every_query_boundary() -> None:
         )
 
     class TemporalCte(CteTable):
-        value: Column[NaiveDateTime] = output_column(NaiveDateTime)
+        value: Column[NaiveDateTime] = output_column()
 
     temporal_cte = cte(TemporalCte, "temporal_cte")
     with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
@@ -346,7 +346,7 @@ def test_sqlite_rejects_temporal_nodes_at_every_query_boundary() -> None:
         )
 
     class TemporalDerived(DerivedTable):
-        value: Column[NaiveDateTime] = output_column(NaiveDateTime)
+        value: Column[NaiveDateTime] = output_column()
 
     temporal_derived = (
         select(add_interval(temporal_rows.naive_value, Interval(days=1)).as_("value"))

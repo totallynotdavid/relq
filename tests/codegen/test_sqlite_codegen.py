@@ -1,5 +1,6 @@
 """SQLite introspection, rendering, and generated-source runtime contracts."""
 
+import ast
 import enum
 import sqlite3
 from pathlib import Path
@@ -15,6 +16,7 @@ from relq_codegen import (
     ArrayType,
     BuiltinType,
     CodegenConfig,
+    CodegenError,
     DirectType,
     GeneratedWrapper,
     Import,
@@ -39,8 +41,8 @@ def test_sqlite_codegen_emits_nullable_and_primary_key_types() -> None:
     )
     generated = generate_sqlite(connection)
     assert "class UserEvents(Table[tuple[int, str | None, bool | None]]):" in generated
-    assert "id: Column[int] = column(int)" in generated
-    assert "display_name: Column[str | None] = column(str, name='display name')" in generated
+    assert "id: Column[int] = column()" in generated
+    assert "display_name: Column[str | None] = column(name='display name')" in generated
     namespace: dict[str, object] = {}
     exec(generated, namespace)  # noqa: S102 - generated module must import.
     assert isinstance(namespace["UserEvents"], type)
@@ -75,7 +77,7 @@ def test_codegen_maps_richer_database_value_types() -> None:
     assert "id: Column[uuid.UUID | None]" in generated
     assert "price: Column[decimal.Decimal]" in generated
     assert "occurred: Column[datetime.date | None]" in generated
-    assert "payload: Column[JsonValue | None] = json_column()" in generated
+    assert "payload: Column[JsonValue | None] = column()" in generated
 
 
 def test_codegen_maps_postgres_temporal_catalog_spellings_to_branded_domains() -> None:
@@ -92,11 +94,11 @@ def test_codegen_maps_postgres_temporal_catalog_spellings_to_branded_domains() -
         ),
     )
     generated = render((table,), dialect="postgres")
-    assert "local_timestamp: Column[NaiveDateTime] = column(NaiveDateTime)" in generated
-    assert "instant: Column[AwareDateTime] = column(AwareDateTime)" in generated
-    assert "local_time: Column[NaiveTime] = column(NaiveTime)" in generated
-    assert "zoned_time: Column[AwareTime] = column(AwareTime)" in generated
-    assert "elapsed: Column[Interval] = column(Interval)" in generated
+    assert "local_timestamp: Column[NaiveDateTime] = column()" in generated
+    assert "instant: Column[AwareDateTime] = column()" in generated
+    assert "local_time: Column[NaiveTime] = column()" in generated
+    assert "zoned_time: Column[AwareTime] = column()" in generated
+    assert "elapsed: Column[Interval] = column()" in generated
     assert "naive_datetime_decoder()" in generated
     assert "aware_datetime_decoder()" in generated
     assert "naive_time_decoder()" in generated
@@ -118,9 +120,9 @@ def test_sqlite_codegen_keeps_plain_datetime_types_for_timezone_spellings() -> N
     generated = generate_sqlite(connection)
 
     for name in ("a", "b", "c"):
-        assert f"{name}: Column[datetime.datetime] = column(datetime.datetime)" in generated
+        assert f"{name}: Column[datetime.datetime] = column()" in generated
     for name in ("d", "e", "f"):
-        assert f"{name}: Column[datetime.time] = column(datetime.time)" in generated
+        assert f"{name}: Column[datetime.time] = column()" in generated
     for branded in ("AwareDateTime", "NaiveDateTime", "AwareTime", "NaiveTime"):
         assert branded not in generated
     namespace: dict[str, object] = {}
@@ -132,7 +134,7 @@ def test_sqlite_codegen_rejects_interval_columns_instead_of_failing_at_decode_ti
     connection = sqlite3.connect(":memory:")
     connection.execute("create table spans (id integer primary key, elapsed interval not null)")
 
-    with pytest.raises(TypeError, match="database type 'interval' is rejected"):
+    with pytest.raises(CodegenError, match="database type 'interval' is rejected"):
         generate_sqlite(connection)
 
 
@@ -145,7 +147,7 @@ def test_a_configured_mapping_still_reads_a_sqlite_interval_column() -> None:
 
     generated = generate_sqlite(connection, config=config)
 
-    assert "elapsed: Column[str] = column(str)" in generated
+    assert "elapsed: Column[str] = column()" in generated
 
 
 def test_codegen_single_field_row_adapter_remains_a_tuple() -> None:
@@ -189,7 +191,7 @@ def test_codegen_generates_enums_and_requires_explicit_domain_mapping() -> None:
             SchemaColumn("tenant", NamedType("domain", tenant), False, False),
         ),
     )
-    with pytest.raises(ValueError, match="public.tenant_id"):
+    with pytest.raises(CodegenError, match="public.tenant_id"):
         render((table,), enums=(SchemaEnum(state, ("todo", "in-progress")),), dialect="postgres")
     generated = render(
         (table,),
@@ -228,7 +230,7 @@ def test_codegen_uses_qualified_identities_and_explicit_type_policies() -> None:
             opaque: RejectedType("the application has not declared its value object"),
         }
     )
-    with pytest.raises(TypeError, match="public.opaque_id is rejected"):
+    with pytest.raises(CodegenError, match="public.opaque_id is rejected"):
         render((table,), enums=enums, config=config, dialect="postgres")
     generated = render(
         (SchemaTable("events", table.columns[:-1]),), enums=enums, config=config, dialect="postgres"
@@ -259,9 +261,9 @@ def test_generated_names_survive_columns_and_tables_that_shadow_relq_builders() 
     )
     generated = generate_sqlite(connection)
 
-    assert "json_column_: Column[str | None] = column(str, name='json_column')" in generated
-    assert "_schema_: Column[str | None] = column(str, name='_schema')" in generated
-    assert "payload: Column[JsonValue | None] = json_column()" in generated
+    assert "column_: Column[str | None] = column(name='column')" in generated
+    assert "_schema_: Column[str | None] = column(name='_schema')" in generated
+    assert "payload: Column[JsonValue | None] = column()" in generated
     namespace: dict[str, object] = {}
     exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
     quirks = namespace["quirks"]
@@ -279,10 +281,10 @@ def test_reserved_names_cover_every_relq_name_a_generated_module_imports() -> No
     generated = generate_sqlite(connection)
 
     imported = {
-        name.strip()
-        for line in generated.splitlines()
-        if line.startswith("from relq import ")
-        for name in line.removeprefix("from relq import ").split(",")
+        alias.name
+        for statement in ast.parse(generated).body
+        if isinstance(statement, ast.ImportFrom) and statement.module == "relq"
+        for alias in statement.names
     }
     assert imported
     assert imported <= RESERVED_NAMES
@@ -322,7 +324,7 @@ def test_a_configured_wrapper_cannot_take_a_name_the_module_imports() -> None:
     config = CodegenConfig(
         type_mappings={
             TypeIdentity(None, "citext"): GeneratedWrapper(
-                "json_column", DirectType(Name("str"), "str")
+                "row_adapter", DirectType(Name("str"), "str")
             )
         }
     )
@@ -331,7 +333,7 @@ def test_a_configured_wrapper_cannot_take_a_name_the_module_imports() -> None:
         (SchemaColumn("tag", BuiltinType("citext"), nullable=False, primary_key=False),),
     )
 
-    with pytest.raises(ValueError, match="json_column"):
+    with pytest.raises(CodegenError, match="row_adapter"):
         render((table,), config=config, dialect="postgres")
 
 
@@ -347,7 +349,7 @@ def test_a_configured_wrapper_cannot_take_a_generated_enum_name() -> None:
         (SchemaColumn("tag", BuiltinType("citext"), nullable=False, primary_key=False),),
     )
 
-    with pytest.raises(ValueError, match="Status"):
+    with pytest.raises(CodegenError, match="Status"):
         render(
             (table,), enums=(SchemaEnum(identity, ("live",)),), config=config, dialect="postgres"
         )
@@ -380,7 +382,7 @@ def test_codegen_reserves_exactly_the_attributes_relq_relations_claim() -> None:
 
 def test_an_undeclared_relq_import_is_refused_at_the_helper_that_emits_it() -> None:
     """The reserved set cannot fall behind: emitting an import requires declaring it."""
-    assert "json_column" in RELQ_NAMES
+    assert "Inet" in RELQ_NAMES
 
     with pytest.raises(ValueError, match="not_a_relq_export"):
         relq_name("not_a_relq_export")

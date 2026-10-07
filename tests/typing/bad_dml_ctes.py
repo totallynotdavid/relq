@@ -7,14 +7,21 @@ from .good import DocumentIds, documents
 removed = cte(DocumentIds, "removed")
 
 # A data-modifying CTE must publish rows: no RETURNING, no output relation.
-select(count()).from_(removed).with_(
+select(count()).from_(removed).with_modifying(
     removed, delete_from(documents).where(documents.owner.eq("ada"))
 )
 
 # ... and it must be bounded before it can define one.
-select(count()).from_(removed).with_(removed, delete_from(documents).returning(documents.id))
-select(count()).from_(removed).with_(
+select(count()).from_(removed).with_modifying(
+    removed, delete_from(documents).returning(documents.id)
+)
+select(count()).from_(removed).with_modifying(
     removed, update(documents).values(owner="ada").returning(documents.id)
+)
+
+# ``with_`` accepts SELECT bodies, so a write belongs in ``with_modifying``.
+select(count()).from_(removed).with_(
+    removed, delete_from(documents).where(documents.id.eq(1)).returning(documents.id)
 )
 
 
