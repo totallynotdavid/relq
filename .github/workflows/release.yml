@@ -13,11 +13,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Oldest and newest of each supported minor, plus the rc.  The oldest
-        # entries are load-bearing, not decoration: 3.13.0 and 3.14.0 each
-        # carry a dataclasses bug that later patches fixed, so a bare "3.13" /
-        # "3.14" (which resolve to the newest patch) would let the workarounds
-        # in _node_value.py and relations.py be deleted without CI noticing.
+        # Test the oldest and newest patch of each supported minor, plus the release candidate.
+        # Keep the oldest patches because later patches fixed dataclasses behavior in Python 3.13
+        # and 3.14. Bare minor versions resolve to the newest patch and would not exercise the
+        # compatibility workarounds in _node_value.py and relations.py.
         python-version: ["3.13.0", "3.13", "3.14.0", "3.14", "3.15.0-rc.1"]
     services:
       postgres:
@@ -73,6 +72,14 @@ jobs:
           {version(name) for name in ("relq", "relq-sqlite", "relq-postgres",
           "relq-codegen", "relq-migrate")}; assert versions == {tag}, f"tag {tag!r} does not
           match distribution versions {versions!r}"'
+      - name: Verify the release notes are written for this version
+        run: |
+          expected="relq ${RELEASE_TAG#v} is out."
+          first_line=$(head -n 1 .github/release-notes.md)
+          if [ "$first_line" != "$expected" ]; then
+            echo "first line of .github/release-notes.md is '$first_line', expected '$expected'" >&2
+            exit 1
+          fi
       - run: uv build --package relq --clear --out-dir dist
       - run: uv build --package relq-sqlite --out-dir dist
       - run: uv build --package relq-postgres --out-dir dist
@@ -116,7 +123,7 @@ jobs:
       - uses: softprops/action-gh-release@132dbbba49e22bd4837f09b46d32a8edaf6baa58 # v3.0.1
         with:
           name: relq ${{ github.ref_name }}
-          body_path: docs/releases/${{ github.ref_name }}.md
+          body_path: .github/release-notes.md
           files: dist/*
           fail_on_unmatched_files: true
           generate_release_notes: true

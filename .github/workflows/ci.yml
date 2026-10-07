@@ -15,11 +15,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Oldest and newest of each supported minor, plus the rc.  The oldest
-        # entries are load-bearing, not decoration: 3.13.0 and 3.14.0 each
-        # carry a dataclasses bug that later patches fixed, so a bare "3.13" /
-        # "3.14" (which resolve to the newest patch) would let the workarounds
-        # in _node_value.py and relations.py be deleted without CI noticing.
+        # Test the oldest and newest patch of each supported minor, plus the release candidate.
+        # Keep the oldest patches because later patches fixed dataclasses behavior in Python 3.13
+        # and 3.14. Bare minor versions resolve to the newest patch and would not exercise the
+        # compatibility workarounds in _node_value.py and relations.py.
         python-version: ["3.13.0", "3.13", "3.14.0", "3.14", "3.15.0-rc.1"]
     services:
       postgres:

@@ -24,8 +24,7 @@ uv venv --clear --python python "$sqlite_env"
 env -u PYTHONPATH uv pip install --reinstall --python "$sqlite_env/bin/python" \
   --find-links "$artifact_dir" \
   "relq[sqlite]" \
-  relq-codegen \
-  relq-migrate
+  "relq-migrate[codegen]"
 env -u PYTHONPATH "$sqlite_env/bin/python" -c '
 import importlib.util
 import sqlite3
@@ -43,7 +42,7 @@ exec("from relq_migrate import *", namespace)
 assert namespace["PostgresMigrator"] is PostgresMigrator
 
 class Numbers(Table):
-    value: Column[int] = column(int)
+    value: Column[int] = column()
 
 numbers = Numbers("numbers")
 connection = sqlite3.connect(":memory:")
@@ -61,6 +60,20 @@ connection.close()
 ' "$check_dir/schema.db"
 "$sqlite_env/bin/relq-codegen" sqlite "$check_dir/schema.db" "$check_dir/schema.py"
 "$sqlite_env/bin/python" -m py_compile "$check_dir/schema.py"
+
+# One command migrates and regenerates; --check then proves the module is current.
+mkdir "$check_dir/migrations"
+printf 'create table accounts (id integer primary key, name text not null);\n' \
+  >"$check_dir/migrations/0001_accounts.sql"
+"$sqlite_env/bin/relq-migrate" sqlite "$check_dir/migrated.db" "$check_dir/migrations" \
+  --codegen "$check_dir/migrated_schema.py"
+"$sqlite_env/bin/relq-migrate" sqlite "$check_dir/migrated.db" "$check_dir/migrations" \
+  --codegen "$check_dir/migrated_schema.py" --check
+grep -q "class Accounts" "$check_dir/migrated_schema.py"
+if grep -q relq_migrations "$check_dir/migrated_schema.py"; then
+  echo "generated schema includes the migration history table" >&2
+  exit 1
+fi
 
 uv venv --clear --python python "$postgres_env"
 codegen_wheel=$(printf '%s' "$artifact_dir"/relq_codegen-*.whl)
