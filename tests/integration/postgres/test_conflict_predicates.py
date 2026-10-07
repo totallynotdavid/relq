@@ -150,6 +150,47 @@ async def test_arbiter_predicate_survives_a_cached_generic_plan(
     assert compiled.parameters == ("emails", "welcome:7", "pending")
 
 
+@pytest.mark.parametrize("standard_conforming_strings", ["on", "off"])
+async def test_arbiter_predicate_escaping_matches_the_index_whatever_the_session_setting(
+    conflict_database: PostgresDatabase,
+    postgres_admin: asyncpg.Connection,
+    standard_conforming_strings: str,
+) -> None:
+    """Constants are inlined, so quotes, backslashes and newlines must round-trip exactly."""
+    awkward = "it's a \\ back\\\\slash\nnew line é"
+    await postgres_admin.execute(f"set standard_conforming_strings = {standard_conforming_strings}")
+    # Dollar quoting states the stored predicate without relq's escaping rules.
+    await postgres_admin.execute(
+        "create unique index relq_integration_jobs_awkward on relq_integration_jobs (dedupe_key) "
+        f"where state = $q${awkward}$q$"
+    )
+    upsert = (
+        insert_into(jobs)
+        .values(queue="q", dedupe_key="k", state=awkward)
+        .on_conflict(jobs.dedupe_key)
+        .where(jobs.state.eq(awkward))
+        .do_update(updated_at=jobs.updated_at)
+        .returning(jobs.id)
+    )
+
+    assert await conflict_database.fetch_all(upsert) == [(1,)]
+    assert await conflict_database.fetch_all(upsert) == [(1,)]
+    assert await conflict_database.fetch_all(select(jobs.id).from_(jobs)) == [(1,)]
+
+
+def test_arbiter_predicate_rejects_a_nul_in_a_text_constant() -> None:
+    nul = (
+        insert_into(jobs)
+        .values(queue="q", dedupe_key="k", state="pending")
+        .on_conflict(jobs.dedupe_key)
+        .where(jobs.state.eq("a\x00b"))
+        .do_nothing()
+    )
+
+    with pytest.raises(ValueError, match="cannot contain NUL"):
+        compile_postgres(nul)
+
+
 async def test_arbiter_predicate_is_required_by_a_partial_index(
     conflict_database: PostgresDatabase,
 ) -> None:

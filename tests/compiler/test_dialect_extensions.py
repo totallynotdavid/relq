@@ -1,5 +1,6 @@
 """Contracts for the dialect-varying surface: schemas, CTE bodies, and PostgreSQL expressions."""
 
+import sqlite3
 import uuid
 from dataclasses import dataclass
 
@@ -9,13 +10,13 @@ from relq import (
     CteTable,
     DerivedTable,
     JsonValue,
+    SelectQuery,
     Table,
     column,
     count,
     cte,
     delete_from,
     insert_into,
-    json_column,
     max,
     output_column,
     row_number,
@@ -25,28 +26,29 @@ from relq import (
 )
 from relq._compiler import compile_postgres, compile_sqlite
 from relq.postgres import cast_uuid, json_text, regex_match
+from relq_sqlite import SQLiteDatabase
 
 
 class Documents(Table):
-    id: Column[uuid.UUID] = column(uuid.UUID)
-    owner: Column[str] = column(str)
-    payload: Column[JsonValue] = json_column()
+    id: Column[uuid.UUID] = column()
+    owner: Column[str] = column()
+    payload: Column[JsonValue] = column()
 
 
 class DocumentIds(CteTable):
-    id: Column[uuid.UUID] = output_column(uuid.UUID)
+    id: Column[uuid.UUID] = output_column()
 
 
 class OwnerRefs(CteTable):
-    owner: Column[str] = output_column(str)
+    owner: Column[str] = output_column()
 
 
 class Archive(Table):
-    id: Column[uuid.UUID] = column(uuid.UUID)
+    id: Column[uuid.UUID] = column()
 
 
 class DocumentTotals(DerivedTable):
-    id: Column[uuid.UUID] = output_column(uuid.UUID)
+    id: Column[uuid.UUID] = output_column()
 
 
 @dataclass(frozen=True)
@@ -120,7 +122,7 @@ def test_an_unmaterialized_cte_still_leaves_the_choice_to_the_planner() -> None:
 def test_a_delete_cte_publishes_its_returning_rows_to_the_outer_query() -> None:
     removed = cte(DocumentIds, "removed")
     deleted = delete_from(documents).where(documents.owner.eq("ada")).returning(documents.id)
-    query = select(count()).from_(removed).with_(removed, deleted)
+    query = select(count()).from_(removed).with_modifying(removed, deleted)
 
     assert compile_postgres(query).sql == (
         'with "removed" as (delete from "documents" where ("documents"."owner" = $1) '
@@ -130,17 +132,28 @@ def test_a_delete_cte_publishes_its_returning_rows_to_the_outer_query() -> None:
         compile_sqlite(query)
 
 
+def test_a_data_modifying_query_is_not_a_read_and_not_a_command() -> None:
+    removed = cte(DocumentIds, "removed")
+    deleted = delete_from(documents).where(documents.owner.eq("ada")).returning(documents.id)
+    query = select(count()).from_(removed).with_modifying(removed, deleted)
+    database = SQLiteDatabase(sqlite3.connect(":memory:"))
+
+    assert not isinstance(query, SelectQuery)
+    with pytest.raises(TypeError, match="execute\\(\\) cannot consume RETURNING rows"):
+        database.execute(query)  # pyright: ignore[reportArgumentType]
+
+
 def test_insert_and_update_ctes_publish_their_returning_rows_too() -> None:
     inserted = cte(DocumentIds, "inserted")
     touched = cte(OwnerRefs, "touched")
     query = (
         select(count())
         .from_(inserted)
-        .with_(
+        .with_modifying(
             inserted,
             insert_into(documents).values(owner="ada").returning(documents.id),
         )
-        .with_(
+        .with_modifying(
             touched,
             update(documents)
             .values(owner="ada")
@@ -159,6 +172,8 @@ def test_a_data_modifying_cte_must_declare_its_output_relation() -> None:
     without_returning = delete_from(documents).where(documents.owner.eq("ada"))
 
     with pytest.raises(ValueError, match="data-modifying CTE requires returning"):
+        select(count()).from_(removed).with_modifying(removed, without_returning)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(TypeError, match="expected a SELECT query"):
         select(count()).from_(removed).with_(removed, without_returning)  # pyright: ignore[reportArgumentType]
 
 
@@ -167,7 +182,7 @@ def test_a_data_modifying_cte_output_schema_must_match_its_relation() -> None:
     deleted = delete_from(documents).where(documents.owner.eq("ada")).returning(documents.id)
 
     with pytest.raises(ValueError, match="output schema does not match"):
-        select(count()).from_(owners).with_(owners, deleted)
+        select(count()).from_(owners).with_modifying(owners, deleted)
 
 
 def test_a_later_data_modifying_cte_reads_an_earlier_one() -> None:
@@ -177,11 +192,11 @@ def test_a_later_data_modifying_cte_reads_an_earlier_one() -> None:
     query = (
         select(count())
         .from_(copied)
-        .with_(
+        .with_modifying(
             removed,
             delete_from(documents).where(documents.owner.eq("ada")).returning(documents.id),
         )
-        .with_(
+        .with_modifying(
             copied,
             insert_into(archive)
             .from_select(select(removed.id).from_(removed), archive.id)
@@ -203,13 +218,13 @@ def test_a_data_modifying_cte_still_cannot_read_a_later_one() -> None:
     query = (
         select(count())
         .from_(copied)
-        .with_(
+        .with_modifying(
             copied,
             insert_into(archive)
             .from_select(select(removed.id).from_(removed), archive.id)
             .returning(archive.id),
         )
-        .with_(
+        .with_modifying(
             removed,
             delete_from(documents).where(documents.owner.eq("ada")).returning(documents.id),
         )
@@ -228,7 +243,7 @@ def test_a_forward_reference_is_caught_through_a_nested_subquery() -> None:
     through_dml = (
         select(count())
         .from_(early)
-        .with_(early, delete_from(documents).where(reaches_later).returning(documents.id))
+        .with_modifying(early, delete_from(documents).where(reaches_later).returning(documents.id))
         .with_(later, select(documents.id).from_(documents))
     )
     through_select = (
@@ -295,7 +310,7 @@ def test_a_cte_source_cannot_declare_a_row_model() -> None:
     modelled_select = select(documents.id).decode(DocumentRow).from_(documents)
 
     with pytest.raises(ValueError, match="cannot declare a row model"):
-        select(count()).from_(removed).with_(removed, modelled_delete)
+        select(count()).from_(removed).with_modifying(removed, modelled_delete)
     with pytest.raises(ValueError, match="cannot declare a row model"):
         select(count()).from_(removed).with_(removed, modelled_select)  # pyright: ignore[reportArgumentType]
     with pytest.raises(ValueError, match="cannot declare a row model"):
@@ -306,8 +321,10 @@ def test_a_data_modifying_cte_cannot_hide_inside_a_nested_scope() -> None:
     """A data-modifying CTE runs once per statement, so only the outermost WITH accepts one."""
     removed = cte(DocumentIds, "removed")
     deleted = delete_from(documents).where(documents.owner.eq("ada")).returning(documents.id)
-    hidden = select(count()).from_(removed).with_(removed, deleted)
-    outer = select(documents.id).from_(documents).where(documents.id.eq(scalar(hidden)))
+    hidden = select(count()).from_(removed).with_modifying(removed, deleted)
+    outer = (
+        select(documents.id).from_(documents).where(documents.id.eq(scalar(hidden)))  # pyright: ignore[reportArgumentType]
+    )
 
     with pytest.raises(ValueError, match="must be declared on the outermost query"):
         compile_postgres(outer)

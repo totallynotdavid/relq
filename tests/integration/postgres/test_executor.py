@@ -3,8 +3,9 @@
 import asyncio
 import datetime
 import os
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Protocol, cast
 
 import asyncpg
 import pytest
@@ -14,6 +15,7 @@ from relq import (
     Interval,
     Table,
     column,
+    count,
     cte,
     delete_from,
     excluded,
@@ -25,7 +27,13 @@ from relq import (
     transaction_timestamp,
     update,
 )
-from relq_postgres import NoResultError, PostgresDatabase, QueryEvent, TransactionUnavailableError
+from relq_postgres import (
+    NoResultError,
+    PostgresDatabase,
+    QueryEvent,
+    TransactionUnavailableError,
+    row_batches,
+)
 
 from tests.integration.postgres.matrix_fixture import prepare_postgres_matrix
 from tests.integration.postgres.support import Active, archive, configured_harness, users
@@ -41,14 +49,6 @@ pytestmark = pytest.mark.skipif(
 class UserRow:
     id: int
     name: str
-
-
-class _TransactionInternals(Protocol):
-    _id: str | None
-
-
-class _ControlledTransactionInternals(Protocol):
-    _transaction: _TransactionInternals
 
 
 async def test_executor_supports_ctes_returning_and_conflicts(database: PostgresDatabase) -> None:
@@ -194,6 +194,59 @@ async def test_fetch_iter_streams_rows_through_a_cursor(database: PostgresDataba
         assert [row async for row in rows] == [("Ada",), ("Grace",)]
 
 
+async def test_fetch_iter_streams_past_one_fetch_batch_with_bound_parameters(
+    database: PostgresDatabase,
+) -> None:
+    await database.execute(
+        insert_into(users).values_many({"name": f"user{index:04}"} for index in range(250))
+    )
+    async with database.fetch_iter(
+        select(users.name).from_(users).where(users.id.gt(10)).order_by(users.id.asc())
+    ) as rows:
+        names = [name async for (name,) in rows]
+    assert names == [f"user{index:04}" for index in range(10, 250)]
+
+
+async def test_fetch_iter_inside_a_controlled_transaction_is_a_savepoint(
+    database: PostgresDatabase,
+) -> None:
+    async with database.transaction() as transaction:
+        await transaction.execute(insert_into(users).values(name="Ada"))
+        async with transaction.fetch_iter(select(users.name).from_(users)) as rows:
+            assert [row async for row in rows] == [("Ada",)]
+        await transaction.execute(insert_into(users).values(name="Grace"))
+        assert await transaction.fetch_all(
+            select(users.name).from_(users).order_by(users.id.asc())
+        ) == [
+            ("Ada",),
+            ("Grace",),
+        ]
+
+
+async def test_row_batches_insert_more_rows_than_one_statement_can_bind(
+    database: PostgresDatabase,
+) -> None:
+    rows = [{"name": f"user{index}", "manager_id": None} for index in range(40_000)]
+    batches = list(row_batches(rows))
+    assert [len(batch) for batch in batches] == [16_383, 16_383, 7_234]
+
+    async with database.transaction() as transaction:
+        inserted = sum(
+            [await transaction.execute(insert_into(users).values_many(b)) for b in batches]
+        )
+
+    assert inserted == 40_000
+    assert await database.fetch_one(select(count()).from_(users)) == (40_000,)
+
+
+async def test_returning_all_from_returns_the_whole_declared_relation(
+    database: PostgresDatabase,
+) -> None:
+    row = await database.fetch_one(insert_into(users).values(name="Ada").returning_all_from(users))
+
+    assert row == (1, None, "Ada", True, "new", ["new"])
+
+
 async def test_fetch_iter_does_not_attribute_consumer_errors_to_the_query(
     postgres_admin: Connection,
     database: PostgresDatabase,
@@ -230,6 +283,68 @@ async def test_fetch_iter_on_pool_binds_to_one_acquired_connection(
         await pool.close()
 
 
+async def test_fetch_iter_rejects_statements_a_cursor_cannot_be_declared_for(
+    postgres_admin: Connection, database: PostgresDatabase
+) -> None:
+    events: list[QueryEvent] = []
+    observed = PostgresDatabase(postgres_admin, observer=events.append)
+    removed = cte(Active, "removed")
+    statements = (
+        insert_into(users).values(name="Ada", manager_id=None).returning(users.id),
+        delete_from(users).where(users.id.eq(1)).returning(users.id),
+        select(removed.id)
+        .from_(removed)
+        .with_modifying(removed, delete_from(users).where(users.id.eq(1)).returning(users.id)),
+    )
+
+    for statement in statements:
+        with pytest.raises(TypeError, match=r"fetch_all\(\)"):
+            await _enter_dynamically(observed.fetch_iter, statement)
+
+    assert events == []
+    assert await postgres_admin.fetchval("select count(*) from relq_integration_users") == 0
+    assert postgres_admin.is_in_transaction() is False
+
+
+async def test_fetch_iter_streams_every_select_shape(database: PostgresDatabase) -> None:
+    await database.execute(insert_into(users).values(name="Ada", manager_id=None))
+    active = cte(Active, "active")
+    shapes = (
+        select(active.id).from_(active).with_(active, select(users.id).from_(users)),
+        select(users.id).from_(users).union(select(users.id).from_(users)),
+        select(users.id).from_(users).for_update(users),
+    )
+
+    for shape in shapes:
+        async with database.fetch_iter(shape) as rows:
+            assert [row async for row in rows] == [(1,)]
+
+
+async def test_the_statements_fetch_iter_rejects_are_read_with_fetch_all(
+    database: PostgresDatabase,
+) -> None:
+    inserted = await database.fetch_all(
+        insert_into(users).values(name="Ada", manager_id=None).returning(users.name)
+    )
+    removed = cte(Active, "removed")
+    deleted = await database.fetch_all(
+        select(removed.id)
+        .from_(removed)
+        .with_modifying(removed, delete_from(users).where(users.name.eq("Ada")).returning(users.id))
+    )
+
+    assert inserted == [("Ada",)]
+    assert len(deleted) == 1
+
+
+async def _enter_dynamically(
+    entry: Callable[..., AbstractAsyncContextManager[object]], statement: object
+) -> None:
+    """Enter ``fetch_iter`` the way an untyped caller can, past its signature."""
+    async with entry(statement):
+        pytest.fail("fetch_iter accepted a statement it cannot stream")
+
+
 async def test_fetch_one_or_raise_and_observer_cover_postgres_operations(
     postgres_admin: Connection, database: PostgresDatabase
 ) -> None:
@@ -259,7 +374,7 @@ async def test_fetch_one_or_raise_and_observer_cover_postgres_operations(
         assert [row async for row in rows] == [(1,)]
 
     class MissingUsers(Table):
-        id: Column[int] = column(int)
+        id: Column[int] = column()
 
     missing_users = MissingUsers("missing_users")
     with pytest.raises(asyncpg.UndefinedTableError):
@@ -293,7 +408,7 @@ async def test_observer_failure_does_not_replace_query_result_or_error(
     assert await observed.fetch_all(select(users.name).from_(users)) == [("Observed",)]
 
     class MissingUsers(Table):
-        id: Column[int] = column(int)
+        id: Column[int] = column()
 
     missing_users = MissingUsers("missing_users")
     with pytest.raises(asyncpg.UndefinedTableError):
@@ -463,29 +578,30 @@ async def test_database_wrappers_share_postgres_transaction_state(
     await fresh.rollback()
 
 
-async def test_begin_does_not_recover_a_caller_managed_transaction(
+async def test_begin_nests_inside_a_caller_managed_transaction(
     postgres_admin: Connection,
     database: PostgresDatabase,
 ) -> None:
     await postgres_admin.execute("begin")
     await postgres_admin.execute(
         "insert into relq_integration_users (name, manager_id) values ($1, $2)",
-        "Manual before failed begin",
+        "Manual before",
         None,
     )
 
-    with pytest.raises(asyncpg.InterfaceError, match="manually started"):
-        await database.begin()
+    nested = await database.begin()
+    await nested.execute(insert_into(users).values(name="Discarded", manager_id=None))
+    await nested.rollback()
 
     await postgres_admin.execute(
         "insert into relq_integration_users (name, manager_id) values ($1, $2)",
-        "Manual after failed begin",
+        "Manual after",
         None,
     )
     await postgres_admin.execute("commit")
     assert await database.fetch_all(select(users.name).from_(users).order_by(users.id.asc())) == [
-        ("Manual before failed begin",),
-        ("Manual after failed begin",),
+        ("Manual before",),
+        ("Manual after",),
     ]
 
 
@@ -605,13 +721,14 @@ async def test_direct_begin_nesting_invalidates_later_handles(
         await second_child.commit()
 
 
-async def test_explicit_savepoint_rejects_asyncpg_generated_name(
-    database: PostgresDatabase,
+async def test_explicit_savepoint_rejects_the_nested_transaction_name(
+    postgres_admin: Connection,
 ) -> None:
-    parent = await database.begin()
+    events: list[QueryEvent] = []
+    parent = await PostgresDatabase(postgres_admin, observer=events.append).begin()
     nested = await parent.begin()
-    generated_name = cast(_ControlledTransactionInternals, nested)._transaction._id  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(generated_name, str)
+    generated_name = events[-1].sql.removeprefix("savepoint ").strip('"')
+    assert generated_name.startswith("relq_savepoint_")
     with pytest.raises(ValueError, match="already active"):
         await nested.savepoint(generated_name)
     await parent.rollback()
