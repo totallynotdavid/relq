@@ -5,14 +5,19 @@ from relq._compiler._render import render_query
 from relq._compiler.validation import validate_query
 from relq._query import Query, extract_query
 
-_SQLITE = Dialect("sqlite", "?", max_parameters=999)
+SQLITE_MAX_PARAMETERS = 999
+# PostgreSQL's protocol allows 65,535 bind parameters, but asyncpg, the only
+# supported driver, rejects a statement with more than 32,767.
+POSTGRES_MAX_PARAMETERS = 32_767
+
+_SQLITE = Dialect("sqlite", "?", max_parameters=SQLITE_MAX_PARAMETERS)
 _POSTGRES = Dialect(
     "postgres",
     "$",
     supports_row_locking=True,
     supports_temporal_arithmetic=True,
     supports_conflict_predicates=True,
-    max_parameters=65_535,
+    max_parameters=POSTGRES_MAX_PARAMETERS,
     supports_schema_qualified_tables=True,
     supports_data_modifying_ctes=True,
     supports_postgres_expressions=True,

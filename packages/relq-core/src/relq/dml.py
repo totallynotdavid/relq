@@ -37,7 +37,7 @@ from relq.expressions import (
     Expression,
     Table,
 )
-from relq.expressions.relations import table_node
+from relq.expressions.relations import Source, source_columns, table_node
 from relq.rows import RowAdapter, row_adapter
 
 
@@ -75,17 +75,45 @@ def _target_column_names(
     return tuple(names)
 
 
+def _returning_nodes(
+    existing: tuple[Node, ...], expressions: tuple[object, ...], named: Mapping[str, object]
+) -> tuple[Node, ...]:
+    if existing:
+        raise ValueError("returning() can only be specified once")
+    if named:
+        raise TypeError("returning expressions must be positional")
+    if len(expressions) > 8:
+        raise ValueError(
+            "returning supports at most eight expressions; "
+            "use returning_all_from(relation) to return a relation's declared columns"
+        )
+    nodes: list[Node] = []
+    for expression in expressions:
+        if not isinstance(expression, Expression):
+            raise TypeError("returning accepts only SQL expressions")
+        nodes.append(expression_node(expression))
+    return tuple(nodes)
+
+
+def _returning_all_nodes(existing: tuple[Node, ...], source: Source[object]) -> tuple[Node, ...]:
+    if existing:
+        raise ValueError("returning() can only be specified once")
+    columns = source_columns(source)
+    if not columns:
+        raise ValueError("returning_all_from requires a relation with declared columns")
+    return tuple(expression_node(column) for column in columns)
+
+
 Row_co = TypeVar("Row_co", covariant=True)
 Returns = TypeVar("Returns", Literal[False], Literal[True])
 Bounded = TypeVar("Bounded", Literal[False], Literal[True])
 
-type CteQuery[Row] = (
-    SelectQuery[Row]
-    | InsertQuery[Row, Literal[True]]
+type ModifyingCteBody[Row] = (
+    InsertQuery[Row, Literal[True]]
     | UpdateQuery[Row, Literal[True], Literal[True]]
     | DeleteQuery[Row, Literal[True], Literal[True]]
 )
-"""A query that can define one CTE: a SELECT, or bounded DML with RETURNING.
+"""Bounded DML with RETURNING, the only DML that can define a CTE.
 
 The declared-model builders are absent on purpose. A CTE's output relation is
 declared by its :class:`~relq.CteTable` and the statement's result shape belongs
@@ -262,21 +290,20 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
     def returning(
         self, first: object, *rest: object, **named: object
     ) -> InsertQuery[tuple[object, ...], Literal[True]]:
-        if self._node.returning:
-            raise ValueError("returning() can only be specified once")
-        if named:
-            raise TypeError("returning expressions must be positional")
-        expressions = (first, *rest)
-        if len(expressions) > 8:
-            raise ValueError("returning supports at most eight expressions")
-        nodes: list[Node] = []
-        for expression in expressions:
-            if not isinstance(expression, Expression):
-                raise TypeError("returning accepts only SQL expressions")
-            nodes.append(expression_node(expression))
-        return new_query(
-            InsertQuery, replace(self._node, returning=tuple(nodes)), table=self._table
-        )
+        nodes = _returning_nodes(self._node.returning, (first, *rest), named)
+        return new_query(InsertQuery, replace(self._node, returning=nodes), table=self._table)
+
+    def returning_all_from[SqlRow](
+        self, source: Source[SqlRow]
+    ) -> InsertQuery[SqlRow, Literal[True]]:
+        """Return every declared column of ``source`` in schema order.
+
+        ``returning`` stops at eight expressions because Python cannot type a
+        longer positional projection. A relation declares its row shape, so this
+        form has no limit.
+        """
+        nodes = _returning_all_nodes(self._node.returning, source)
+        return new_query(InsertQuery, replace(self._node, returning=nodes), table=self._table)
 
     def decode[Model](
         self: InsertQuery[Row_co, Literal[True]], model: type[Model] | RowAdapter[Model]
@@ -455,21 +482,15 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
     def returning(
         self, first: object, *rest: object, **named: object
     ) -> UpdateQuery[tuple[object, ...], Literal[True], Bounded]:
-        if self._node.returning:
-            raise ValueError("returning() can only be specified once")
-        if named:
-            raise TypeError("returning expressions must be positional")
-        expressions = (first, *rest)
-        if len(expressions) > 8:
-            raise ValueError("returning supports at most eight expressions")
-        nodes: list[Node] = []
-        for expression in expressions:
-            if not isinstance(expression, Expression):
-                raise TypeError("returning accepts only SQL expressions")
-            nodes.append(expression_node(expression))
-        return new_query(
-            UpdateQuery, replace(self._node, returning=tuple(nodes)), table=self._table
-        )
+        nodes = _returning_nodes(self._node.returning, (first, *rest), named)
+        return new_query(UpdateQuery, replace(self._node, returning=nodes), table=self._table)
+
+    def returning_all_from[SqlRow](
+        self, source: Source[SqlRow]
+    ) -> UpdateQuery[SqlRow, Literal[True], Bounded]:
+        """Return every declared column of ``source`` in schema order."""
+        nodes = _returning_all_nodes(self._node.returning, source)
+        return new_query(UpdateQuery, replace(self._node, returning=nodes), table=self._table)
 
     def decode[Model](
         self: UpdateQuery[Row_co, Literal[True], Bounded],
@@ -569,21 +590,15 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
     def returning(
         self, first: object, *rest: object, **named: object
     ) -> DeleteQuery[tuple[object, ...], Literal[True], Bounded]:
-        if self._node.returning:
-            raise ValueError("returning() can only be specified once")
-        if named:
-            raise TypeError("returning expressions must be positional")
-        expressions = (first, *rest)
-        if len(expressions) > 8:
-            raise ValueError("returning supports at most eight expressions")
-        nodes: list[Node] = []
-        for expression in expressions:
-            if not isinstance(expression, Expression):
-                raise TypeError("returning accepts only SQL expressions")
-            nodes.append(expression_node(expression))
-        return new_query(
-            DeleteQuery, replace(self._node, returning=tuple(nodes)), table=self._table
-        )
+        nodes = _returning_nodes(self._node.returning, (first, *rest), named)
+        return new_query(DeleteQuery, replace(self._node, returning=nodes), table=self._table)
+
+    def returning_all_from[SqlRow](
+        self, source: Source[SqlRow]
+    ) -> DeleteQuery[SqlRow, Literal[True], Bounded]:
+        """Return every declared column of ``source`` in schema order."""
+        nodes = _returning_all_nodes(self._node.returning, source)
+        return new_query(DeleteQuery, replace(self._node, returning=nodes), table=self._table)
 
     def decode[Model](
         self: DeleteQuery[Row_co, Literal[True], Bounded],
@@ -617,7 +632,8 @@ def _insert_node[Returns: (Literal[False], Literal[True])](
 
 
 # The SELECT and DML builders refer to each other in their signatures:
-# from_select() takes a SelectQuery and with_() accepts a CteQuery. Each module
-# imports the other's names after defining its own, so typing.get_type_hints()
-# can resolve both public signatures without a TYPE_CHECKING import.
+# from_select() takes a SelectQuery and with_modifying() accepts a
+# ModifyingCteBody. Each module imports the other's names after defining its
+# own, so typing.get_type_hints() can resolve both public signatures without a
+# TYPE_CHECKING import.
 from relq.query import SelectQuery

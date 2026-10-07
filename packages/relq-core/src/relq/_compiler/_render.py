@@ -287,6 +287,10 @@ def _constant(value: object) -> str:
         case int():
             return str(value)
         case str():
+            if "\x00" in value:
+                raise ValueError("a conflict-target predicate text constant cannot contain NUL")
+            # E'' strings always treat backslashes as escapes. Double backslashes
+            # and quotes regardless of the standard_conforming_strings setting.
             return "E'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
         case _:
             raise ValueError(

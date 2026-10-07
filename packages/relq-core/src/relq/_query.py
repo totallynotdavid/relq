@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from typing import Literal
 
     from relq.dml import ConflictUpdateQuery, DeleteQuery, InsertQuery, UpdateQuery
-    from relq.query import SelectQuery
+    from relq.query import ModifyingQuery, SelectQuery
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +41,16 @@ def new_query[SqlRow, Row](
     *,
     table: object | None = None,
 ) -> SelectQuery[SqlRow, Row]: ...
+
+
+@overload
+def new_query[SqlRow, Row](
+    query_type: type[ModifyingQuery[SqlRow, Row]],
+    node: QueryNode,
+    adapter: RowAdapter[Row] | None = None,
+    *,
+    table: object | None = None,
+) -> ModifyingQuery[SqlRow, Row]: ...
 
 
 @overload

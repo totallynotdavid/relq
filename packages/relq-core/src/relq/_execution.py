@@ -11,6 +11,7 @@ from relq.dml import (
     InsertQuery,
     UpdateQuery,
 )
+from relq.query import ModifyingQuery, SelectQuery
 
 type Command[Row] = (
     InsertQuery[Row, Literal[False]]
@@ -22,6 +23,7 @@ type ReturningQuery[Row] = (
     InsertQuery[Row, Literal[True]]
     | UpdateQuery[Row, Literal[True], Literal[True]]
     | DeleteQuery[Row, Literal[True], Literal[True]]
+    | ModifyingQuery[object, Row]
 )
 
 
@@ -61,6 +63,14 @@ def require_command[Row](query: Query[Row]) -> None:
     result = extract_query(query).node
     if isinstance(result, SelectNode) or result.returning:
         raise TypeError("execute() cannot consume RETURNING rows; use fetch_all() or fetch_one()")
+
+
+def require_select[Row](query: Query[Row]) -> None:
+    """Reject statements that a server-side cursor cannot be declared for."""
+    if not isinstance(query, SelectQuery):
+        raise TypeError(
+            "streaming needs a SELECT query; use fetch_all() for RETURNING queries and write CTEs"
+        )
 
 
 def map_all[Row](query: Query[Row], rows: Iterable[tuple[object, ...]]) -> list[Row]:

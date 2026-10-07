@@ -154,29 +154,19 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
         return self._compound(other, "except")
 
     def with_[CteRow](
-        self, source: CteTable[object], query: CteQuery[CteRow], *, materialized: bool = False
+        self, source: CteTable[object], query: SelectQuery[CteRow], *, materialized: bool = False
     ) -> Self:
-        """Add a CTE, optionally fencing it with PostgreSQL's ``AS MATERIALIZED``.
+        """Add a SELECT CTE, optionally fencing it with PostgreSQL's ``AS MATERIALIZED``.
 
-        ``query`` is a SELECT or a bounded ``INSERT``/``UPDATE``/``DELETE``
-        with ``RETURNING``. A data-modifying CTE runs exactly once for the
-        whole statement, whatever the outer query does with its rows.
+        A CTE that writes goes through ``with_modifying``, which returns a
+        :class:`ModifyingQuery` so the statement's writes show in its type.
 
         ``AS MATERIALIZED`` needs SQLite 3.35.0 or PostgreSQL 12, both below
         relq's documented engine floors. The compiler never sees a connection,
         so an older engine rejects the statement itself.
         """
-        query_node = _cte_query_node(query)
-        _validate_output_schema(_output_expressions(query_node), source.output_names())
-        node = select_node(self)
         return self._with_node(
-            replace(
-                node,
-                ctes=(
-                    *node.ctes,
-                    CteNode(source.reference, query_node, materialized=materialized),
-                ),
-            )
+            _with_cte(select_node(self), source, _select_cte_node(query), materialized)
         )
 
     def with_recursive[CteRow](self, source: CteTable[object], query: SelectQuery[CteRow]) -> Self:
@@ -225,6 +215,23 @@ class SelectQuery[SqlRow, Row = SqlRow](_SelectQuery[SqlRow, Row]):
             )
         return new_query(SelectQuery, select_node(self), adapter)
 
+    def with_modifying[CteRow](
+        self,
+        source: CteTable[object],
+        query: ModifyingCteBody[CteRow],
+        *,
+        materialized: bool = False,
+    ) -> ModifyingQuery[SqlRow, Row]:
+        """Add a bounded ``INSERT``/``UPDATE``/``DELETE ... RETURNING`` as a CTE.
+
+        The statement writes whatever the outer query does with the CTE's rows,
+        and it runs exactly once. The result is a :class:`ModifyingQuery`, which
+        executors accept where they accept DML with ``RETURNING`` and never
+        where they accept a plain ``SelectQuery``. PostgreSQL only.
+        """
+        node = _with_cte(select_node(self), source, _modifying_cte_node(query), materialized)
+        return new_query(ModifyingQuery, node, extract_query(self).adapter)
+
     def for_update(self, *of: Table[object]) -> Self:
         return self._lock("update", of)
 
@@ -242,6 +249,46 @@ class SelectQuery[SqlRow, Row = SqlRow](_SelectQuery[SqlRow, Row]):
 
     def skip_locked(self) -> Self:
         return self._wait("skip locked")
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ModifyingQuery[SqlRow, Row = SqlRow](Query[Row]):
+    """A SELECT whose ``WITH`` clause contains a data-modifying statement.
+
+    It is terminal on purpose. Build the outer SELECT first, then attach the
+    writing CTEs. A ``ModifyingQuery`` is not a ``SelectQuery``, so it cannot be
+    passed to ``fetch_*`` as a read, used as a subquery, or composed into a
+    compound query, where PostgreSQL rejects a writing CTE anyway.
+    """
+
+    def with_[CteRow](
+        self, source: CteTable[object], query: SelectQuery[CteRow], *, materialized: bool = False
+    ) -> ModifyingQuery[SqlRow, Row]:
+        """Add a SELECT CTE after the writing ones, so it can read their rows."""
+        node = _with_cte(select_node(self), source, _select_cte_node(query), materialized)
+        return new_query(ModifyingQuery, node, extract_query(self).adapter)
+
+    def with_modifying[CteRow](
+        self,
+        source: CteTable[object],
+        query: ModifyingCteBody[CteRow],
+        *,
+        materialized: bool = False,
+    ) -> ModifyingQuery[SqlRow, Row]:
+        node = _with_cte(select_node(self), source, _modifying_cte_node(query), materialized)
+        return new_query(ModifyingQuery, node, extract_query(self).adapter)
+
+    def decode[Model](
+        self, model: type[Model] | RowAdapter[Model]
+    ) -> ModifyingQuery[SqlRow, Model]:
+        """Attach a row decoder that only the executor uses. The SQL is unchanged."""
+        adapter = model if isinstance(model, RowAdapter) else row_adapter(model)
+        if len(select_node(self).selections) != adapter.arity:
+            raise ValueError(
+                f"{adapter.model_name} requires {adapter.arity} result columns; "
+                f"query projects {len(select_node(self).selections)}"
+            )
+        return new_query(ModifyingQuery, select_node(self), adapter)
 
 
 def cte[Relation: CteTable[object]](relation: type[Relation], name: str) -> Relation:
@@ -347,12 +394,27 @@ def _require_from_source(node: SelectNode) -> None:
         raise ValueError("joins require a preceding from_(...) clause")
 
 
-def _cte_query_node[Row](query: CteQuery[Row]) -> QueryNode:
+def _select_cte_node[Row](query: SelectQuery[Row]) -> SelectNode:
+    _reject_declared_model(query)
+    return select_node(query)
+
+
+def _modifying_cte_node[Row](query: ModifyingCteBody[Row]) -> QueryNode:
     _reject_declared_model(query)
     node = extract_query(query).node
-    if not isinstance(node, SelectNode) and not node.returning:
+    if isinstance(node, SelectNode):
+        raise TypeError("with_modifying() takes INSERT, UPDATE, or DELETE; use with_() for SELECT")
+    if not node.returning:
         raise ValueError("a data-modifying CTE requires returning() to publish its rows")
     return node
+
+
+def _with_cte(
+    node: SelectNode, source: CteTable[object], query_node: QueryNode, materialized: bool
+) -> SelectNode:
+    _validate_output_schema(_output_expressions(query_node), source.output_names())
+    cte_node = CteNode(source.reference, query_node, materialized=materialized)
+    return replace(node, ctes=(*node.ctes, cte_node))
 
 
 def _reject_declared_model[Row](query: Query[Row]) -> None:
@@ -412,4 +474,4 @@ def _validate_compound_result_shape[LeftSqlRow, LeftRow, RightSqlRow, RightRow](
 
 
 # Imported after the definitions above for the reason given in dml.py.
-from relq.dml import CteQuery
+from relq.dml import ModifyingCteBody
