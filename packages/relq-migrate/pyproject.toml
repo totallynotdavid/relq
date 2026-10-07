@@ -2,10 +2,19 @@
 name = "relq-migrate"
 version = "0.0.1"
 description = "Forward-only schema migrations for relq SQLite and PostgreSQL applications"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
 
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.31"]
+codegen = ["relq-codegen==0.0.1"]
+
+[project.scripts]
+relq-migrate = "relq_migrate.__main__:main"
+
+[tool.uv.sources]
+relq-codegen = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13"]

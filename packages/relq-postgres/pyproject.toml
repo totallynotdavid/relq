@@ -2,8 +2,10 @@
 name = "relq-postgres"
 version = "0.0.1"
 description = "PostgreSQL executor for relq's type-safe SQL queries"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
-dependencies = ["asyncpg>=0.31,<0.32", "relq==0.0.1"]
+dependencies = ["asyncpg>=0.31", "relq==0.0.1"]
 
 [tool.uv.sources]
 relq = { workspace = true }
