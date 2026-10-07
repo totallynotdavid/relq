@@ -54,6 +54,37 @@ def test_provider_requires_a_directory(tmp_path: Path) -> None:
         FileMigrationProvider(path).migrations()
 
 
+def test_provider_reads_the_foreign_keys_directive_from_leading_comments(tmp_path: Path) -> None:
+    _write(tmp_path, "0001_plain.sql", "create table a (id integer);")
+    _write(
+        tmp_path,
+        "0002_rebuild.sql",
+        "-- Rebuild a.\n\n--  RELQ:  Foreign_Keys = OFF \ncreate table b (id integer);",
+    )
+    _write(
+        tmp_path,
+        "0003_late.sql",
+        "create table c (id integer);\n-- relq: foreign_keys = off\n",
+    )
+
+    assert [m.foreign_keys for m in FileMigrationProvider(tmp_path).migrations()] == [
+        True,
+        False,
+        True,
+    ]
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["-- relq: foreign_keys = on", "-- relq: journal = wal", "-- relq: foreign_keys = off = 1"],
+)
+def test_provider_rejects_unsupported_directives(tmp_path: Path, header: str) -> None:
+    _write(tmp_path, "0001_bad.sql", f"{header}\ncreate table a (id integer);")
+
+    with pytest.raises(MigrationError, match="unsupported directive"):
+        FileMigrationProvider(tmp_path).migrations()
+
+
 def test_report_result_exposes_migration_status_names() -> None:
     result = MigrationResult("0001_create_users.sql", MigrationStatus.SUCCESS)
     assert result.migration_name == "0001_create_users.sql"

@@ -66,6 +66,26 @@ async def test_migrations_apply_in_order_and_are_idempotent(
     )
 
 
+async def test_pending_names_unapplied_migrations_and_writes_nothing(
+    postgres_admin: asyncpg.Connection, tmp_path: Path
+) -> None:
+    migrations = tmp_path / "migrations"
+    migrations.mkdir()
+    _write(migrations, "0001_create.sql", "create table pending_users (id integer);")
+    _write(migrations, "0002_more.sql", "alter table pending_users add column name text;")
+    migrator = PostgresMigrator(postgres_admin, FileMigrationProvider(migrations))
+
+    assert await migrator.pending() == ("0001_create.sql", "0002_more.sql")
+    assert await postgres_admin.fetchval("select to_regclass('relq_migrations')") is None
+
+    assert (await migrator.migrate_to_latest()).error is None
+    assert await migrator.pending() == ()
+
+    _write(migrations, "0003_index.sql", "create index on pending_users (id);")
+    assert await migrator.pending() == ("0003_index.sql",)
+    assert await postgres_admin.fetchval("select count(*) from relq_migrations") == 2
+
+
 async def test_empty_and_comment_only_migrations_are_successful(
     postgres_admin: asyncpg.Connection, tmp_path: Path
 ) -> None:
@@ -86,6 +106,28 @@ async def test_empty_and_comment_only_migrations_are_successful(
         MigrationStatus.SUCCESS,
     ]
     assert await postgres_admin.fetchval("select count(*) from relq_migrations") == 3
+
+
+async def test_foreign_keys_off_directive_is_rejected_before_anything_runs(
+    postgres_admin: asyncpg.Connection, tmp_path: Path
+) -> None:
+    migrations = tmp_path / "migrations"
+    migrations.mkdir()
+    _write(migrations, "0001_users.sql", "create table directive_users (id integer);")
+    _write(
+        migrations,
+        "0002_rebuild.sql",
+        "-- relq: foreign_keys = off\ncreate table directive_rebuilt (id integer);",
+    )
+
+    report = await PostgresMigrator(
+        postgres_admin, FileMigrationProvider(migrations)
+    ).migrate_to_latest()
+
+    assert report.error is not None
+    assert "only SQLiteMigrator supports" in str(report.error)
+    assert report.results == ()
+    assert await postgres_admin.fetchval("select to_regclass('directive_users')") is None
 
 
 async def test_rejects_malformed_history_checksum(
