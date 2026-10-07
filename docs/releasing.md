@@ -7,8 +7,10 @@ The release tag is the only publishing trigger.
 ## Prepare a release
 
 1. Update all five package versions and their exact cross-package dependencies.
-2. Add `docs/releases/vX.Y.Z.md`. Write a short, direct summary for users.
-   GitHub appends its generated change list and comparison link to this text.
+2. Rewrite `.github/release-notes.md` as a short, direct summary for users. Its
+   first line must be `relq X.Y.Z is out.` for the version you are releasing, or
+   the Release workflow stops before it builds. GitHub appends its generated
+   change list and comparison link to this text.
 3. Run `mise check`, commit the release preparation, and merge it.
 
 ## Sign and publish the tag

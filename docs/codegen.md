@@ -42,11 +42,9 @@ and compiles to `"rqueue"."jobs"`, so the module never resolves through the
 connection's `search_path`. A module generated from `public` names it too. One
 run covers one schema. See [Design boundaries](./design-boundaries.md).
 
-A `json` or `jsonb` column is generated as `Column[JsonValue]` through
-`json_column()`, which matches what `json_decoder()` produces and works with
-`relq.postgres.json_text`. `column(JsonValue)` does not type-check because
-`JsonValue` is a recursive type alias, which a type checker rejects as a
-`TypeForm` value.
+A `json` or `jsonb` column is generated as `Column[JsonValue] = column()`, which
+matches what `json_decoder()` produces and works with `relq.postgres.json_text`.
+Handwritten tables use the same spelling.
 
 PostgreSQL codegen also handles enums (rendered as `enum.StrEnum`, arrays
 included), domains, `inet` address and interface unions, and array columns. Array
@@ -55,14 +53,14 @@ columns decode through the core `list_decoder`, so `int[]` is a `list[int]`.
 ## Generated names never shadow what the module imports
 
 A generated module imports names it then depends on: `Column`, `column`,
-`json_column`, `JsonValue`, the decoders, and whatever a `CodegenConfig` type
+`JsonValue`, the decoders, and whatever a `CodegenConfig` type
 mapping brings in. A database can contain a table called `json_value` or a
 column called `column`. Codegen therefore allocates every declaration in one
 pass against that import namespace before it renders anything.
 
 Names that come from the database are renamed deterministically, because you
 cannot change them without a migration. A colliding column becomes
-`json_column_` and keeps its SQL name through `name="json_column"`. A colliding
+`column_` and keeps its SQL name through `name="column"`. A colliding
 class becomes `JsonValue_`, and its instance, `Insert`, `Update`, and `Row`
 names change with it. Two tables that normalize to the same Python name are
 separated the same way.

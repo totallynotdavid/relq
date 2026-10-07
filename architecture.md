@@ -73,7 +73,7 @@ _temporal.py               : leaf. The closed temporal vocabulary shared by buil
 _node_value.py             → _ast
 expressions/ordering.py    → _ast, _node_value
 expressions/core.py        → _ast, _node_value, _query (select_node), _temporal, expressions/ordering, rows
-expressions/relations.py   → _ast, _node_value, expressions/core, rows (JsonValue, for json_column)
+expressions/relations.py   → _ast, _node_value, expressions/core
 expressions/analytics.py   → _ast, _node_value, expressions/core, expressions/ordering
 expressions/__init__.py    → re-exports the four above and the _temporal enums
 _analysis/walk.py          → _ast
