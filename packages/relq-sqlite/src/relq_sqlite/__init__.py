@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from itertools import count
 from time import perf_counter
@@ -11,7 +11,8 @@ from types import TracebackType
 from typing import NoReturn, Protocol, Self, cast, overload
 
 from relq import RowAdapter
-from relq._compiler.api import compile_sqlite
+from relq._batching import batch_rows
+from relq._compiler.api import SQLITE_MAX_PARAMETERS, compile_sqlite
 from relq._execution import (
     Command,
     NoResultError,
@@ -35,10 +36,21 @@ __all__ = [
     "SQLiteDatabase",
     "Savepoint",
     "TransactionUnavailableError",
+    "row_batches",
 ]
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def row_batches(rows: Iterable[Mapping[str, object]]) -> Iterator[tuple[Mapping[str, object], ...]]:
+    """Split ``rows`` into batches that each fit one SQLite ``values_many`` statement.
+
+    SQLite binds at most 999 parameters per statement, so a batch holds
+    ``999 // columns`` rows. Run the batches inside one transaction to keep the
+    insert atomic.
+    """
+    return batch_rows(rows, max_parameters=SQLITE_MAX_PARAMETERS)
 
 
 class _Cursor(Protocol):
