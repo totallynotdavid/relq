@@ -1,6 +1,8 @@
 """Strict relq schema code generation."""
 
-from relq_codegen.generate import generate_postgres, generate_sqlite
+from relq_codegen.config import load_config
+from relq_codegen.errors import CodegenError
+from relq_codegen.generate import generate_postgres, generate_sqlite, write_module
 from relq_codegen.introspection import inspect_postgres, inspect_postgres_enums, inspect_sqlite
 from relq_codegen.model import (
     ArrayType,
@@ -35,6 +37,7 @@ __all__ = [
     "Call",
     "CodegenConfig",
     "CodegenDialect",
+    "CodegenError",
     "DirectType",
     "GeneratedWrapper",
     "Import",
@@ -56,5 +59,7 @@ __all__ = [
     "inspect_postgres",
     "inspect_postgres_enums",
     "inspect_sqlite",
+    "load_config",
     "render",
+    "write_module",
 ]

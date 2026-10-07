@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast, get_args
 
+from relq_codegen.errors import CodegenError
 from relq_codegen.model import (
     ArrayType,
     Attribute,
@@ -27,10 +28,9 @@ from relq_codegen.model import (
     StringLiteral,
     Subscript,
     TypeIdentity,
-    Union,
 )
 
-_DECODER_KINDS: tuple[str, ...] = cast(
+DECODER_KINDS: tuple[str, ...] = cast(
     tuple[str, ...], get_args(cast(object, DecoderKind.__value__))
 )
 
@@ -40,9 +40,10 @@ RELQ_NAMES: frozenset[str] = frozenset(
         # refuses anything absent here, so the downstream reserved-name pass cannot
         # fall behind a newly emitted import. The decoder names derive from
         # ``DecoderKind``. The temporal names are listed explicitly.
-        *(f"{kind}_decoder" for kind in _DECODER_KINDS),
+        *(f"{kind}_decoder" for kind in DECODER_KINDS),
         "AwareDateTime",
         "AwareTime",
+        "Inet",
         "Interval",
         "JsonValue",
         "NaiveDateTime",
@@ -52,7 +53,6 @@ RELQ_NAMES: frozenset[str] = frozenset(
         "domain_decoder",
         "enum_decoder",
         "interval_decoder",
-        "json_column",
         "list_decoder",
         "naive_datetime_decoder",
         "naive_time_decoder",
@@ -61,7 +61,7 @@ RELQ_NAMES: frozenset[str] = frozenset(
     }
 )
 
-STDLIB_MODULES: frozenset[str] = frozenset({"datetime", "decimal", "ipaddress", "uuid"})
+STDLIB_MODULES: frozenset[str] = frozenset({"datetime", "decimal", "uuid"})
 
 MAPPING_IMPORTS: frozenset[Import] = frozenset(
     {*(Import("relq", (name,)) for name in RELQ_NAMES), *(Import(m) for m in STDLIB_MODULES)}
@@ -76,21 +76,11 @@ def _display_identity(identity: TypeIdentity) -> str:
 class ResolvedType:
     annotation: RenderExpression
     decoder: RenderExpression | None = None
-    builder: Name | None = None
-    """A dedicated ``Column`` builder for annotations ``column()`` cannot bind.
-
-    ``column(T)`` infers its result from the ``TypeForm`` value it receives,
-    which a type checker will not accept for a recursive type alias such as
-    ``JsonValue``.  Such a type names its own builder, which takes the column
-    name but no type argument.
-    """
 
     def imports(self) -> frozenset[Import]:
         found = self.annotation.imports()
         if self.decoder is not None:
             found |= self.decoder.imports()
-        if self.builder is not None:
-            found |= self.builder.imports()
         return found
 
 
@@ -135,11 +125,12 @@ def _resolve_mapped_type(identity: TypeIdentity, config: CodegenConfig | None) -
             ),
         )
     if isinstance(mapping, RejectedType):
-        raise TypeError(
+        raise CodegenError(
             f"database type {_display_identity(identity)} is rejected: {mapping.reason}"
         )
-    raise ValueError(
-        f"unsupported database type {_display_identity(identity)}; add an explicit relq-codegen mapping"
+    raise CodegenError(
+        f"unsupported database type {_display_identity(identity)}; "
+        "map it in a relq-codegen --config file"
     )
 
 
@@ -162,27 +153,13 @@ def _resolve_builtin(
                     (StringLiteral(mapping.name), decoder, Name(mapping.name)),
                 ),
             )
-        raise TypeError(f"database type {sql_type.name!r} is rejected: {mapping.reason}")
+        raise CodegenError(f"database type {sql_type.name!r} is rejected: {mapping.reason}")
     if "uuid" in normalized:
         return ResolvedType(_attribute("uuid", "UUID"), Call(relq_name("uuid_decoder")))
     if normalized == "inet":
-        return ResolvedType(
-            Union(
-                (
-                    _attribute("ipaddress", "IPv4Address"),
-                    _attribute("ipaddress", "IPv6Address"),
-                    _attribute("ipaddress", "IPv4Interface"),
-                    _attribute("ipaddress", "IPv6Interface"),
-                )
-            ),
-            Call(relq_name("inet_decoder")),
-        )
+        return ResolvedType(relq_name("Inet"), Call(relq_name("inet_decoder")))
     if "json" in normalized:
-        return ResolvedType(
-            relq_name("JsonValue"),
-            Call(relq_name("json_decoder")),
-            builder=relq_name("json_column"),
-        )
+        return ResolvedType(relq_name("JsonValue"), Call(relq_name("json_decoder")))
     if "bool" in normalized:
         return ResolvedType(Name("bool"), Call(relq_name("bool_decoder")))
     if (
@@ -230,15 +207,15 @@ def _resolve_builtin(
             # interval_decoder() accepts only a relq.Interval, so generated code
             # would fail at decode time. A configured mapping, checked earlier,
             # is how to read such a column.
-            raise TypeError(
+            raise CodegenError(
                 f"database type {sql_type.name!r} is rejected: SQLite has no interval type, "
-                "and relq.Interval is PostgreSQL-only; add an explicit relq-codegen mapping"
+                "and relq.Interval is PostgreSQL-only; map it in a relq-codegen --config file"
             )
         return ResolvedType(relq_name("Interval"), Call(relq_name("interval_decoder")))
     if any(token in normalized for token in ("char", "text", "string", "citext", "xml", "name")):
         return ResolvedType(Name("str"), Call(relq_name("str_decoder")))
-    raise ValueError(
-        f"unsupported database type {sql_type.name!r}; add an explicit relq-codegen mapping"
+    raise CodegenError(
+        f"unsupported database type {sql_type.name!r}; map it in a relq-codegen --config file"
     )
 
 
@@ -289,9 +266,11 @@ def used_wrapper_policies(
     names: set[str] = set()
     for wrapper in wrappers:
         if not wrapper.name.isidentifier() or keyword.iskeyword(wrapper.name):
-            raise ValueError(f"generated wrapper name must be a valid identifier: {wrapper.name!r}")
+            raise CodegenError(
+                f"generated wrapper name must be a valid identifier: {wrapper.name!r}"
+            )
         if wrapper.name in names:
-            raise ValueError(f"duplicate generated wrapper name: {wrapper.name}")
+            raise CodegenError(f"duplicate generated wrapper name: {wrapper.name}")
         names.add(wrapper.name)
     return tuple(sorted(wrappers, key=lambda wrapper: wrapper.name))
 

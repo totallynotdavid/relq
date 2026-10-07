@@ -5,8 +5,12 @@ import asyncio
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
-from relq_codegen import generate_postgres, generate_sqlite
+from relq_codegen.config import DEFAULT_ATTRIBUTE, load_config
+from relq_codegen.errors import CodegenError
+from relq_codegen.generate import generate_postgres, generate_sqlite, write_module
+from relq_codegen.model import CodegenConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +18,8 @@ class _SqliteArguments:
     database: Path
     output: Path
     check: bool
+    config: str | None
+    exclude_tables: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +28,8 @@ class _PostgresArguments:
     output: Path
     schema: str
     check: bool
+    config: str | None
+    exclude_tables: tuple[str, ...]
 
 
 def main() -> None:
@@ -30,26 +38,44 @@ def main() -> None:
     sqlite_parser = subcommands.add_parser("sqlite", help="generate from a SQLite database")
     sqlite_parser.add_argument("database", type=Path)
     sqlite_parser.add_argument("output", type=Path)
-    sqlite_parser.add_argument("--check", action="store_true", help="fail if output is stale")
     postgres_parser = subcommands.add_parser("postgres", help="generate from a PostgreSQL database")
     postgres_parser.add_argument("dsn")
     postgres_parser.add_argument("output", type=Path)
     postgres_parser.add_argument("--schema", default="public")
-    postgres_parser.add_argument("--check", action="store_true", help="fail if output is stale")
+    for subparser in (sqlite_parser, postgres_parser):
+        subparser.add_argument(
+            "--check", action="store_true", help="fail if the output module is stale"
+        )
+        subparser.add_argument(
+            "--config",
+            help=(
+                "type mapping: a .toml file, or a Python module 'package.module[:NAME]' "
+                f"defining a CodegenConfig (default NAME: {DEFAULT_ATTRIBUTE})"
+            ),
+        )
+        subparser.add_argument(
+            "--exclude-table",
+            action="append",
+            default=[],
+            metavar="NAME",
+            help="leave a table out of the module, such as the relq-migrate history table",
+        )
     arguments = _validated_arguments(parser.parse_args())
-    if isinstance(arguments, _SqliteArguments):
-        connection = sqlite3.connect(arguments.database)
-        try:
-            generated = generate_sqlite(connection)
-        finally:
-            connection.close()
-    else:
-        generated = asyncio.run(_generate_postgres(arguments))
-    if arguments.check:
-        if not arguments.output.exists() or arguments.output.read_text() != generated:
-            raise SystemExit(f"generated schema is stale: {arguments.output}")
-        return
-    _write_if_changed(arguments.output, generated)
+    try:
+        config = load_config(arguments.config) if arguments.config is not None else None
+        if isinstance(arguments, _SqliteArguments):
+            connection = sqlite3.connect(arguments.database)
+            try:
+                generated = generate_sqlite(
+                    connection, config=config, exclude_tables=arguments.exclude_tables
+                )
+            finally:
+                connection.close()
+        else:
+            generated = asyncio.run(_generate_postgres(arguments, config))
+        write_module(arguments.output, generated, check=arguments.check)
+    except CodegenError as error:
+        raise SystemExit(f"relq-codegen: {error}") from error
 
 
 def _validated_arguments(arguments: argparse.Namespace) -> _SqliteArguments | _PostgresArguments:
@@ -57,29 +83,30 @@ def _validated_arguments(arguments: argparse.Namespace) -> _SqliteArguments | _P
     dialect = getattr(arguments, "dialect", None)
     output = getattr(arguments, "output", None)
     check = getattr(arguments, "check", None)
-    if not isinstance(output, Path) or not isinstance(check, bool):
+    config = getattr(arguments, "config", None)
+    excluded = getattr(arguments, "exclude_table", None)
+    if (
+        not isinstance(output, Path)
+        or not isinstance(check, bool)
+        or not (config is None or isinstance(config, str))
+        or not isinstance(excluded, list)
+        or not all(isinstance(name, str) for name in cast(list[object], excluded))
+    ):
         raise TypeError("invalid relq-codegen arguments")
+    exclude_tables = tuple(cast(list[str], excluded))
     if dialect == "sqlite":
         database = getattr(arguments, "database", None)
         if isinstance(database, Path):
-            return _SqliteArguments(database, output, check)
+            return _SqliteArguments(database, output, check, config, exclude_tables)
     elif dialect == "postgres":
         dsn = getattr(arguments, "dsn", None)
         schema = getattr(arguments, "schema", None)
         if isinstance(dsn, str) and isinstance(schema, str):
-            return _PostgresArguments(dsn, output, schema, check)
+            return _PostgresArguments(dsn, output, schema, check, config, exclude_tables)
     raise TypeError("invalid relq-codegen arguments")
 
 
-def _write_if_changed(output: Path, generated: str) -> None:
-    """Leave an unchanged file alone so its modification time does not move."""
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists() and output.read_text() == generated:
-        return
-    output.write_text(generated)
-
-
-async def _generate_postgres(arguments: _PostgresArguments) -> str:
+async def _generate_postgres(arguments: _PostgresArguments, config: CodegenConfig | None) -> str:
     try:
         import asyncpg
     except ModuleNotFoundError as error:
@@ -88,7 +115,12 @@ async def _generate_postgres(arguments: _PostgresArguments) -> str:
         ) from error
     connection = await asyncpg.connect(arguments.dsn)
     try:
-        return await generate_postgres(connection, schema=arguments.schema)
+        return await generate_postgres(
+            connection,
+            schema=arguments.schema,
+            config=config,
+            exclude_tables=arguments.exclude_tables,
+        )
     finally:
         await connection.close()
 

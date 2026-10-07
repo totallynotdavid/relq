@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import keyword
 import re
+import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 
+from relq_codegen.errors import CodegenError
 from relq_codegen.mapping import MAPPING_IMPORTS, relq_name, resolve_type, used_wrapper_policies
 from relq_codegen.model import (
     Call,
@@ -21,6 +23,9 @@ from relq_codegen.model import (
     SchemaTable,
     TypeIdentity,
 )
+
+_FORMATTER_LINE_LENGTH = 88
+"""The line length that Black and Ruff use when they wrap an import list."""
 
 _MODULE_IMPORTS: frozenset[Import] = frozenset(
     {
@@ -223,7 +228,7 @@ def _plan(
         # instead of renamed. Generating a different public name than the
         # configured one would be worse than refusing to generate.
         if policy.name in taken:
-            raise ValueError(
+            raise CodegenError(
                 f"generated wrapper name collides with a name the generated module "
                 f"already binds: {policy.name}"
             )
@@ -324,13 +329,8 @@ def render(
                 if field.nullable
                 else resolved.annotation.render()
             )
-            builder = "column" if resolved.builder is None else resolved.builder.render()
-            arguments = [] if resolved.builder is not None else [resolved.annotation.render()]
-            if attribute != field.name:
-                arguments.append(f"name={field.name!r}")
-            body.append(
-                f"    {attribute}: Column[{annotation}] = {builder}(" + ", ".join(arguments) + ")"
-            )
+            argument = f"name={field.name!r}" if attribute != field.name else ""
+            body.append(f"    {attribute}: Column[{annotation}] = column({argument})")
         body.append("")
         instance_name = table_names.instance
         insert_payload = table_names.insert_payload
@@ -396,9 +396,44 @@ def render(
         raise ValueError(  # pragma: no cover - _plan allocates around every import
             "generated module binds a name it also imports"
         )
-    body.insert(1, "\n".join(item.render() for item in sorted(imports, key=Import.render)))
+    body[1:1] = ["", _render_imports(imports)]
     body.append("__all__ = [" + ", ".join(repr(name) for name in exported) + "]")
     return "\n".join(body) + "\n"
+
+
+def _render_imports(imports: Iterable[Import]) -> str:
+    """Render one statement per module with standard-library imports first."""
+    names: dict[str, set[str]] = {}
+    modules: set[str] = set()
+    for item in imports:
+        if item.names:
+            names.setdefault(item.module, set()).update(item.names)
+        else:
+            modules.add(item.module)
+    sections: list[str] = []
+    for standard in (True, False):
+        statements = [
+            *(f"import {module}" for module in sorted(modules) if _is_standard(module) == standard),
+            *(
+                _from_statement(module, sorted(imported))
+                for module, imported in sorted(names.items())
+                if _is_standard(module) == standard
+            ),
+        ]
+        if statements:
+            sections.append("\n".join(statements))
+    return "\n\n".join(sections)
+
+
+def _is_standard(module: str) -> bool:
+    return module.split(".")[0] in sys.stdlib_module_names
+
+
+def _from_statement(module: str, names: list[str]) -> str:
+    line = Import(module, tuple(names)).render()
+    if len(line) <= _FORMATTER_LINE_LENGTH:
+        return line
+    return f"from {module} import (\n" + "".join(f"    {name},\n" for name in names) + ")"
 
 
 def _enum_stems(enums: tuple[SchemaEnum, ...]) -> Mapping[TypeIdentity, str]:
