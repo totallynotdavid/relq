@@ -4,15 +4,25 @@ from __future__ import annotations
 
 import logging
 import weakref
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+)
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from itertools import count
 from time import perf_counter
-from typing import Literal, NoReturn, Protocol, cast, overload
+from typing import Literal, NoReturn, Protocol, overload
 
 import asyncpg
 from relq import Interval, RowAdapter
-from relq._compiler.api import compile_postgres
+from relq._batching import batch_rows
+from relq._compiler.api import POSTGRES_MAX_PARAMETERS, compile_postgres
 from relq._execution import (
     Command,
     NoResultError,
@@ -25,6 +35,7 @@ from relq._execution import (
     map_row,
     raise_no_result,
     require_command,
+    require_select,
 )
 from relq._query import Query, extract_query
 from relq.query import SelectQuery
@@ -38,21 +49,24 @@ __all__ = [
     "QueryObserver",
     "Savepoint",
     "TransactionUnavailableError",
+    "row_batches",
 ]
 
 
 _LOGGER = logging.getLogger(__name__)
 
 
+def row_batches(rows: Iterable[Mapping[str, object]]) -> Iterator[tuple[Mapping[str, object], ...]]:
+    """Split ``rows`` into batches that each fit one PostgreSQL ``values_many`` statement.
+
+    asyncpg binds at most 32,767 parameters per statement, so a batch holds
+    ``32767 // columns`` rows. Run the batches inside one transaction to keep the
+    insert atomic.
+    """
+    return batch_rows(rows, max_parameters=POSTGRES_MAX_PARAMETERS)
+
+
 type Connection = asyncpg.Connection | asyncpg.pool.PoolConnectionProxy[asyncpg.Record]
-
-
-class _Transaction(Protocol):
-    async def start(self) -> None: ...
-
-    async def commit(self) -> None: ...
-
-    async def rollback(self) -> None: ...
 
 
 @dataclass(slots=True)
@@ -66,14 +80,6 @@ class _StreamOutcome:
 
     def record_error(self, error: BaseException) -> None:
         self.error = error
-
-
-class _AsyncpgConnectionInternals(Protocol):
-    _top_xact: object | None
-
-
-class _AsyncpgTransactionInternals(Protocol):
-    _id: str | None
 
 
 class _PostgresRegistryEntry(Protocol):
@@ -385,25 +391,21 @@ class PostgresDatabase:
             raise_no_result(error)
         return result
 
-    @overload
-    def fetch_iter[SqlRow, Row](
-        self, query: SelectQuery[SqlRow, Row]
-    ) -> AbstractAsyncContextManager[AsyncIterator[Row]]: ...
-
-    @overload
-    def fetch_iter[Row](
-        self, query: ReturningQuery[Row]
-    ) -> AbstractAsyncContextManager[AsyncIterator[Row]]: ...
-
     @asynccontextmanager
-    async def fetch_iter[Row](self, query: Query[Row]) -> AsyncGenerator[AsyncIterator[Row]]:
-        """Stream rows through a server-side cursor.
+    async def fetch_iter[SqlRow, Row](
+        self, query: SelectQuery[SqlRow, Row]
+    ) -> AsyncGenerator[AsyncIterator[Row]]:
+        """Stream the rows of a SELECT through a server-side cursor.
 
-        A PostgreSQL cursor is only valid inside a transaction. This opens one for
-        the whole iteration, as a savepoint when a relq transaction is already
-        open. On a pool it also holds one acquired connection for that scope.
+        PostgreSQL declares cursors only for SELECT and VALUES, so INSERT, UPDATE
+        and DELETE with RETURNING and write CTEs are rejected with ``TypeError``;
+        read those with ``fetch_all``. A cursor is only valid inside a transaction.
+        This opens one for the whole iteration, as a savepoint when a relq
+        transaction is already open. On a pool it also holds one acquired
+        connection for that scope.
         """
         self._ensure_usable()
+        require_select(query)
         compiled = compile_postgres(query)
         started = perf_counter()
         outcome = _StreamOutcome()
@@ -492,87 +494,69 @@ class PostgresDatabase:
 
         if transaction_state is None:
             transaction_state = _transaction_state_for_connection(connection)
-        generated_savepoint_name: str | None = None
-        transaction = cast(_Transaction, connection.transaction())
-        nested_before_start = _connection_top_transaction(connection) is not None
-        nested_owned_by_relq = nested_before_start and bool(
-            _controlled_transactions_for_connection(connection)
-        )
+        # A transaction that anyone opened on this connection, relq or not, makes
+        # the new handle a savepoint inside it. Otherwise it opens the transaction.
+        savepoint_name = _new_savepoint_name() if connection.is_in_transaction() else None
         recovery_boundary = (
             transaction_state.stack[-1]
-            if nested_owned_by_relq and transaction_state.stack
+            if savepoint_name is not None and transaction_state.stack
             else None
         )
+        start_sql = _control_sql(savepoint_name, "start")
         started = perf_counter()
         try:
-            await transaction.start()
+            await connection.execute(start_sql)
         except BaseException as error:
-            start_sql = _transaction_control_sql(transaction, "start")
             try:
                 self._observe(start_sql, (), started, None, error)
             finally:
-                if nested_owned_by_relq:
-                    await _cleanup_nested_transaction(
-                        transaction,
-                        connection,
-                        recovery_boundary=recovery_boundary,
-                    )
-                elif pool is None:
+                if pool is None:
                     try:
-                        await _recover_asyncpg_connection(
+                        await _recover_connection(
                             connection,
-                            owned_transaction=transaction,
-                            recovery_control=self._run_recovery_control,
+                            owns_transaction=savepoint_name is None,
+                            recovery_boundary=recovery_boundary,
+                            recovery_control=(
+                                self._run_recovery_control
+                                if recovery_boundary is None
+                                else (
+                                    recovery_boundary._run_recovery_control  # pyright: ignore[reportPrivateUsage]
+                                )
+                            ),
                         )
                     except BaseException as recovery_error:
                         raise recovery_error from error
                 else:
                     await _release_pool_connection(pool, pool_connection)
             raise
-        generated_savepoint_name = _generated_savepoint_name(transaction)
         try:
-            self._observe(
-                _transaction_control_sql(transaction, "start"),
-                (),
-                started,
-                0,
-                None,
-            )
+            self._observe(start_sql, (), started, 0, None)
+            if savepoint_name is not None:
+                transaction_state.reserve_savepoint_name(savepoint_name)
         except BaseException:
-            if generated_savepoint_name is None:
+            if savepoint_name is None:
                 try:
-                    await _recover_asyncpg_connection(
+                    await _recover_connection(
                         connection,
-                        owned_transaction=transaction,
+                        owns_transaction=True,
                         recovery_control=self._run_recovery_control,
                     )
                 finally:
                     await _release_pool_connection(pool, pool_connection)
             else:
-                await _cleanup_nested_transaction(
-                    transaction,
+                await _cleanup_savepoint(
                     connection,
+                    savepoint_name,
                     recovery_boundary=recovery_boundary,
                 )
             raise
-        if generated_savepoint_name is not None:
-            try:
-                transaction_state.reserve_savepoint_name(generated_savepoint_name)
-            except BaseException:
-                await _cleanup_nested_transaction(
-                    transaction,
-                    connection,
-                    recovery_boundary=recovery_boundary,
-                )
-                raise
         return ControlledTransaction(
             connection,
-            transaction,
             observer=self._observer,
             pool=pool,
             pool_connection=pool_connection,
             transaction_state=transaction_state,
-            generated_savepoint_name=generated_savepoint_name,
+            generated_savepoint_name=savepoint_name,
         )
 
     @asynccontextmanager
@@ -606,12 +590,11 @@ class PostgresDatabase:
 
 
 class ControlledTransaction(PostgresDatabase):
-    """A manually controlled asyncpg transaction and its query interface."""
+    """A manually controlled transaction, or a savepoint inside one, and its query interface."""
 
     def __init__(
         self,
         connection: Connection,
-        transaction: _Transaction,
         *,
         observer: QueryObserver | None,
         pool: asyncpg.Pool | None = None,
@@ -620,7 +603,6 @@ class ControlledTransaction(PostgresDatabase):
         generated_savepoint_name: str | None = None,
     ) -> None:
         super().__init__(connection, observer=observer)
-        self._transaction = transaction
         self._generated_savepoint_name = generated_savepoint_name
         self._pool = pool
         self._pool_connection = pool_connection
@@ -701,12 +683,9 @@ class ControlledTransaction(PostgresDatabase):
     async def commit(self) -> None:
         self._ensure_usable()
         self._transaction_state.invalidate_after(self)
-        sql = _transaction_control_sql(
-            self._transaction,
-            "commit",
-        )
+        sql = _control_sql(self._generated_savepoint_name, "commit")
         try:
-            started = await self._run_control(sql, self._transaction.commit)
+            started = await self._run_control(sql, lambda: self.raw_connection.execute(sql))
         except BaseException as commit_error:  # noqa: BLE001
             await self._recover_after_control_failure(commit_error)
         else:
@@ -719,13 +698,10 @@ class ControlledTransaction(PostgresDatabase):
         self._ensure_usable()
         self._transaction_state.invalidate_after(self)
         nested = self._generated_savepoint_name is not None
-        sql = _transaction_control_sql(
-            self._transaction,
-            "rollback",
-        )
+        sql = _control_sql(self._generated_savepoint_name, "rollback")
         observer_error: BaseException | None = None
         try:
-            started = await self._run_control(sql, self._transaction.rollback)
+            started = await self._run_control(sql, lambda: self.raw_connection.execute(sql))
             if nested:
                 try:
                     self._observe(sql, (), started, 0, None)
@@ -777,21 +753,17 @@ class ControlledTransaction(PostgresDatabase):
             raise
         return savepoint
 
-    async def _recover_connection(self) -> None:
-        await _recover_asyncpg_connection(
-            self.raw_connection,
-            extra=(self,),
-            recovery_boundary=self,
-            recovery_control=self._run_recovery_control,
-        )
-
     async def _recover_after_control_failure(self, operation_error: BaseException) -> NoReturn:
         try:
-            # After a control-operation error asyncpg marks the transaction FAILED
-            # and refuses to roll it back through Transaction.rollback(). A raw
-            # ROLLBACK resets the connection and clears asyncpg's top-transaction
-            # pointer. Recovery also invalidates the registry.
-            await self._recover_connection()
+            # A failed control statement leaves the server transaction unusable, so
+            # recovery rolls back to this handle's savepoint, or the whole
+            # transaction for an outermost handle, and invalidates the registry.
+            await _recover_connection(
+                self.raw_connection,
+                extra=(self,),
+                recovery_boundary=self,
+                recovery_control=self._run_recovery_control,
+            )
         except BaseException as recovery_error:
             raise recovery_error from operation_error
         raise operation_error
@@ -870,54 +842,34 @@ def _savepoint_name_key(name: str) -> str:
     )
 
 
-def _transaction_control_sql(
-    transaction: _Transaction, operation: Literal["start", "commit", "rollback"]
+def _control_sql(
+    savepoint_name: str | None, operation: Literal["start", "commit", "rollback"]
 ) -> str:
-    name = _generated_savepoint_name(transaction)
-    if name is None:
-        if operation == "start":
-            return "begin"
-        if operation == "commit":
-            return "commit"
-        if operation == "rollback":
-            return "rollback"
-    else:
-        if operation == "start":
-            return f"savepoint {name}"
-        if operation == "commit":
-            return f"release savepoint {name}"
-        if operation == "rollback":
-            return f"rollback to {name}"
-    raise ValueError(f"unsupported transaction operation: {operation!r}")
+    """The statement that starts, commits, or rolls back a transaction or savepoint."""
+    if savepoint_name is None:
+        return {"start": "begin", "commit": "commit", "rollback": "rollback"}[operation]
+    return {
+        "start": f"savepoint {savepoint_name}",
+        "commit": f"release savepoint {savepoint_name}",
+        "rollback": f"rollback to {savepoint_name}",
+    }[operation]
 
 
-def _generated_savepoint_name(transaction: _Transaction) -> str | None:
-    name = cast(_AsyncpgTransactionInternals, transaction)._id  # pyright: ignore[reportPrivateUsage]
-    if not isinstance(name, str):
-        return None
-    return _quote_savepoint(name)
+# Savepoint names for nested controlled transactions. The counter is global, so
+# a name never repeats on any connection.
+_SAVEPOINT_COUNTER = count(1)
 
 
-def _underlying_connection(connection: Connection) -> _AsyncpgConnectionInternals | None:
-    if isinstance(connection, asyncpg.pool.PoolConnectionProxy):
-        try:
-            return cast(
-                _AsyncpgConnectionInternals | None,
-                object.__getattribute__(connection, "_con"),
-            )
-        except AttributeError:
-            return None
-    return cast(_AsyncpgConnectionInternals, connection)
+_CURSOR_COUNTER = count(1)
+_CURSOR_BATCH_SIZE = 100
+
+
+def _new_savepoint_name() -> str:
+    return _quote_savepoint(f"relq_savepoint_{next(_SAVEPOINT_COUNTER)}")
 
 
 def _connection_key(connection: Connection) -> int:
-    underlying = _underlying_connection(connection)
-    return id(connection) if underlying is None else id(underlying)
-
-
-def _connection_top_transaction(connection: Connection) -> object | None:
-    underlying = _underlying_connection(connection)
-    return None if underlying is None else underlying._top_xact  # pyright: ignore[reportPrivateUsage]
+    return id(connection)
 
 
 def _controlled_transactions_for_connection(connection: Connection) -> set[ControlledTransaction]:
@@ -948,22 +900,20 @@ async def _release_pool_connection(
         await pool.release(pool_connection)
 
 
-async def _cleanup_nested_transaction(
-    transaction: _Transaction,
+async def _cleanup_savepoint(
     connection: Connection,
+    name: str,
     *,
     recovery_boundary: ControlledTransaction | None,
 ) -> None:
+    """Undo a savepoint whose creation was interrupted after it succeeded."""
     try:
-        await transaction.rollback()
-        name = _generated_savepoint_name(transaction)
-        if name is not None:
-            await connection.execute(f"release savepoint {name}")
+        await connection.execute(_control_sql(name, "rollback"))
+        await connection.execute(_control_sql(name, "commit"))
     except BaseException as cleanup_error:
         try:
-            await _recover_asyncpg_connection(
+            await _recover_connection(
                 connection,
-                owned_transaction=transaction,
                 recovery_boundary=recovery_boundary,
                 recovery_control=(
                     None if recovery_boundary is None else recovery_boundary._run_recovery_control  # pyright: ignore[reportPrivateUsage]
@@ -974,24 +924,24 @@ async def _cleanup_nested_transaction(
         _LOGGER.debug("failed to clean up an observer-interrupted savepoint", exc_info=True)
 
 
-async def _recover_asyncpg_connection(
+async def _recover_connection(
     connection: Connection,
     *,
     extra: tuple[ControlledTransaction, ...] = (),
-    owned_transaction: _Transaction | None = None,
+    owns_transaction: bool = False,
     recovery_boundary: ControlledTransaction | None = None,
     recovery_control: Callable[[Connection, str], Awaitable[None]] | None = None,
 ) -> None:
+    """Return a connection to a usable state after a failed control statement.
+
+    ``owns_transaction`` says the caller issued the ``BEGIN`` being recovered.
+    """
     handles = _controlled_transactions_for_connection(connection)
     handles.update(extra)
-    underlying = _underlying_connection(connection)
-    current_top_transaction = (
-        None if underlying is None else underlying._top_xact  # pyright: ignore[reportPrivateUsage]
-    )
-    if not handles and current_top_transaction is not owned_transaction:
-        # No relq handle exists and the attempted transaction never became
-        # asyncpg's top transaction. The connection may hold caller-owned work,
-        # so recovery must not issue a raw ROLLBACK.
+    if not handles and not owns_transaction:
+        # No relq handle exists and relq did not open the transaction. The
+        # connection may hold caller-owned work, so recovery must not issue a
+        # raw ROLLBACK.
         return
 
     if (
@@ -1013,17 +963,13 @@ async def _recover_asyncpg_connection(
         handle._invalidate_for_recovery()  # pyright: ignore[reportPrivateUsage]
 
     recovery_error: BaseException | None = None
-    if underlying is None:
-        recovery_error = RuntimeError("asyncpg pool connection proxy is detached")
-    if recovery_error is None:
-        try:
-            object.__setattr__(underlying, "_top_xact", None)
-            if recovery_control is None:
-                await connection.execute("rollback")
-            else:
-                await recovery_control(connection, "rollback")
-        except BaseException as error:  # noqa: BLE001
-            recovery_error = error
+    try:
+        if recovery_control is None:
+            await connection.execute("rollback")
+        else:
+            await recovery_control(connection, "rollback")
+    except BaseException as error:  # noqa: BLE001
+        recovery_error = error
 
     release_error: BaseException | None = None
     for handle in handles:
@@ -1068,11 +1014,17 @@ async def _stream_rows[Row](
     on_row: Callable[[], None],
     on_error: Callable[[BaseException], None],
 ) -> AsyncGenerator[Row]:
+    # asyncpg's own cursor only works inside a transaction opened by asyncpg's
+    # transaction(); relq opens its transactions with plain SQL, so the cursor is
+    # a server-side one declared and fetched with SQL.
+    name = f"relq_cursor_{next(_CURSOR_COUNTER)}"
     try:
-        async for record in connection.cursor(sql, *parameters):
-            row = map_row(query, tuple(record))
-            on_row()
-            yield row
+        await connection.execute(f"declare {name} no scroll cursor for {sql}", *parameters)
+        while records := await connection.fetch(f"fetch forward {_CURSOR_BATCH_SIZE} from {name}"):
+            for record in records:
+                row = map_row(query, tuple(record))
+                on_row()
+                yield row
     except BaseException as error:
         on_error(error)
         raise
