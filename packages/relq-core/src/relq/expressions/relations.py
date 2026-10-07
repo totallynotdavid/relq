@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
 from typing import Self, cast, overload
-
-from typing_extensions import TypeForm
 
 from relq._ast import (
     ColumnNode,
@@ -20,7 +17,6 @@ from relq._ast import (
 )
 from relq._node_value import NodeValue, construction_token, initialize_node, node_of
 from relq.expressions.core import ConflictTarget, Expr
-from relq.rows import JsonValue
 
 _RESERVED_ATTRIBUTES = frozenset(
     {
@@ -70,19 +66,15 @@ class Source[SqlRow_co = object](NodeValue[SourceNode]):
 class Column[T](Expr[T], ConflictTarget):
     """A declared table column, bound to a source when accessed."""
 
-    python_type: TypeForm[T] | Callable[..., T]
     _name: str = ""
 
-    def __init__(
-        self, token: object, python_type: TypeForm[T] | Callable[..., T], name: str = ""
-    ) -> None:
+    def __init__(self, token: object, name: str = "") -> None:
         # ``slots=True`` rebuilds the class. On CPython 3.13.0 through 3.13.13 the
         # carried-over methods keep a ``__class__`` cell that points at the
         # discarded original, so zero-argument ``super()`` raises ``TypeError``.
         # Naming the class resolves against the surviving class and walks the same
         # MRO on every supported version.
         super(Column, self).__init__(token)
-        object.__setattr__(self, "python_type", python_type)
         object.__setattr__(self, "_name", name)
 
     def __set_name__(self, owner: type[Source], name: str) -> None:
@@ -98,7 +90,7 @@ class Column[T](Expr[T], ConflictTarget):
     def __get__(self, instance: Source | None, owner: type[Source]) -> Column[T]:
         if instance is None:
             return self
-        return _column(self.python_type, self._name, ColumnNode(instance.reference, self._name))
+        return _column(self._name, ColumnNode(instance.reference, self._name))
 
     def declared_name(self, attribute: str) -> str:
         return self._name or attribute
@@ -189,29 +181,25 @@ class CteTable[SqlRow_co = object](DerivedTable[SqlRow_co]):
         initialize_node(self, CteSourceNode(name))
 
 
-def output_column[T](python_type: TypeForm[T] | Callable[..., T], *, name: str = "") -> Column[T]:
-    """Declare a typed output column. Nullability belongs in ``T``."""
-    return _column(python_type, name, ValueNode(None))
+def output_column[T](*, name: str = "") -> Column[T]:
+    """Declare a typed output column. The annotation supplies ``T``.
 
-
-def column[T](
-    python_type: TypeForm[T] | Callable[..., T],
-    *,
-    name: str = "",
-) -> Column[T]:
-    """Declare a typed table column. Nullability belongs in ``T``, not in flags."""
-    return _column(python_type, name, ValueNode(None))
-
-
-def json_column(*, name: str = "") -> Column[JsonValue]:
-    """Declare a JSON/JSONB column.
-
-    ``column(JsonValue)`` does not type-check because ``JsonValue`` is a
-    recursive type alias, which a type checker rejects as a ``TypeForm`` value.
-    ``JsonValue`` already admits ``None``, so a nullable JSON column needs no
-    separate spelling.
+    ``T`` comes from the declaration, ``total: Column[int | None] = output_column()``,
+    so any annotation works, including a recursive alias such as ``JsonValue``.
+    Nullability belongs in ``T``. An unannotated declaration is a type error.
     """
-    return _column(cast("TypeForm[JsonValue]", JsonValue), name, ValueNode(None))
+    return _column(name, ValueNode(None))
+
+
+def column[T](*, name: str = "") -> Column[T]:
+    """Declare a typed table column. The annotation supplies ``T``.
+
+    ``T`` comes from the declaration, ``email: Column[str | None] = column()``,
+    so any annotation works, including a recursive alias such as ``JsonValue``.
+    Nullability belongs in ``T``, not in flags. An unannotated declaration is a
+    type error.
+    """
+    return _column(name, ValueNode(None))
 
 
 def excluded[T](column: Column[T]) -> Expr[T]:
@@ -224,8 +212,8 @@ def excluded[T](column: Column[T]) -> Expr[T]:
     return expression
 
 
-def _column[T](python_type: TypeForm[T] | Callable[..., T], name: str, node: Node) -> Column[T]:
-    column_ = Column(construction_token(), python_type, name)
+def _column[T](name: str, node: Node) -> Column[T]:
+    column_ = Column[T](construction_token(), name)
     initialize_node(column_, node)
     return column_
 

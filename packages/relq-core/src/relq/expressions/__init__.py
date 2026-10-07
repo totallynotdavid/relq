@@ -81,7 +81,6 @@ from relq.expressions.relations import (
     Table,
     column,
     excluded,
-    json_column,
     output_column,
 )
 
@@ -129,7 +128,6 @@ __all__ = [
     "exists",
     "extract",
     "following",
-    "json_column",
     "justify_days",
     "justify_hours",
     "justify_interval",

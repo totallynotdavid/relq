@@ -52,7 +52,6 @@ from relq.expressions import (
     exists,
     extract,
     following,
-    json_column,
     justify_days,
     justify_hours,
     justify_interval,
@@ -89,11 +88,12 @@ from relq.expressions import (
     unbounded_preceding,
     value,
 )
-from relq.query import SelectQuery, cte, select, select_all_from
+from relq.query import ModifyingQuery, SelectQuery, cte, select, select_all_from
 from relq.rows import (
     AwareDateTime,
     AwareTime,
     Decoder,
+    Inet,
     Interval,
     JsonValue,
     NaiveDateTime,
@@ -145,9 +145,11 @@ __all__ = [
     "Expression",
     "ExtractField",
     "FrameBoundary",
+    "Inet",
     "InsertQuery",
     "Interval",
     "JsonValue",
+    "ModifyingQuery",
     "NaiveDateTime",
     "NaiveTime",
     "NullablePredicate",
@@ -203,7 +205,6 @@ __all__ = [
     "insert_into",
     "int_decoder",
     "interval_decoder",
-    "json_column",
     "json_decoder",
     "justify_days",
     "justify_hours",
