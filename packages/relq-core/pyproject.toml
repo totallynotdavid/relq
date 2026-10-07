@@ -3,6 +3,8 @@ name = "relq"
 version = "0.0.1"
 description = "Type-safe SQL query builder core for Python 3.13+"
 readme = "readme.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = ["typing-extensions>=4.16.0"]
 

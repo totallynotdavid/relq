@@ -56,3 +56,7 @@ migrations, and code generation. Start with
 ## Contributing
 
 See [contributing.md](./contributing.md).
+
+## License
+
+relq is licensed under the [Apache License 2.0](./LICENSE).
