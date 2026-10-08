@@ -4,8 +4,8 @@ Each function is a named, typed, validated expression that only PostgreSQL has.
 Compiling a query that uses one for SQLite is a compile-time error. A PostgreSQL
 operator relq does not model yet needs a new named function here and a new node
 in the compiler, because relq has no raw SQL fragment, generic function-name
-builder, or caller-supplied operator or cast target. ``docs/design-boundaries.md``
-covers the other PostgreSQL-only surfaces.
+builder, or caller-supplied operator or cast target. ``docs/dialects.md`` covers
+the other PostgreSQL-only surfaces.
 """
 
 import uuid
