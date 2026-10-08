@@ -1,5 +1,8 @@
 # Execution
 
+An executor compiles a query for its engine, runs it, and returns rows. Create
+one from an open connection:
+
 ```python
 import sqlite3
 
@@ -25,10 +28,8 @@ asyncpg's prepared-statement cache does not survive pgbouncer's `transaction` or
 `statement` pooling mode. Behind pgbouncer, pass `statement_cache_size=0` to
 `asyncpg.connect` or `create_pool`.
 
-To recover a failed controlled transaction, the PostgreSQL executor uses
-asyncpg 0.31's private transaction attributes. `relq-postgres` therefore pins
-asyncpg to `>=0.31,<0.32`. Before widening that range, check that those
-attributes still behave the same.
+`relq-postgres` needs asyncpg 0.31 or later. It controls transactions with plain
+`BEGIN`, `SAVEPOINT`, and `COMMIT` statements, not asyncpg's `transaction()`.
 
 ## Raw and decoded results
 
@@ -37,8 +38,8 @@ attributes still behave the same.
 such as SQLite's `0` and `1` for booleans and text timestamps. `.decode(Model)`
 attaches a declared decoder to the same SELECT or DML builder. The SQL
 projection and every composition operation stay as they were, but `fetch_all`
-and `fetch_one` now return the declared dataclass or `NamedTuple`. Decoding never
-changes the SQL.
+and `fetch_one` now return the declared dataclass or `NamedTuple`. Decoding
+never changes the SQL.
 
 ```python
 @dataclass
@@ -61,9 +62,27 @@ Use `.decode(...)` for a reusable query contract and `fetch_*_as` for a single
 call. `row_adapter(Model)` checks the row width before decoding any row.
 
 `fetch_one_or_raise` and `fetch_one_as_or_raise` require a row. When the query
-returns none, they raise `NoResultError`, or the exception returned by the
-optional zero-argument `error` factory. `fetch_one` and `fetch_one_as` return
-`None` instead.
+returns none, they raise `NoResultError` (exported by both executor packages),
+or the exception returned by the optional zero-argument `error` factory.
+`fetch_one` and `fetch_one_as` return `None` instead.
+
+## Streaming
+
+`PostgresDatabase.fetch_iter(query)` streams the rows of a `SELECT` through a
+server-side cursor, fetching 100 rows at a time:
+
+```python
+async with database.fetch_iter(select(users.id).from_(users)) as rows:
+    async for (user_id,) in rows:
+        ...
+```
+
+PostgreSQL declares cursors for `SELECT` only. `fetch_iter` raises `TypeError`
+for `INSERT`, `UPDATE`, or `DELETE` with `RETURNING` and for queries with write
+CTEs. Read those with `fetch_all`. A cursor is valid only inside a transaction,
+so `fetch_iter` opens one for the whole iteration, as a savepoint when a
+transaction is already open. On a pool it also holds one connection for that
+scope. SQLite has no `fetch_iter`.
 
 ## Transactions
 
@@ -75,8 +94,8 @@ with database.transaction() as transaction:
 
 `PostgresDatabase.transaction()` is used as `async with`, matching its
 asynchronous methods. The block yields the database interface, so the handle can
-be passed to code that accepts `PostgresDatabase` or `SQLiteDatabase`. At runtime
-the handle also enforces the controlled-transaction lifecycle rules.
+be passed to code that accepts `PostgresDatabase` or `SQLiteDatabase`. At
+runtime the handle also enforces the controlled-transaction lifecycle rules.
 
 To coordinate an external operation with an open transaction, use the controlled
 handle. Its SQLite methods are synchronous and its PostgreSQL methods are
@@ -103,8 +122,8 @@ await transaction.commit()
 A controlled handle is unusable after `commit()` or `rollback()`. Its
 `savepoint()` handle supports `rollback()` and `release()` and becomes unusable
 once its owning transaction completes. The `transaction()` context manager
-remains the simple way to commit or roll back automatically. Both adapters export
-`ControlledTransaction` and the shared `TransactionUnavailableError`.
+remains the simple way to commit or roll back automatically. Both adapters
+export `ControlledTransaction` and the shared `TransactionUnavailableError`.
 PostgreSQL also exports `Connection`, the type that `transaction_connection()`
 yields.
 
@@ -112,6 +131,10 @@ To recover a failed transaction, PostgreSQL first invalidates every
 relq-controlled handle on that physical connection and then resets the raw
 connection. A wrapper you create around the connection must treat
 `TransactionUnavailableError` as terminal for that transaction.
+
+On PostgreSQL, `begin()` on a connection that is already inside a transaction,
+whoever opened it, creates a savepoint inside that transaction instead of a new
+one.
 
 SQLite has one real transaction per connection. `begin()` starts a transaction
 using the connection's `isolation_level`. If an implicit transaction is already
@@ -177,12 +200,12 @@ def observe(event: QueryEvent) -> None:
 database = SQLiteDatabase(connection, observer=observe)
 ```
 
-The observer is the only place where compiled output becomes visible. relq does
-not expose its AST or compiler as a query-rewriting API.
+The observer is how an application sees the compiled SQL. relq has no public
+compile function.
 
-Parameters reach the driver unchanged. relq has no backend-aware JSON or JSONB
-encoder. On PostgreSQL, pass the JSON wrapper your driver requires. On SQLite,
-pass values that SQLite's adapter supports.
+Parameters reach the driver unchanged. relq has no JSON or JSONB encoder. On
+PostgreSQL, pass the JSON wrapper your driver requires. On SQLite, pass values
+that SQLite's adapter supports.
 
 When SQLite `begin()` adopts an implicit transaction that is already open, no
 `BEGIN` runs, so no `BEGIN` event is emitted. The event stream starts with the
@@ -197,10 +220,6 @@ work done inside the adopted transaction and ends with its `COMMIT` or
 rejects the wrong choice where it can and the executor rejects it at runtime
 otherwise, so a returned row is never discarded silently.
 
-There is no generic `execute_many`. Homogeneous inserts use `values_many` (see
-[Data manipulation](./dml.md)). Heterogeneous work is individual `execute` calls
-inside a transaction.
-
-Compilation happens inside the executor. Application code runs builders through
-a database adapter and never handles rendered SQL. There is no public AST
-accessor, custom `Dialect`, or `compile_query` function.
+To insert many rows, use `values_many`, which builds one statement. See
+[Data manipulation](./dml.md). To run several different statements, call
+`execute` for each one inside a transaction.

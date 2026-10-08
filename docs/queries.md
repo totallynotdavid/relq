@@ -1,5 +1,8 @@
 # Queries
 
+The examples use the `users` table from [Schema](./schema.md), plus tables
+declared the same way.
+
 ## Select and joins
 
 ```python
@@ -65,22 +68,22 @@ grouping scope. `GROUP BY` takes the underlying typed expression and never a
 active_or_pending = users_query.union(pending_query)
 ```
 
-`union`, `union_all`, `intersect`, and `except_` require both queries to share the
-same raw row type. relq rejects mismatched projection widths before compilation.
-`decode()` only attaches an executor-side decoder and never changes the SQL, so a
-plain query and a decoded one, or two queries decoded into different models,
-compound like any other pair. The compound keeps the left query's decoder, if it
-has one, and drops the right query's.
+`union`, `union_all`, `intersect`, and `except_` require both queries to share
+the same raw row type. relq rejects mismatched projection widths before
+compilation. `decode()` only attaches an executor-side decoder and never changes
+the SQL, so a plain query and a decoded one, or two queries decoded into
+different models, compound like any other pair. The compound keeps the left
+query's decoder, if it has one, and drops the right query's.
 
 A compound arm cannot carry `ORDER BY`, `LIMIT`, `OFFSET`, or a row-locking
-clause. To order or paginate a compound, bind it to a declared `DerivedTable` and
-apply those clauses to the outer query over its named output columns.
+clause. To order or paginate a compound, bind it to a declared `DerivedTable`
+and apply those clauses to the outer query over its named output columns.
 
 ## Common table expressions
 
 ```python
 class Active(CteTable):
-    id: Column[int] = output_column(int)
+    id: Column[int] = output_column()
 
 
 active = cte(Active, "active")
@@ -101,28 +104,28 @@ reference the CTE itself.
 ### Materialization
 
 `.with_(source, query, materialized=True)` emits `AS MATERIALIZED`, which stops
-the planner from inlining the CTE into its references. Without it the CTE renders
-as a plain `AS (...)` and the planner decides.
+the planner from inlining the CTE into its references. Without it the CTE
+renders as a plain `AS (...)` and the planner decides.
 
-Both engines accept the modifier at relq's version floors. SQLite added it in
-3.35.0, the release that also added `RETURNING`, and PostgreSQL added it in 12.
-See [Engine versions](./installation.md#engine-versions).
+Both engines accept the modifier at relq's minimum versions. See
+[Engine versions](./installation.md#engine-versions).
 
 ### Data-modifying CTEs
 
-`.with_(...)` also accepts a bounded `INSERT`, `UPDATE`, or `DELETE` whose
-`RETURNING` list becomes the CTE's output relation:
+`.with_modifying(source, query)` takes a bounded `INSERT`, `UPDATE`, or `DELETE`
+whose `RETURNING` list becomes the CTE's output relation. Build the outer
+`SELECT` first, then attach the writing CTEs:
 
 ```python
 class Removed(CteTable):
-    id: Column[int] = output_column(int)
+    id: Column[int] = output_column()
 
 
 removed = cte(Removed, "removed")
 purged = (
     select(count())
     .from_(removed)
-    .with_(
+    .with_modifying(
         removed,
         delete_from(jobs).where(jobs.finished_at.lt(cutoff)).returning(jobs.id),
     )
@@ -133,9 +136,15 @@ The statement deletes and counts atomically. A data-modifying CTE runs exactly
 once for the whole statement, whatever the outer query does with its rows. relq
 therefore requires it to carry `RETURNING` and to be declared on the outermost
 query. Nesting one inside a derived table, subquery, or another CTE is rejected
-before rendering. Data-modifying CTEs are PostgreSQL-only, because SQLite has
-none. Executing such a query changes data even though it goes through
-`fetch_one`.
+before rendering. Data-modifying CTEs are PostgreSQL-only. Executing such a
+query changes data even though it goes through `fetch_one`.
+
+`with_modifying` returns a `ModifyingQuery`, not a `SelectQuery`, so the writes
+show in the type. Executors accept it wherever they accept DML with `RETURNING`
+and reject it where they expect a read: it cannot be a subquery, a compound arm,
+or the argument to `fetch_iter`. A `ModifyingQuery` has `with_`,
+`with_modifying`, and `decode`. Passing a `SELECT` to `with_modifying`, or a
+write to `with_`, raises `TypeError`.
 
 Like a `SELECT` body, a data-modifying body sees the CTEs bound before it, so a
 later CTE can consume an earlier one's `RETURNING` rows:
@@ -144,8 +153,10 @@ later CTE can consume an earlier one's `RETURNING` rows:
 query = (
     select(count())
     .from_(archived)
-    .with_(removed, delete_from(jobs).where(jobs.finished_at.lt(cutoff)).returning(jobs.id))
-    .with_(
+    .with_modifying(
+        removed, delete_from(jobs).where(jobs.finished_at.lt(cutoff)).returning(jobs.id)
+    )
+    .with_modifying(
         archived,
         insert_into(job_archive)
         .from_select(select(removed.id).from_(removed), job_archive.id)
@@ -154,14 +165,12 @@ query = (
 )
 ```
 
-Forward references are still rejected. A CTE can only read names declared
-before it.
+Forward references are still rejected. A CTE can only read names declared before
+it.
 
 ### CTE bodies and row models
 
-`with_` and `with_recursive` take the plain tuple builders (`select`,
-`returning`), never a query that has been through `decode()`. A CTE's output
-relation is declared by its `CteTable`, and the outer query owns the statement's
-result shape, so an adapter on a CTE body would have nothing to decode. Passing
-one raises at the builder, so a declared contract is never dropped silently. For
-a `SELECT` body it is also a type error. Decode the outer query instead.
+`with_`, `with_modifying`, and `with_recursive` take the plain tuple builders
+(`select`, `returning`), not a query that has been through `decode()`. Passing a
+decoded query raises at the builder, and for a `SELECT` body it is also a type
+error. Decode the outer query instead.

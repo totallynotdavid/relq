@@ -16,6 +16,5 @@ Frames are values, not SQL strings. `.rows_between(...)`, `.range_between(...)`,
 and `.groups_between(...)` take `unbounded_preceding()`, `preceding(n)`,
 `current_row()`, `following(n)`, and `unbounded_following()` as boundaries.
 
-`.filter(predicate)` adds an aggregate `FILTER (WHERE ...)`. Named windows and
-raw SQL fragments are not supported. Each window is declared inline where it is
-used.
+`.filter(predicate)` adds an aggregate `FILTER (WHERE ...)`. Each window is
+declared inline where it is used. There are no named windows.

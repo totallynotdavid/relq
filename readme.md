@@ -1,9 +1,15 @@
 # relq
 
-relq is a type-safe SQL query builder for Python 3.13+. It supports SQLite and
-PostgreSQL only. Builders are immutable, expressions are structured, and values
-are always parameterized, so a query that would be invalid or unsafe fails to
-type-check or compile instead of failing at runtime.
+relq is a typed SQL query builder for Python 3.13+. It builds `SELECT`,
+`INSERT`, `UPDATE`, and `DELETE` statements from declared tables and runs them
+on SQLite (`sqlite3`) or PostgreSQL (`asyncpg`). Those are the only two engines.
+
+Builders are immutable and values are sent as bound parameters. The one
+exception is the constants in a PostgreSQL conflict arbiter predicate, which are
+escaped and written into the SQL. The type checker or the compiler rejects an
+invalid query before it reaches the database.
+
+## Get started
 
 ```bash
 uv add "relq[sqlite]"
@@ -12,51 +18,67 @@ uv add "relq[postgres]"
 ```
 
 ```python
+import sqlite3
+
 from relq import Column, Table, column, select
+from relq_sqlite import SQLiteDatabase
 
 
 class Users(Table):
-    id: Column[int] = column(int)
-    email: Column[str] = column(str)
-    active: Column[bool] = column(bool)
+    id: Column[int] = column()
+    email: Column[str] = column()
+    active: Column[bool] = column()
 
 
 users = Users("users")
+
+connection = sqlite3.connect(":memory:")
+connection.execute("create table users (id integer primary key, email text, active integer)")
+connection.execute("insert into users values (1, 'ada@example.com', 1), (2, 'bob@example.com', 0)")
+
 query = select(users.id, users.email).from_(users).where(users.active.is_true())
+rows = SQLiteDatabase(connection).fetch_all(query)
+print(rows)  # [(1, 'ada@example.com')]
 ```
+
+`rows` has the static type `list[tuple[int, str]]`.
 
 ## Features
 
 - Typed `SELECT`, `INSERT`, `UPDATE`, and `DELETE`, with aliases, self-joins,
-  predicates, scalar and correlated subqueries, declared derived relations and
-  CTEs, and set operations that behave the same on both engines.
-- Upserts, aggregates, `GROUP BY` validation, and window functions on both
-  engines.
+  scalar and correlated subqueries, derived tables, CTEs, and set operations
+  that behave the same on both engines.
+- Upserts, aggregates, `GROUP BY` validation, and window functions.
 - `Predicate` (`bool`) and `NullablePredicate` (`bool | None`), which keep SQL's
   `UNKNOWN` visible in the types.
-- Raw driver tuples, or explicitly decoded model results. Decoding never affects
-  the SQL.
-- Schema-qualified tables, materialized CTEs, and data-modifying CTEs, such as
-  `WITH removed AS (DELETE ... RETURNING id) SELECT count(*) FROM removed`.
-- `relq-codegen`, which generates a schema module from an existing database.
+- Raw driver tuples, or rows decoded into a dataclass or `NamedTuple` on
+  request. Decoding never changes the SQL.
+- Materialized CTEs on both engines. Schema-qualified tables and data-modifying
+  CTEs on PostgreSQL.
+- Transactions with savepoints, streaming on PostgreSQL, and a query observer
+  for logging and timing.
+- `relq-migrate`: forward-only SQL migrations for both engines, with a command
+  that also regenerates the schema module.
+- `relq-codegen`: generates the table declarations from an existing database.
 
-relq has no raw SQL, generic function builder, custom dialect, or implicit
-result decoding, on purpose. PostgreSQL-only capabilities are named, typed,
-validated expressions, and `relq.postgres` holds the ones that need a separate
-import. Compiling one for SQLite raises an error. See
-[Design boundaries](./docs/design-boundaries.md) for the full list and the
-reasons.
+Queries are built from typed expressions only. relq has no raw SQL fragments. A
+PostgreSQL-only feature raises an error when compiled for SQLite. The
+[dialects page](https://github.com/totallynotdavid/relq/blob/master/docs/dialects.md)
+lists them.
 
 ## Documentation
 
-The [manual](./docs/readme.md) covers installation, queries and DML, execution,
-migrations, and code generation. Start with
-[Get started](./docs/get-started.md).
-
-## Contributing
-
-See [contributing.md](./contributing.md).
+The [manual](https://github.com/totallynotdavid/relq/blob/master/docs/readme.md)
+covers installation, queries, execution, migrations, and code generation. Start
+with
+[Get started](https://github.com/totallynotdavid/relq/blob/master/docs/get-started.md).
+The
+[architecture](https://github.com/totallynotdavid/relq/blob/master/docs/architecture.md)
+maps the code, and
+[contributing](https://github.com/totallynotdavid/relq/blob/master/.github/contributing.md)
+explains how to work on relq.
 
 ## License
 
-relq is licensed under the [Apache License 2.0](./LICENSE).
+relq is licensed under the
+[Apache License 2.0](https://github.com/totallynotdavid/relq/blob/master/LICENSE).

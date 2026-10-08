@@ -17,9 +17,33 @@ insert_into(users).values_many(
 
 `values_many` reads its input once, requires every row to have the same columns
 in the same order, and compiles to one `INSERT ... VALUES (...), (...)`
-statement. The compiler checks SQLite's 999-parameter limit and PostgreSQL's
-65,535-parameter limit, so a batch that is too large fails with a relq error
-before it reaches the driver. Split large batches yourself.
+statement. The compiler checks SQLite's 999-parameter limit and asyncpg's
+32,767-parameter limit, so a batch that is too large fails with a relq error
+before it reaches the driver.
+
+To insert more rows than one statement holds, split them with `row_batches`,
+which each executor package exports. It takes the rows and a function that
+builds the whole `INSERT` from one batch, and yields those statements. Run them
+inside one transaction to keep the insert atomic:
+
+```python
+from relq_sqlite import row_batches
+
+with database.transaction() as transaction:
+    for statement in row_batches(rows, lambda batch: insert_into(users).values_many(batch)):
+        transaction.execute(statement)
+```
+
+Each statement holds as many consecutive rows as fit under the limit. The count
+is the parameters of the whole statement, so a cell that is an expression counts
+the values it binds, and so do those of `on_conflict` and `returning`. Every
+statement `row_batches` yields fits the limit. It reads `rows` lazily, one row
+ahead of the batch it is filling.
+
+`row_batches` raises `ValueError` for a row with no columns, and for a row that
+needs more parameters than the limit even alone in its statement. It raises
+`TypeError` when the function does not insert the rows it was given with
+`values_many`.
 
 ```python
 copied = insert_into(user_archive).from_select(
@@ -44,10 +68,10 @@ upsert = (
 )
 ```
 
-`on_conflict(...)` works on both SQLite and PostgreSQL. It must be completed with
-`.do_nothing()` or `.do_update(...)`. `excluded(column)` refers to the proposed
-row. Named constraints are not supported as a conflict target yet. See
-[Design boundaries](./design-boundaries.md).
+`on_conflict(...)` works on both SQLite and PostgreSQL. It must be completed
+with `.do_nothing()` or `.do_update(...)`. `excluded(column)` refers to the
+proposed row. The target is a list of columns. A named constraint cannot be a
+target.
 
 The target takes any number of columns, because a composite unique index does.
 Its columns are typed as `ConflictTarget`, the unparameterized base that every
@@ -81,7 +105,9 @@ compare-and-swap instead of an unconditional overwrite.
 The arbiter predicate compiles with inlined constants, not parameters, because a
 generic plan would otherwise stop matching the index. It accepts only columns,
 text, integer, boolean, and `NULL` constants, comparisons, `IN`, `BETWEEN`, `IS`
-checks, `AND`, and `OR`.
+checks, `AND`, and `OR`. A text constant is escaped independently of the
+server's `standard_conforming_strings` setting, and one that contains NUL is
+rejected.
 
 `.do_update(...)` returns a `ConflictUpdateQuery`, which is already executable.
 Its `.where(...)` must come before `.returning(...)`, matching SQL's own order.
@@ -109,8 +135,17 @@ insert_into(users).values(email="ada@example.com").returning(users.id, users.ema
 
 `.returning(...)` turns a DML builder into a row-producing query, so it goes to
 `fetch_all` or `fetch_one`, not `execute`. It takes at most eight expressions,
-like `select`. `.decode(Model)` does not raise that limit, because it attaches a
-decoder to a projection that already exists. For a declared relation with more
-than eight columns, use `select_all_from(relation)` before decoding. That is the
-only way past the limit, and it covers a whole relation only. `returning` has no
-wider form.
+like `select`, because Python cannot type a longer positional projection.
+
+To return every declared column of a relation, in schema order, use
+`returning_all_from(relation)`. It has no column limit, and it is available on
+`insert_into`, `update`, and `delete_from`:
+
+```python
+insert_into(users).values(email="ada@example.com").returning_all_from(users)
+```
+
+`returning` and `returning_all_from` are alternatives. Calling either a second
+time raises `ValueError`, and so does a relation with no declared columns.
+`.decode(Model)` attaches a decoder to the projection that already exists and
+does not change its width.

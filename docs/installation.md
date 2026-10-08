@@ -1,6 +1,7 @@
 # Installation
 
-relq installs the driver your application uses:
+relq requires Python 3.13 or later. Install the extra for the driver your
+application uses:
 
 ```bash
 uv add "relq[sqlite]"
@@ -10,48 +11,43 @@ uv add "relq[postgres]"
 uv add "relq[sqlite,postgres]"
 ```
 
-Schema migrations are provided by the separate `relq-migrate` package:
+| Package         | Install                        | Provides                                              |
+| --------------- | ------------------------------ | ----------------------------------------------------- |
+| `relq`          | `uv add relq`                  | Builders, expressions, compiler, and row decoders     |
+| `relq-sqlite`   | the `sqlite` extra of `relq`   | `SQLiteDatabase`, on the standard library's `sqlite3` |
+| `relq-postgres` | the `postgres` extra of `relq` | `PostgresDatabase`, on `asyncpg`                      |
+| `relq-migrate`  | `uv add relq-migrate`          | [Migrations](./migrations.md)                         |
+| `relq-codegen`  | `uv tool run relq-codegen`     | [Code generation](./codegen.md)                       |
+
+`relq` itself depends only on `typing-extensions`. Each extra pins the executor
+package to the same version as `relq`. `relq[all]` installs both executors.
+
+`relq-migrate` has no dependencies for SQLite. Its PostgreSQL migrator needs the
+`postgres` extra, and the `codegen` extra adds `relq-codegen` for the
+`--codegen` option of the `relq-migrate` command:
 
 ```bash
-uv add relq-migrate
-# For PostgreSQL migrations:
 uv add "relq-migrate[postgres]"
+uv tool run "relq-migrate[codegen]" sqlite app.db migrations --codegen src/my_app/db_schema.py
 ```
 
-`relq` itself depends only on `typing-extensions`, which provides the `TypeForm`
-annotation that column declarations use. The `sqlite` extra pins `relq-sqlite`,
-which wraps the standard library's `sqlite3`. The `postgres` extra pins
-`relq-postgres`, which wraps `asyncpg`. Each extra pins an exact executor
-version.
-
-`relq-migrate` has no dependencies for SQLite. Install its `postgres` extra only
-for the asynchronous PostgreSQL migrator.
-
-Schema generation is a separate development tool. Run it with `uv tool run` from
-the application repository:
+`relq-codegen` is a development tool, so run it with `uv tool run` from the
+application repository. Its SQLite path has no dependencies. Its PostgreSQL path
+needs the `postgres` extra:
 
 ```bash
 uv tool run relq-codegen sqlite path/to/app.db src/my_app/db_schema.py
 uv tool run "relq-codegen[postgres]" postgres "$DATABASE_URL" src/my_app/db_schema.py
 ```
 
-`relq-codegen`'s SQLite path has no dependencies either. Its PostgreSQL path
-imports `asyncpg` only when the `postgres` extra is installed and used. See
-[Code generation](./codegen.md).
-
-relq requires Python 3.13 or later.
-
 ## Engine versions
 
-relq compiles for two fixed dialects, and each has a minimum server version:
+relq compiles for two fixed dialects. Each has a minimum server version:
 
-| Engine | Minimum | What sets it |
-| --- | --- | --- |
-| SQLite | 3.39.0 (2022-06-25) | `right_join` and `full_join` need `RIGHT`/`FULL OUTER JOIN`, which arrived in this release. `RETURNING` and CTE `AS MATERIALIZED` both need 3.35.0, so a build that rejects one rejects the other. Window frame `EXCLUDE` and `GROUPS` need 3.28.0. |
-| PostgreSQL | 14 (2021-09-30) | `date_bin` needs 14. CTE `AS MATERIALIZED` needs 12. Window frame `EXCLUDE` and `GROUPS` need 11; everything else relq emits is older still. |
+| Engine     | Minimum             | What sets it                                                                                                                                                                          |
+| ---------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQLite     | 3.39.0 (2022-06-25) | `right_join` and `full_join` need `RIGHT` and `FULL OUTER JOIN`, added in 3.39.0. `RETURNING` and CTE `AS MATERIALIZED` need 3.35.0. Window frame `EXCLUDE` and `GROUPS` need 3.28.0. |
+| PostgreSQL | 14 (2021-09-30)     | `date_bin` needs 14. CTE `AS MATERIALIZED` needs 12. Window frame `EXCLUDE` and `GROUPS` need 11. Everything else relq emits is older.                                                |
 
-These minimums are a documented contract, not a runtime check. The compiler takes
-a query and returns SQL without ever seeing a connection, so it cannot read the
-server version, and probing the version on every statement would add a round trip
-to the executor's hot path. An older server rejects the statement itself. Deploy
-on an engine at or above these versions.
+relq does not check the server version. The compiler produces SQL without a
+connection, and an older server rejects the statement itself.

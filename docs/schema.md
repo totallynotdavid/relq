@@ -1,6 +1,7 @@
 # Schema
 
-A relation's shape is declared as a class, never assembled from runtime strings.
+A relation's shape is declared as a class. [relq-codegen](./codegen.md) writes
+these classes from an existing database.
 
 ## Tables
 
@@ -9,51 +10,49 @@ from relq import Column, Table, column
 
 
 class Users(Table):
-    id: Column[int] = column(int)
-    email: Column[str] = column(str)
-    manager_id: Column[int | None] = column(int)
+    id: Column[int] = column()
+    email: Column[str] = column()
+    manager_id: Column[int | None] = column()
 
 
 users = Users("users")
 ```
 
-`column(python_type)` binds the column's Python result type. Nullability belongs
-in the annotation, as in `Column[int | None]`. `Column[T]` is a typed
-descriptor, so `users.id` is a `Column[int]`. Pass `name="..."` when the SQL
-column name differs from the Python attribute.
+The annotation is the column's Python result type, and `column()` takes it from
+there. Nullability belongs in the annotation, as in `Column[int | None]`.
+`users.id` is a `Column[int]`. A column without an annotation is a type error.
+Pass `name="..."` when the SQL column name differs from the Python attribute.
+
+Any annotation works, including the recursive `JsonValue` alias for a `json` or
+`jsonb` column: `payload: Column[JsonValue] = column()`.
 
 A column cannot use an attribute name that relq uses on a relation, such as
-`table_name`, `reference`, `node`, `as_`, or `_schema`. `Column` is a non-data
-descriptor, so an instance attribute with the same name would replace it. relq
-raises `TypeError` when the class is defined. The check covers columns declared
-in a shared mixin as well, because attribute lookup finds them too. Rename the
-attribute and keep the SQL name with `column(str, name="_schema")`.
-`relq-codegen` applies the same rename automatically.
+`table_name`, `reference`, `node`, `as_`, or `_schema`. relq raises `TypeError`
+when the class is defined, including for columns declared in a shared mixin.
+Rename the attribute and keep the SQL name with `column(name="_schema")`.
+`relq-codegen` applies the same rename.
 
 ## Schema-qualified tables
 
-A table that lives outside the connection's default namespace declares the
-schema that owns it:
+A table outside the connection's default namespace names its schema:
 
 ```python
 queue_jobs = QueueJobs("jobs", schema="rqueue")
 compute_jobs = ComputeJobs("jobs", schema="compute")
 ```
 
-The schema compiles to its own quoted identifier, `"rqueue"."jobs"`, and never as
-part of the table's name. It applies to `SELECT` sources and DML targets alike.
-The correlation name is still the bare table name, so columns render as
-`"jobs"."id"`. Two same-named tables in different schemas therefore need
-`.as_(...)` aliases, as SQL requires.
+The schema compiles to its own quoted identifier, `"rqueue"."jobs"`. It applies
+to `SELECT` sources and DML targets alike. The correlation name is the bare
+table name, so columns render as `"jobs"."id"`. Two tables with the same name in
+different schemas need `.as_(...)` aliases, as SQL requires.
 
-Schemas are PostgreSQL-only. SQLite's qualified names address attached databases
-instead of schemas, so compiling a schema-qualified table for SQLite raises an
-error instead of producing a query with a different meaning.
+Schemas are PostgreSQL-only. Compiling a schema-qualified table for SQLite
+raises an error, because SQLite's qualified names address attached databases.
 
 ## Aliases and self-joins
 
-`.as_("name")` returns a shallow copy of the same class, bound to a SQL alias.
-The column types are unchanged:
+`.as_("name")` returns a copy of the same class bound to a SQL alias. The column
+types are unchanged:
 
 ```python
 manager = users.as_("manager")
@@ -68,16 +67,16 @@ query = (
 
 ## Derived tables and CTEs
 
-A typed, reusable relation over a query's output is a small `DerivedTable` or
-`CteTable` subclass with `output_column` fields:
+A typed relation over a query's output is a `DerivedTable` or `CteTable`
+subclass with `output_column` fields:
 
 ```python
 from relq import DerivedTable, count, output_column, select
 
 
 class Totals(DerivedTable):
-    manager_id: Column[int | None] = output_column(int)
-    reports: Column[int] = output_column(int)
+    manager_id: Column[int | None] = output_column()
+    reports: Column[int] = output_column()
 
 
 totals = (
@@ -92,15 +91,4 @@ totals = (
 `cte(Active, "active")` gives a typed CTE source for `.with_(...)`. Both check
 that the declared output names match the query's selected column or alias names
 before the query compiles. `totals.reports` is then a `Column[int]` that works
-anywhere a normal column does.
-
-There is no untyped `cte("name")`, no untyped `query.as_("alias")`, and no
-`.column("name")` accessor. A relation's output schema always comes from a
-declared class, so both the type checker and the compiler can validate against
-it.
-
-## Generated schemas
-
-`relq-codegen` generates `Table` declarations and DML payload contracts from
-database metadata, so nobody writes or updates schema modules by hand. See
-[Code generation](./codegen.md).
+anywhere a column does.
