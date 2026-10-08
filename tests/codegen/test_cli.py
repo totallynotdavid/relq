@@ -237,3 +237,93 @@ def test_check_fails_for_a_missing_module(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "stale" in result.stderr
+
+
+def _assert_one_line(result: subprocess.CompletedProcess[str], message: str) -> None:
+    assert result.returncode == 1
+    assert result.stdout == ""
+    lines = result.stderr.splitlines()
+    assert len(lines) == 1, result.stderr
+    assert lines[0].startswith(f"relq-codegen: {message}"), lines[0]
+
+
+def test_a_database_file_that_is_not_sqlite_is_one_line(tmp_path: Path) -> None:
+    database = tmp_path / "schema.sqlite"
+    database.write_text("this is not a database file" * 10)
+
+    result = _codegen("sqlite", str(database), str(tmp_path / "schema.py"))
+
+    _assert_one_line(result, "file is not a database")
+
+
+def test_a_missing_database_is_one_line_and_is_not_created(tmp_path: Path) -> None:
+    database = tmp_path / "absent.sqlite"
+
+    result = _codegen("sqlite", str(database), str(tmp_path / "schema.py"))
+
+    _assert_one_line(result, "unable to open database file")
+    assert not database.exists()
+
+
+def test_an_output_path_that_cannot_be_written_is_one_line(tmp_path: Path) -> None:
+    database = _database(tmp_path, "create table accounts (id integer primary key)")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where a folder is needed")
+
+    result = _codegen("sqlite", str(database), str(blocker / "schema.py"))
+
+    _assert_one_line(result, "[Errno ")
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "not-a-dsn",
+        "notadsn://x",
+        "postgresql://relq@127.0.0.1:notaport/db",
+        "postgresql://relq@127.0.0.1/db?sslmode=bogus",
+    ],
+)
+def test_a_malformed_postgres_dsn_is_one_line(tmp_path: Path, dsn: str) -> None:
+    result = _codegen("postgres", dsn, str(tmp_path / "schema.py"))
+
+    _assert_one_line(result, "cannot connect to PostgreSQL: ")
+    assert not (tmp_path / "schema.py").exists()
+
+
+@pytest.mark.parametrize("reference", ["", ":CONFIG", ".relative"])
+def test_a_malformed_python_config_reference_is_one_line(tmp_path: Path, reference: str) -> None:
+    database = _database(tmp_path, "create table accounts (id integer primary key)")
+
+    result = _codegen(
+        "sqlite", str(database), str(tmp_path / "schema.py"), "--config", reference, cwd=tmp_path
+    )
+
+    _assert_one_line(result, "config ")
+
+
+def test_a_config_file_that_is_not_utf8_is_one_line(tmp_path: Path) -> None:
+    database = _database(tmp_path, "create table accounts (id integer primary key)")
+    config = tmp_path / "types.toml"
+    config.write_bytes(b"\xff\xfe")
+
+    result = _codegen("sqlite", str(database), str(tmp_path / "schema.py"), "--config", str(config))
+
+    _assert_one_line(result, f"invalid config {config}: 'utf-8' codec can't decode")
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_an_existing_output_that_is_not_utf8_is_stale_not_a_crash(
+    tmp_path: Path, check: bool
+) -> None:
+    database = _database(tmp_path, "create table accounts (id integer primary key)")
+    output = tmp_path / "schema.py"
+    output.write_bytes(b"\xff\xfe")
+
+    result = _codegen("sqlite", str(database), str(output), *(["--check"] if check else []))
+
+    if check:
+        _assert_one_line(result, "generated schema is stale")
+    else:
+        assert (result.returncode, result.stderr) == (0, "")
+        assert "class Accounts(Table" in output.read_text()

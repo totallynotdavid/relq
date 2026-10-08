@@ -101,3 +101,25 @@ async def test_an_unreachable_server_is_one_line(tmp_path: Path) -> None:
     lines = result.stderr.splitlines()
     assert len(lines) == 1
     assert lines[0].startswith("relq-migrate: cannot connect to PostgreSQL: ")
+
+
+async def test_codegen_with_an_unreachable_server_is_one_line(tmp_path: Path) -> None:
+    result = await asyncio.to_thread(
+        subprocess.run,
+        [
+            sys.executable,
+            "-m",
+            "relq_codegen",
+            "postgres",
+            "postgresql://relq@127.0.0.1:1/none",
+            str(tmp_path / "schema.py"),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    lines = result.stderr.splitlines()
+    assert len(lines) == 1, result.stderr
+    assert lines[0].startswith("relq-codegen: ")

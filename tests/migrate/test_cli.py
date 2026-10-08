@@ -187,3 +187,163 @@ def test_check_and_config_need_codegen(tmp_path: Path, option: list[str]) -> Non
 
     assert result.returncode == 2
     assert "need --codegen" in result.stderr
+
+
+def _migrated(tmp_path: Path) -> tuple[Path, Path]:
+    folder = _folder(tmp_path, **{"0001_accounts": _ACCOUNTS})
+    database = tmp_path / "app.db"
+    assert _run("sqlite", database, folder).returncode == 0
+    return folder, database
+
+
+def _assert_one_line(result: subprocess.CompletedProcess[str], message: str) -> None:
+    assert result.returncode == 1
+    assert result.stdout == ""
+    lines = result.stderr.splitlines()
+    assert len(lines) == 1, result.stderr
+    assert lines[0].startswith(f"relq-migrate: {message}"), lines[0]
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_an_edited_applied_migration_is_one_line(tmp_path: Path, check: bool) -> None:
+    folder, database = _migrated(tmp_path)
+    (folder / "0001_accounts.sql").write_text("create table accounts (id integer);")
+    codegen = ["--codegen", str(tmp_path / "schema.py")]
+
+    result = _run("sqlite", database, folder, *codegen, *(["--check"] if check else []))
+
+    _assert_one_line(result, "migration '0001_accounts.sql' was modified after it was applied")
+    assert not (tmp_path / "schema.py").exists()
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_a_database_with_a_migration_the_folder_lacks_is_one_line(
+    tmp_path: Path, check: bool
+) -> None:
+    folder, database = _migrated(tmp_path)
+    (folder / "0001_accounts.sql").unlink()
+    (folder / "0001_other.sql").write_text(_ACCOUNTS)
+    codegen = ["--codegen", str(tmp_path / "schema.py")]
+
+    result = _run("sqlite", database, folder, *codegen, *(["--check"] if check else []))
+
+    _assert_one_line(result, "the database contains migration(s) not shipped by this package")
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_an_invalid_migration_filename_is_one_line(tmp_path: Path, check: bool) -> None:
+    folder = _folder(tmp_path, **{"0001_accounts": _ACCOUNTS, "Bad": _ACCOUNTS})
+    database = tmp_path / "app.db"
+    sqlite3.connect(database).close()
+    codegen = ["--codegen", str(tmp_path / "schema.py")]
+
+    result = _run("sqlite", database, folder, *codegen, *(["--check"] if check else []))
+
+    _assert_one_line(result, "invalid migration filename(s): Bad.sql")
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_a_migration_file_that_is_not_utf8_is_one_line(tmp_path: Path, check: bool) -> None:
+    folder = _folder(tmp_path)
+    (folder / "0001_accounts.sql").write_bytes(b"\xff\xfe")
+    database = tmp_path / "app.db"
+    sqlite3.connect(database).close()
+    codegen = ["--codegen", str(tmp_path / "schema.py")]
+
+    result = _run("sqlite", database, folder, *codegen, *(["--check"] if check else []))
+
+    _assert_one_line(result, "'utf-8' codec can't decode")
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_a_database_file_that_is_not_sqlite_is_one_line(tmp_path: Path, check: bool) -> None:
+    folder = _folder(tmp_path, **{"0001_accounts": _ACCOUNTS})
+    database = tmp_path / "app.db"
+    database.write_text("this is not a database file" * 10)
+    codegen = ["--codegen", str(tmp_path / "schema.py")]
+
+    result = _run("sqlite", database, folder, *codegen, *(["--check"] if check else []))
+
+    _assert_one_line(result, "file is not a database")
+
+
+def test_an_output_path_that_cannot_be_written_is_one_line(tmp_path: Path) -> None:
+    folder = _folder(tmp_path, **{"0001_accounts": _ACCOUNTS})
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where a folder is needed")
+
+    result = _run("sqlite", tmp_path / "app.db", folder, "--codegen", blocker / "schema.py")
+
+    _assert_one_line(result, "[Errno ")
+
+
+MALFORMED_DSNS = [
+    "not-a-dsn",
+    "notadsn://x",
+    "postgresql://relq@127.0.0.1:notaport/db",
+    "postgresql://relq@127.0.0.1/db?sslmode=bogus",
+]
+
+
+@pytest.mark.parametrize("check", [False, True])
+@pytest.mark.parametrize("dsn", MALFORMED_DSNS)
+def test_a_malformed_postgres_dsn_is_one_line(tmp_path: Path, dsn: str, check: bool) -> None:
+    folder = _folder(tmp_path, **{"0001_accounts": _ACCOUNTS})
+    codegen = ["--codegen", str(tmp_path / "schema.py")]
+
+    result = _run("postgres", dsn, folder, *codegen, *(["--check"] if check else []))
+
+    _assert_one_line(result, "cannot connect to PostgreSQL: ")
+    assert not (tmp_path / "schema.py").exists()
+
+
+@pytest.mark.parametrize("reference", ["", ":CONFIG", ".relative"])
+def test_a_malformed_python_config_reference_is_one_line(tmp_path: Path, reference: str) -> None:
+    folder = _folder(tmp_path, **{"0001_accounts": _ACCOUNTS})
+
+    result = _run(
+        "sqlite",
+        tmp_path / "app.db",
+        folder,
+        "--codegen",
+        tmp_path / "schema.py",
+        "--config",
+        reference,
+    )
+
+    _assert_one_line(result, "codegen: config ")
+
+
+def test_a_config_file_that_is_not_utf8_is_one_line(tmp_path: Path) -> None:
+    folder = _folder(tmp_path, **{"0001_accounts": _ACCOUNTS})
+    config = tmp_path / "types.toml"
+    config.write_bytes(b"\xff\xfe")
+
+    result = _run(
+        "sqlite",
+        tmp_path / "app.db",
+        folder,
+        "--codegen",
+        tmp_path / "schema.py",
+        "--config",
+        config,
+    )
+
+    _assert_one_line(result, f"codegen: invalid config {config}: 'utf-8' codec can't decode")
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_an_existing_output_that_is_not_utf8_is_stale_not_a_crash(
+    tmp_path: Path, check: bool
+) -> None:
+    folder, database = _migrated(tmp_path)
+    output = tmp_path / "schema.py"
+    output.write_bytes(b"\xff\xfe")
+
+    result = _run("sqlite", database, folder, "--codegen", output, *(["--check"] if check else []))
+
+    if check:
+        _assert_one_line(result, "codegen: generated schema is stale")
+    else:
+        assert (result.returncode, result.stderr) == (0, "")
+        assert "class Accounts(Table" in output.read_text()

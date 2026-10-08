@@ -3,17 +3,21 @@
 import asyncio
 import datetime
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from typing import Literal
 
 import asyncpg
 import pytest
 from asyncpg import Connection
 from relq import (
     Column,
+    InsertQuery,
     Interval,
     Table,
+    add,
+    coalesce,
     column,
     count,
     cte,
@@ -26,7 +30,9 @@ from relq import (
     subtract_interval,
     transaction_timestamp,
     update,
+    value,
 )
+from relq._compiler import compile_postgres
 from relq_postgres import (
     NoResultError,
     PostgresDatabase,
@@ -43,6 +49,13 @@ pytestmark = pytest.mark.skipif(
     os.environ.get("RELQ_TEST_POSTGRES_DSN") is None,
     reason="set RELQ_TEST_POSTGRES_DSN to run PostgreSQL integration tests",
 )
+
+
+type _Batch = tuple[Mapping[str, object], ...]
+
+
+def _insert_users(batch: _Batch) -> InsertQuery[tuple[()], Literal[False]]:
+    return insert_into(users).values_many(batch)
 
 
 @dataclass(frozen=True)
@@ -227,16 +240,55 @@ async def test_row_batches_insert_more_rows_than_one_statement_can_bind(
     database: PostgresDatabase,
 ) -> None:
     rows = [{"name": f"user{index}", "manager_id": None} for index in range(40_000)]
-    batches = list(row_batches(rows))
-    assert [len(batch) for batch in batches] == [16_383, 16_383, 7_234]
+    statements = list(row_batches(rows, _insert_users))
+    assert [len(compile_postgres(s).parameters) for s in statements] == [32_766, 32_766, 14_468]
 
     async with database.transaction() as transaction:
-        inserted = sum(
-            [await transaction.execute(insert_into(users).values_many(b)) for b in batches]
-        )
+        inserted = sum([await transaction.execute(statement) for statement in statements])
 
     assert inserted == 40_000
     assert await database.fetch_one(select(count()).from_(users)) == (40_000,)
+
+
+async def test_row_batches_count_the_parameters_an_expression_cell_binds(
+    database: PostgresDatabase,
+) -> None:
+    rows = [
+        {"name": coalesce(value(f"user{index}"), value("none")), "manager_id": None}
+        for index in range(40_000)
+    ]
+    statements = list(row_batches(rows, _insert_users))
+    # Three parameters per row allow 10,922 rows to fill 32,766 parameters.
+    # Counting one per cell would allow 16,383 rows and 49,149 parameters.
+    assert [len(compile_postgres(s).parameters) for s in statements] == [
+        32_766,
+        32_766,
+        32_766,
+        21_702,
+    ]
+
+    async with database.transaction() as transaction:
+        inserted = sum([await transaction.execute(statement) for statement in statements])
+
+    assert inserted == 40_000
+
+
+async def test_row_batches_count_the_parameters_returning_binds(database: PostgresDatabase) -> None:
+    def insert_returning(batch: _Batch) -> InsertQuery[tuple[int, int], Literal[True]]:
+        return insert_into(users).values_many(batch).returning(add(users.id, 1), add(users.id, 2))
+
+    rows = [{"name": f"user{index}", "manager_id": None} for index in range(40_000)]
+
+    statements = list(row_batches(rows, insert_returning))
+
+    # RETURNING binds two parameters, so a batch holds 16,382 rows.
+    # Counting rows alone fills a batch with 16,383 and compiles to 32,768.
+    assert [len(compile_postgres(s).parameters) for s in statements] == [32_766, 32_766, 14_474]
+    async with database.transaction() as transaction:
+        returned = [
+            row for statement in statements for row in await transaction.fetch_all(statement)
+        ]
+    assert len(returned) == 40_000
 
 
 async def test_returning_all_from_returns_the_whole_declared_relation(
