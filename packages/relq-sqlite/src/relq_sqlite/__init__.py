@@ -8,11 +8,11 @@ from contextlib import AbstractContextManager, contextmanager
 from itertools import count
 from time import perf_counter
 from types import TracebackType
-from typing import NoReturn, Protocol, Self, cast, overload
+from typing import Literal, NoReturn, Protocol, Self, cast, overload
 
-from relq import RowAdapter
-from relq._batching import batch_rows
-from relq._compiler.api import SQLITE_MAX_PARAMETERS, compile_sqlite
+from relq import InsertQuery, RowAdapter
+from relq._batching import Rows, batch_rows
+from relq._compiler.api import SQLITE, SQLITE_MAX_PARAMETERS, compile_sqlite
 from relq._execution import (
     Command,
     NoResultError,
@@ -43,14 +43,19 @@ __all__ = [
 _LOGGER = logging.getLogger(__name__)
 
 
-def row_batches(rows: Iterable[Mapping[str, object]]) -> Iterator[tuple[Mapping[str, object], ...]]:
-    """Split ``rows`` into batches that each fit one SQLite ``values_many`` statement.
+def row_batches[Row, Returns: (Literal[False], Literal[True])](
+    rows: Iterable[Mapping[str, object]], statement: Callable[[Rows], InsertQuery[Row, Returns]]
+) -> Iterator[InsertQuery[Row, Returns]]:
+    """Yield ``statement`` over batches of ``rows`` that each fit one SQLite statement.
 
-    SQLite binds at most 999 parameters per statement, so a batch holds
-    ``999 // columns`` rows. Run the batches inside one transaction to keep the
-    insert atomic.
+    ``statement`` builds the whole INSERT from a batch, for example
+    ``lambda batch: insert_into(users).values_many(batch)``, so parameters bound
+    outside the rows (``on_conflict`` values, ``returning`` expressions) count
+    against SQLite's 999-parameter ceiling. A plain value binds one parameter.
+    An expression binds as many as it contains. A batch holds as many rows as fit.
+    Execute the statements inside one transaction to keep the insert atomic.
     """
-    return batch_rows(rows, max_parameters=SQLITE_MAX_PARAMETERS)
+    return batch_rows(rows, statement, dialect=SQLITE, max_parameters=SQLITE_MAX_PARAMETERS)
 
 
 class _Cursor(Protocol):

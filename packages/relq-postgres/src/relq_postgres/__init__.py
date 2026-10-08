@@ -20,9 +20,9 @@ from time import perf_counter
 from typing import Literal, NoReturn, Protocol, overload
 
 import asyncpg
-from relq import Interval, RowAdapter
-from relq._batching import batch_rows
-from relq._compiler.api import POSTGRES_MAX_PARAMETERS, compile_postgres
+from relq import InsertQuery, Interval, RowAdapter
+from relq._batching import Rows, batch_rows
+from relq._compiler.api import POSTGRES, POSTGRES_MAX_PARAMETERS, compile_postgres
 from relq._execution import (
     Command,
     NoResultError,
@@ -56,14 +56,20 @@ __all__ = [
 _LOGGER = logging.getLogger(__name__)
 
 
-def row_batches(rows: Iterable[Mapping[str, object]]) -> Iterator[tuple[Mapping[str, object], ...]]:
-    """Split ``rows`` into batches that each fit one PostgreSQL ``values_many`` statement.
+def row_batches[Row, Returns: (Literal[False], Literal[True])](
+    rows: Iterable[Mapping[str, object]], statement: Callable[[Rows], InsertQuery[Row, Returns]]
+) -> Iterator[InsertQuery[Row, Returns]]:
+    """Yield ``statement`` over batches of ``rows`` that each fit one PostgreSQL statement.
 
-    asyncpg binds at most 32,767 parameters per statement, so a batch holds
-    ``32767 // columns`` rows. Run the batches inside one transaction to keep the
+    ``statement`` builds the whole INSERT from a batch, for example
+    ``lambda batch: insert_into(users).values_many(batch)``, so parameters bound
+    outside the rows (``on_conflict`` values, ``returning`` expressions) count
+    against asyncpg's 32,767-parameter ceiling. A plain value binds one
+    parameter and an expression binds as many as it contains. A batch holds as
+    many rows as fit. Execute the statements inside one transaction to keep the
     insert atomic.
     """
-    return batch_rows(rows, max_parameters=POSTGRES_MAX_PARAMETERS)
+    return batch_rows(rows, statement, dialect=POSTGRES, max_parameters=POSTGRES_MAX_PARAMETERS)
 
 
 type Connection = asyncpg.Connection | asyncpg.pool.PoolConnectionProxy[asyncpg.Record]

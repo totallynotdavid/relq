@@ -10,8 +10,8 @@ SQLITE_MAX_PARAMETERS = 999
 # supported driver, rejects a statement with more than 32,767.
 POSTGRES_MAX_PARAMETERS = 32_767
 
-_SQLITE = Dialect("sqlite", "?", max_parameters=SQLITE_MAX_PARAMETERS)
-_POSTGRES = Dialect(
+SQLITE = Dialect("sqlite", "?", max_parameters=SQLITE_MAX_PARAMETERS)
+POSTGRES = Dialect(
     "postgres",
     "$",
     supports_row_locking=True,
@@ -25,11 +25,11 @@ _POSTGRES = Dialect(
 
 
 def compile_sqlite[Row](query: Query[Row]) -> CompiledQuery:
-    return _compile(query, _SQLITE)
+    return _compile(query, SQLITE)
 
 
 def compile_postgres[Row](query: Query[Row]) -> CompiledQuery:
-    return _compile(query, _POSTGRES)
+    return _compile(query, POSTGRES)
 
 
 def _compile[Row](query: Query[Row], dialect: Dialect) -> CompiledQuery:

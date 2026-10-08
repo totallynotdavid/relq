@@ -66,17 +66,31 @@ from relq._compiler._model import CompiledQuery, Dialect
 
 def render_query(node: QueryNode, dialect: Dialect) -> CompiledQuery:
     parameters: list[object] = []
-    match node:
-        case SelectNode():
-            sql = _compile_select(node, dialect, parameters)
-        case InsertNode() | UpdateNode() | DeleteNode():
-            sql = _compile_dml(node, dialect, parameters)
+    sql = _render_statement(node, dialect, parameters)
     if dialect.max_parameters is not None and len(parameters) > dialect.max_parameters:
         raise ValueError(
             f"{dialect.name} supports at most {dialect.max_parameters} parameters per statement; "
             f"this query has {len(parameters)}"
         )
     return CompiledQuery(sql, tuple(parameters))
+
+
+def count_parameters(node: Node | QueryNode, dialect: Dialect) -> int:
+    """Count the values ``node`` binds when rendered, without enforcing the ceiling."""
+    parameters: list[object] = []
+    if isinstance(node, SelectNode | InsertNode | UpdateNode | DeleteNode):
+        _render_statement(node, dialect, parameters)
+    else:
+        _compile_node(node, dialect, parameters)
+    return len(parameters)
+
+
+def _render_statement(node: QueryNode, dialect: Dialect, parameters: list[object]) -> str:
+    match node:
+        case SelectNode():
+            return _compile_select(node, dialect, parameters)
+        case InsertNode() | UpdateNode() | DeleteNode():
+            return _compile_dml(node, dialect, parameters)
 
 
 def _compile_select(
