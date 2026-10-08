@@ -37,7 +37,10 @@ def write_module(output: Path, generated: str, *, check: bool) -> None:
     A current file is left untouched, so a formatted module keeps its layout
     and its modification time.
     """
-    current = output.read_text() if output.exists() else None
+    try:
+        current = output.read_text() if output.exists() else None
+    except UnicodeDecodeError:
+        current = None
     if current is not None and same_module(current, generated):
         return
     if check:

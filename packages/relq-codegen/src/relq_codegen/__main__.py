@@ -64,7 +64,9 @@ def main() -> None:
     try:
         config = load_config(arguments.config) if arguments.config is not None else None
         if isinstance(arguments, _SqliteArguments):
-            connection = sqlite3.connect(arguments.database)
+            connection = sqlite3.connect(
+                f"{arguments.database.absolute().as_uri()}?mode=ro", uri=True
+            )
             try:
                 generated = generate_sqlite(
                     connection, config=config, exclude_tables=arguments.exclude_tables
@@ -74,8 +76,9 @@ def main() -> None:
         else:
             generated = asyncio.run(_generate_postgres(arguments, config))
         write_module(arguments.output, generated, check=arguments.check)
-    except CodegenError as error:
-        raise SystemExit(f"relq-codegen: {error}") from error
+    except (CodegenError, OSError, sqlite3.Error) as error:
+        message = " ".join(str(error).split()) or type(error).__name__
+        raise SystemExit(f"relq-codegen: {message}") from error
 
 
 def _validated_arguments(arguments: argparse.Namespace) -> _SqliteArguments | _PostgresArguments:
@@ -113,7 +116,11 @@ async def _generate_postgres(arguments: _PostgresArguments, config: CodegenConfi
         raise SystemExit(
             "PostgreSQL generation requires `pip install 'relq-codegen[postgres]'`."
         ) from error
-    connection = await asyncpg.connect(arguments.dsn)
+    try:
+        connection = await asyncpg.connect(arguments.dsn)
+    except (OSError, ValueError, asyncpg.PostgresError, asyncpg.InterfaceError) as error:
+        # A malformed DSN is a ValueError (a bad port) or a ClientConfigurationError.
+        raise CodegenError(f"cannot connect to PostgreSQL: {error}") from error
     try:
         return await generate_postgres(
             connection,
@@ -121,6 +128,8 @@ async def _generate_postgres(arguments: _PostgresArguments, config: CodegenConfi
             config=config,
             exclude_tables=arguments.exclude_tables,
         )
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
+        raise CodegenError(f"cannot read the PostgreSQL schema: {error}") from error
     finally:
         await connection.close()
 

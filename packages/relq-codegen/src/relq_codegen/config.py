@@ -67,7 +67,7 @@ def _load_toml(path: Path) -> CodegenConfig:
         document = tomllib.loads(path.read_text())
     except OSError as error:
         raise CodegenError(f"cannot read config {path}: {error.strerror}") from error
-    except tomllib.TOMLDecodeError as error:
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         raise CodegenError(f"invalid config {path}: {error}") from error
     unknown = document.keys() - {"types"}
     if unknown:
@@ -207,6 +207,10 @@ def _qualified(node: ast.Attribute, source: str) -> RenderExpression:
 def _load_module(reference: str) -> CodegenConfig:
     module_name, _, attribute = reference.partition(":")
     attribute = attribute or DEFAULT_ATTRIBUTE
+    if not module_name or module_name.startswith("."):
+        raise CodegenError(
+            f"config {reference!r} must be a .toml file or an absolute 'package.module[:NAME]'"
+        )
     # Console scripts do not put the working directory on the import path.
     sys.path.insert(0, "")
     try:
