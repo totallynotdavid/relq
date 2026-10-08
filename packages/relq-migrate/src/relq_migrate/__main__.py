@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ._model import MigrationReport, MigrationStatus
+from ._model import MigrationError, MigrationReport, MigrationStatus
 from .postgres import PostgresMigrator
 from .provider import FileMigrationProvider
 from .sqlite import SQLiteMigrator
@@ -43,6 +43,9 @@ class _Failure(Exception):
     """A failure to report as one line."""
 
 
+_REPORTED_ERRORS = (MigrationError, OSError, UnicodeDecodeError, sqlite3.Error)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _parser()
     arguments = _validated(parser, parser.parse_args(argv))
@@ -53,8 +56,12 @@ def main(argv: list[str] | None = None) -> None:
             _migrate_sqlite(arguments, provider, config)
         else:
             asyncio.run(_migrate_postgres(arguments, provider, config))
-    except _Failure as failure:
-        raise SystemExit(f"{_PROG}: {failure}") from failure
+    except (_Failure, *_REPORTED_ERRORS) as failure:
+        raise SystemExit(f"{_PROG}: {_one_line(failure)}") from failure
+
+
+def _one_line(error: BaseException) -> str:
+    return " ".join(str(error).split()) or type(error).__name__
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -197,7 +204,8 @@ async def _migrate_postgres(
             arguments.database,
             server_settings={"default_transaction_read_only": "on"} if checking else None,
         )
-    except (OSError, asyncpg.PostgresError) as error:
+    except (OSError, ValueError, asyncpg.PostgresError, asyncpg.InterfaceError) as error:
+        # A malformed DSN is a ValueError (a bad port) or a ClientConfigurationError.
         raise _Failure(f"cannot connect to PostgreSQL: {error}") from error
     try:
         try:
@@ -210,6 +218,8 @@ async def _migrate_postgres(
             _raise_if_failed(await migrator.migrate_to_latest())
         if arguments.codegen is not None:
             await _regenerate_postgres(connection, arguments, arguments.codegen, config)
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
+        raise _Failure(str(error)) from error
     finally:
         await connection.close()
 
