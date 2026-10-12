@@ -47,7 +47,7 @@ def update_snapshot_users(values: SnapshotUsersUpdate) -> UpdateQuery[tuple[()],
     return update(snapshot_users).values(**values)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class SnapshotUsersRow:
     id: int
     email: str

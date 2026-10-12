@@ -515,7 +515,7 @@ def _render_row_model(
     dialect: CodegenDialect,
     rendered: list[RenderExpression],
 ) -> set[Import]:
-    body.extend(("", "@dataclass(frozen=True, slots=True)", f"class {names.row}:"))
+    body.extend(("", "@dataclass(frozen=True)", f"class {names.row}:"))
     if not table.columns:
         body.append("    pass")
     decoders: list[RenderExpression | None] = []

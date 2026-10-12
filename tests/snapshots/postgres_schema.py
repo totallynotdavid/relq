@@ -85,7 +85,7 @@ def update_relq_codegen_values(values: RelqCodegenValuesUpdate) -> UpdateQuery[t
     return update(relq_codegen_values).values(**values)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class RelqCodegenValuesRow:
     id: int
     tenant: int
@@ -126,7 +126,7 @@ def update_relq_integration_archive(values: RelqIntegrationArchiveUpdate) -> Upd
     return update(relq_integration_archive).values(**values)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class RelqIntegrationArchiveRow:
     id: int
     name: str
@@ -172,7 +172,7 @@ def update_relq_integration_users(values: RelqIntegrationUsersUpdate) -> UpdateQ
     return update(relq_integration_users).values(**values)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class RelqIntegrationUsersRow:
     id: int
     manager_id: int | None
