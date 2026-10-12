@@ -39,8 +39,10 @@ from relq.rows import RowAdapter, row_adapter
 Row_co = TypeVar("Row_co", covariant=True)
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, init=False)
 class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
+    __slots__ = ()
+
     def _with_node(self, node: SelectNode) -> Self:
         return new_query(type(self), node, extract_query(self).adapter)
 
@@ -201,9 +203,11 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
         return self._with_node(replace(node, locks=(*node.locks[:-1], replace(latest, wait=wait))))
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, init=False)
 class SelectQuery[SqlRow, Row = SqlRow](_SelectQuery[SqlRow, Row]):
     """An immutable SELECT with an optional executor-only row decoder."""
+
+    __slots__ = ()
 
     def decode[Model](self, model: type[Model] | RowAdapter[Model]) -> SelectQuery[SqlRow, Model]:
         """Attach a row decoder that only the executor uses. The SQL is unchanged."""
@@ -251,7 +255,7 @@ class SelectQuery[SqlRow, Row = SqlRow](_SelectQuery[SqlRow, Row]):
         return self._wait("skip locked")
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, init=False)
 class ModifyingQuery[SqlRow, Row = SqlRow](Query[Row]):
     """A SELECT whose ``WITH`` clause contains a data-modifying statement.
 
@@ -260,6 +264,8 @@ class ModifyingQuery[SqlRow, Row = SqlRow](Query[Row]):
     passed to ``fetch_*`` as a read, used as a subquery, or composed into a
     compound query, where PostgreSQL rejects a writing CTE anyway.
     """
+
+    __slots__ = ()
 
     def with_[CteRow](
         self, source: CteTable[object], query: SelectQuery[CteRow], *, materialized: bool = False

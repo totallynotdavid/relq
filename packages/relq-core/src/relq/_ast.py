@@ -9,7 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from relq._frozen import frozen_guard
 
+
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TableSourceNode:
     """A stored relation, optionally qualified by the schema that owns it.
@@ -29,6 +32,7 @@ class TableSourceNode:
         return self.alias or self.name
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class DerivedSourceNode:
     query: SelectNode
@@ -39,6 +43,7 @@ class DerivedSourceNode:
         return self.alias
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class CteSourceNode:
     name: str
@@ -51,17 +56,20 @@ class CteSourceNode:
 type SourceNode = TableSourceNode | DerivedSourceNode | CteSourceNode
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class ColumnNode:
     source: str
     name: str
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class ValueNode:
     value: object
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalClockNode:
     kind: Literal[
@@ -75,6 +83,7 @@ class TemporalClockNode:
     ]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class BinaryNode:
     left: Node
@@ -82,6 +91,7 @@ class BinaryNode:
     right: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalMakeDateNode:
     year: Node
@@ -89,6 +99,7 @@ class TemporalMakeDateNode:
     day: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalMakeTimeNode:
     hour: Node
@@ -96,6 +107,7 @@ class TemporalMakeTimeNode:
     second: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalMakeTimestampNode:
     year: Node
@@ -106,6 +118,7 @@ class TemporalMakeTimestampNode:
     second: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalMakeTimestamptzNode:
     year: Node
@@ -117,6 +130,7 @@ class TemporalMakeTimestamptzNode:
     zone: Node | None = None
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalMakeIntervalNode:
     """Named PostgreSQL ``make_interval`` components."""
@@ -124,11 +138,13 @@ class TemporalMakeIntervalNode:
     components: tuple[tuple[str, Node], ...]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalEpochNode:
     seconds: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalArithmeticNode:
     timestamp: Node
@@ -136,17 +152,20 @@ class TemporalArithmeticNode:
     interval: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalDifferenceNode:
     left: Node
     right: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalIntervalUnaryNode:
     interval: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalIntervalScaleNode:
     interval: Node
@@ -154,24 +173,28 @@ class TemporalIntervalScaleNode:
     factor: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalTimezoneNode:
     expression: Node
     zone: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalExtractNode:
     field: str
     expression: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalTruncNode:
     unit: str
     expression: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalTruncTimestamptzNode:
     unit: str
@@ -179,6 +202,7 @@ class TemporalTruncTimestamptzNode:
     zone: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalBinNode:
     stride: Node
@@ -186,12 +210,14 @@ class TemporalBinNode:
     origin: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalAgeNode:
     left: Node
     right: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalOverlapsNode:
     left_start: Node
@@ -200,24 +226,28 @@ class TemporalOverlapsNode:
     right_end: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TemporalJustifyNode:
     kind: Literal["justify_days", "justify_hours", "justify_interval"]
     interval: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class UnaryNode:
     operator: str
     operand: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class FunctionNode:
     name: str
     arguments: tuple[Node, ...]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class CaseNode:
     """A searched CASE expression. Branches are nodes, never SQL fragments."""
@@ -226,6 +256,7 @@ class CaseNode:
     otherwise: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class AggregateNode:
     """A portable aggregate call.
@@ -239,6 +270,7 @@ class AggregateNode:
     filter: Node | None = None
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class WindowNode:
     expression: AggregateNode | FunctionNode
@@ -248,6 +280,7 @@ class WindowNode:
     exclusion: WindowExclusion | None = None
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class FrameBoundaryNode:
     """A validated SQL window-frame boundary.
@@ -260,6 +293,7 @@ class FrameBoundaryNode:
     amount: int | None = None
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class WindowFrameNode:
     kind: str
@@ -271,12 +305,14 @@ type WindowExclusion = Literal["no others", "current row", "group", "ties"]
 type NullPlacement = Literal["first", "last"]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class AliasNode:
     expression: Node
     alias: str
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class NullableResultNode:
     """A type-only marker for a result that SQL may NULL-extend.
@@ -289,11 +325,13 @@ class NullableResultNode:
     expression: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class StarNode:
     pass
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class InNode:
     expression: Node
@@ -301,6 +339,7 @@ class InNode:
     negated: bool = False
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class BetweenNode:
     expression: Node
@@ -309,17 +348,20 @@ class BetweenNode:
     negated: bool = False
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class ScalarSubqueryNode:
     query: SelectNode
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class ExistsNode:
     query: SelectNode
     negated: bool = False
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class ExcludedNode:
     """A proposed row column in an INSERT conflict update."""
@@ -328,6 +370,7 @@ class ExcludedNode:
     name: str
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class JsonTextNode:
     """PostgreSQL ``->>``: read one JSON member as text.
@@ -339,6 +382,7 @@ class JsonTextNode:
     key: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class RegexMatchNode:
     """PostgreSQL ``~`` / ``~*``: POSIX regular-expression matching."""
@@ -348,6 +392,7 @@ class RegexMatchNode:
     insensitive: bool = False
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class UuidCastNode:
     """PostgreSQL ``::uuid``, rendered as a standard ``CAST`` to one fixed type.
@@ -359,6 +404,7 @@ class UuidCastNode:
     value: Node
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class OrderNode:
     expression: Node
@@ -366,6 +412,7 @@ class OrderNode:
     nulls: NullPlacement | None = None
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class JoinNode:
     source: SourceNode
@@ -373,6 +420,7 @@ class JoinNode:
     kind: str
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class CteNode:
     """One ``WITH`` binding.
@@ -389,12 +437,14 @@ class CteNode:
     materialized: bool = False
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class CompoundNode:
     operator: CompoundOperator
     query: SelectNode
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class LockClauseNode:
     strength: Literal["update", "no key update", "share", "key share"]
@@ -402,6 +452,7 @@ class LockClauseNode:
     wait: Literal["nowait", "skip locked"] | None = None
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class SelectNode:
     selections: tuple[Node, ...]
@@ -422,22 +473,26 @@ class SelectNode:
 type CompoundOperator = Literal["union", "union all", "intersect", "except"]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class InsertValuesSourceNode:
     values: tuple[tuple[str, Node], ...]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class InsertRowsSourceNode:
     rows: tuple[tuple[tuple[str, Node], ...], ...]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class InsertSelectSourceNode:
     query: SelectNode
     columns: tuple[str, ...]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class DefaultValuesSourceNode:
     pass
@@ -448,6 +503,7 @@ type InsertSourceNode = (
 )
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class InsertNode:
     table: TableSourceNode
@@ -456,6 +512,7 @@ class InsertNode:
     returning: tuple[Node, ...] = ()
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class ConflictNode:
     """An ``ON CONFLICT`` clause and its two independent predicate slots.
@@ -472,6 +529,7 @@ class ConflictNode:
     update_where: Node | None = None
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class UpdateNode:
     table: TableSourceNode
@@ -481,6 +539,7 @@ class UpdateNode:
     returning: tuple[Node, ...] = ()
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class DeleteNode:
     table: TableSourceNode

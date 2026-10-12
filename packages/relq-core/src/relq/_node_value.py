@@ -4,30 +4,29 @@ The public builder layer owns typed SQL values, not AST objects.  This module
 is the sole bridge between those values and the private immutable AST.
 """
 
-from collections.abc import Sequence
-from dataclasses import dataclass, fields
-from typing import Final, cast
+from dataclasses import dataclass
+from typing import Final
 
 from relq._ast import Node
+from relq._frozen import FrozenSlots, frozen_guard
 
 _CONSTRUCTION_TOKEN: Final = object()
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class _NodeState[N]:
     node: N
 
 
 @dataclass(frozen=True, init=False)
-class NodeValue[N]:
-    """Private base for values that carry one immutable AST node."""
+class NodeValue[N](FrozenSlots):
+    """Private base for values that carry one immutable AST node.
 
-    # ``__slots__`` is declared by hand because ``slots=True`` rebuilds the class.
-    # On CPython 3.13.0 through 3.13.13 and 3.14.0 through 3.14.4 the rebuilt
-    # class keeps a frozen ``__setattr__`` that closes over the discarded
-    # original. Assigning any non-field attribute on a subclass, such as
-    # ``Table.table_name``, then raises ``TypeError``. CI pins 3.13.0 and 3.14.0
-    # so this cannot regress unnoticed.
+    Only dataclass fields survive ``copy``. Subclasses must restore any other
+    state they need after copying.
+    """
+
     __slots__ = ("_state",)
 
     _state: _NodeState[N]
@@ -36,31 +35,20 @@ class NodeValue[N]:
         if token is not _CONSTRUCTION_TOKEN:
             raise TypeError("relq values are created by relq builders, not constructors")
 
-    # A hand-written ``__slots__`` does not get the ``__getstate__`` and
-    # ``__setstate__`` that ``slots=True`` installs, so they are restated here.
-    # The state is a list because the generated ``__getstate__`` returns a list,
-    # and a tuple would change the pickle bytes. Only dataclass fields are saved.
-    # State a subclass keeps elsewhere does not survive ``copy``, which is why
-    # ``Table.as_`` sets ``table_name`` again by hand. Saving more breaks pickling
-    # of generic values whose ``__dict__`` holds ``__orig_class__``.
-    def __getstate__(self) -> list[object]:
-        return [cast(object, getattr(self, field.name)) for field in fields(self)]
-
-    def __setstate__(self, state: Sequence[object]) -> None:
-        for field, value in zip(fields(self), state, strict=True):
-            object.__setattr__(self, field.name, value)
-
 
 class _NodeBridge(NodeValue[object]):
     __slots__ = ()
 
     @staticmethod
     def node[N](value: NodeValue[N]) -> N:
-        return value._state.node
+        state = getattr(value, "_state", None)
+        if not isinstance(state, _NodeState):
+            raise TypeError(f"{type(value).__name__} was not created by a relq builder")
+        return state.node  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
 
     @staticmethod
     def initialized[N](value: NodeValue[N]) -> bool:
-        return hasattr(value, "_state")
+        return isinstance(getattr(value, "_state", None), _NodeState)
 
 
 def construction_token() -> object:
@@ -84,8 +72,8 @@ def has_node[N](value: NodeValue[N]) -> bool:
 
     Every value relq constructs has one, because the factories are the only way
     past the constructor token. A class declared outside relq can inherit a
-    nominal public base such as ``ConflictTarget`` and skip the token by
-    overriding ``__init__``. A builder that accepts a base rather than a
-    concrete type checks this first and raises its own error.
+    public base such as ``Column`` and skip the token by overriding
+    ``__init__``. ``node_of`` raises ``TypeError`` for such a value. A builder
+    that wants its own message checks this first.
     """
     return _NodeBridge.initialized(value)

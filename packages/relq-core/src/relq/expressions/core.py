@@ -83,12 +83,10 @@ class ConflictTarget(Expression):
     ``on_conflict`` accept any number of columns, as ``BooleanExpression`` does
     for ``where``.
 
-    ``Column`` is the only member relq declares. The runtime gate in ``relq.dml``
-    tests this same class, so the static and runtime contracts admit the same
-    values. Nothing seals the class. An outside subclass can override
-    ``__init__`` and skip the construction token, so class membership is not what
-    keeps the SQL correct. ``relq.dml`` requires each target to carry a node that
-    is a ``ColumnNode`` of the INSERT table and raises its own error otherwise.
+    Relq does not seal this class. An outside subclass can override ``__init__``
+    and skip the construction token. ``relq.dml`` therefore validates each
+    target's ``ColumnNode`` and INSERT-table ownership instead of trusting class
+    membership.
     """
 
     __slots__ = ()

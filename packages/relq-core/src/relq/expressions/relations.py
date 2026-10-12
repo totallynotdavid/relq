@@ -15,7 +15,7 @@ from relq._ast import (
     TableSourceNode,
     ValueNode,
 )
-from relq._node_value import NodeValue, construction_token, initialize_node, node_of
+from relq._node_value import NodeValue, construction_token, has_node, initialize_node, node_of
 from relq.expressions.core import ConflictTarget, Expr
 
 _RESERVED_ATTRIBUTES = frozenset(
@@ -62,22 +62,21 @@ class Source[SqlRow_co = object](NodeValue[SourceNode]):
         raise NotImplementedError
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, init=False)
 class Column[T](Expr[T], ConflictTarget):
     """A declared table column, bound to a source when accessed."""
 
-    _name: str = ""
+    __slots__ = ("_name",)
+
+    _name: str
 
     def __init__(self, token: object, name: str = "") -> None:
-        # ``slots=True`` rebuilds the class. On CPython 3.13.0 through 3.13.13 the
-        # carried-over methods keep a ``__class__`` cell that points at the
-        # discarded original, so zero-argument ``super()`` raises ``TypeError``.
-        # Naming the class resolves against the surviving class and walks the same
-        # MRO on every supported version.
-        super(Column, self).__init__(token)
+        super().__init__(token)
         object.__setattr__(self, "_name", name)
 
     def __set_name__(self, owner: type[Source], name: str) -> None:
+        if not has_node(self):
+            raise TypeError(f"{type(self).__name__} was not created by a relq builder")
         if not self._name:
             object.__setattr__(self, "_name", name)
 
@@ -202,10 +201,26 @@ def column[T](*, name: str = "") -> Column[T]:
     return _column(name, ValueNode(None))
 
 
+def column_node(value: object) -> ColumnNode | None:
+    """Return a value's column node, or ``None`` for any other value.
+
+    A class declared outside relq can subclass ``Column`` and skip the
+    construction token. Builders that need a column therefore inspect its node
+    rather than trusting its class.
+    """
+    if not isinstance(value, NodeValue):
+        return None
+    node_value = cast(NodeValue[object], value)
+    if not has_node(node_value):
+        return None
+    node = node_of(node_value)
+    return node if isinstance(node, ColumnNode) else None
+
+
 def excluded[T](column: Column[T]) -> Expr[T]:
     """Refer to a proposed-row field inside ``ON CONFLICT DO UPDATE``."""
-    node = node_of(column)
-    if not isinstance(node, ColumnNode):
+    node = column_node(column)
+    if node is None:
         raise TypeError("excluded() requires a table column")
     expression = Expr[T](construction_token())
     initialize_node(expression, ExcludedNode(node.source, node.name))

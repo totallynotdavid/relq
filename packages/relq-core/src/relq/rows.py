@@ -12,6 +12,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from typing import NewType, Protocol, cast, get_type_hints
 
+from relq._frozen import FrozenSlots, frozen_guard
+
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type Inet = (
     ipaddress.IPv4Address
@@ -50,26 +52,33 @@ def aware_time(value: datetime.time) -> AwareTime:
     return AwareTime(value)
 
 
-@dataclass(frozen=True, slots=True)
-class Interval:
+@dataclass(frozen=True, init=False)
+class Interval(FrozenSlots):
     """PostgreSQL's lossless ``(months, days, microseconds)`` interval value."""
 
-    months: int = 0
-    days: int = 0
-    microseconds: int = 0
+    __slots__ = ("days", "microseconds", "months")
 
-    def __post_init__(self) -> None:
-        if any(type(value) is not int for value in (self.months, self.days, self.microseconds)):
+    months: int
+    days: int
+    microseconds: int
+
+    def __init__(self, months: int = 0, days: int = 0, microseconds: int = 0) -> None:
+        if any(type(value) is not int for value in (months, days, microseconds)):
             raise TypeError("interval components must be integers")
+        object.__setattr__(self, "months", months)
+        object.__setattr__(self, "days", days)
+        object.__setattr__(self, "microseconds", microseconds)
 
 
 class RowDecodingError(ValueError):
     """A result value could not be decoded for a declared row model."""
 
 
-@dataclass(frozen=True, slots=True)
-class Decoder[Value]:
+@dataclass(frozen=True)
+class Decoder[Value](FrozenSlots):
     """A named, explicit conversion accepted by :class:`RowAdapter`."""
+
+    __slots__ = ("_decode", "name")
 
     name: str
     _decode: Callable[[object], Value]
@@ -85,20 +94,23 @@ class _AnyDecoder(Protocol):
     def decode(self, value: object) -> object: ...
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class _Field:
     name: str
     decoder: _AnyDecoder | None
 
 
-@dataclass(frozen=True, slots=True)
-class RowAdapter[Model]:
+@dataclass(frozen=True)
+class RowAdapter[Model](FrozenSlots):
     """A checked positional-row adapter for a dataclass or ``NamedTuple``.
 
     Drivers return raw tuples by default. An adapter is the explicit trust
     boundary: it validates result arity, optionally decodes each field, then
     calls the model constructor. It never infers conversions from annotations.
     """
+
+    __slots__ = ("_factory", "_fields", "_model")
 
     _model: type[Model]
     _factory: Callable[..., Model]

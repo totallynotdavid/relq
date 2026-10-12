@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast, overload
 
 from relq._ast import QueryNode, SelectNode
+from relq._frozen import FrozenSlots, frozen_guard
 from relq.rows import RowAdapter
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from relq.query import ModifyingQuery, SelectQuery
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class _QueryState[Row]:
     """The sole internal representation consumed outside query builders."""
@@ -23,9 +25,11 @@ class _QueryState[Row]:
     adapter: RowAdapter[Row] | None = None
 
 
-@dataclass(frozen=True, slots=True, init=False)
-class Query[Row]:
+@dataclass(frozen=True, init=False)
+class Query[Row](FrozenSlots):
     """Base for concrete public queries. Builders create them, never callers."""
+
+    __slots__ = ("__query_state",)
 
     __query_state: _QueryState[Row]
 

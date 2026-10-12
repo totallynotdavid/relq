@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal, NoReturn, Protocol, cast
 
 from relq._ast import SelectNode
+from relq._frozen import FrozenSlots
 from relq._query import Query, extract_query
 from relq.dml import (
     DeleteQuery,
@@ -27,9 +28,11 @@ type ReturningQuery[Row] = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class QueryEvent:
+@dataclass(frozen=True)
+class QueryEvent(FrozenSlots):
     """The compiled statement and outcome of one executor operation."""
+
+    __slots__ = ("duration", "error", "parameters", "row_count", "sql")
 
     sql: str
     parameters: tuple[object, ...]

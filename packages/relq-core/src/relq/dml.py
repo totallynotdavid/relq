@@ -14,7 +14,6 @@ from dataclasses import dataclass, replace
 from typing import Generic, Literal, Self, TypeVar, overload
 
 from relq._ast import (
-    ColumnNode,
     ConflictNode,
     DefaultValuesSourceNode,
     DeleteNode,
@@ -27,7 +26,8 @@ from relq._ast import (
     UpdateNode,
     ValueNode,
 )
-from relq._node_value import expression_node, has_node, node_of
+from relq._frozen import FrozenSlots
+from relq._node_value import expression_node, node_of
 from relq._query import Query, extract_query, new_query, select_node
 from relq.expressions import (
     BooleanExpression,
@@ -37,7 +37,7 @@ from relq.expressions import (
     Expression,
     Table,
 )
-from relq.expressions.relations import Source, source_columns, table_node
+from relq.expressions.relations import Source, column_node, source_columns, table_node
 from relq.rows import RowAdapter, row_adapter
 
 
@@ -62,10 +62,8 @@ def _target_column_names(
         raise ValueError("insert-from-select requires at least one target column")
     names: list[str] = []
     for column in columns:
-        if not isinstance(column, ConflictTarget) or not has_node(column):
-            raise TypeError("target and conflict arguments must be table columns")
-        node = expression_node(column)
-        if not isinstance(node, ColumnNode):
+        node = column_node(column)
+        if node is None:
             raise TypeError("target and conflict arguments must be table columns")
         if node.source != table.reference or node.name not in table.column_names():
             raise ValueError("target and conflict columns must belong to the INSERT table")
@@ -122,16 +120,20 @@ decode.
 """
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, init=False)
 class _DmlQuery(Query[Row_co], Generic[Row_co]):
+    __slots__ = ("_table",)
+
     _table: Table[object]
 
     def with_node(self, node: InsertNode | UpdateNode | DeleteNode) -> Self:
         return new_query(type(self), node, extract_query(self).adapter, table=self._table)
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, init=False)
 class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
+    __slots__ = ()
+
     @property
     def _node(self) -> InsertNode:
         node = extract_query(self).node
@@ -225,7 +227,7 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
             case _:
                 pass
         return ConflictBuilder(
-            self, _target_column_names(self._table, columns, allow_empty=True), self._table
+            self, _target_column_names(self._table, columns, allow_empty=True), self._table, None
         )
 
     @overload
@@ -314,14 +316,16 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         return new_query(InsertQuery, self._node, adapter, table=self._table)
 
 
-@dataclass(frozen=True, slots=True)
-class ConflictBuilder(Generic[Row_co, Returns]):
+@dataclass(frozen=True)
+class ConflictBuilder(FrozenSlots, Generic[Row_co, Returns]):
     """Incomplete INSERT conflict clause. It must end in an action."""
+
+    __slots__ = ("_columns", "_query", "_table", "_target_where")
 
     _query: InsertQuery[Row_co, Returns]
     _columns: tuple[str, ...]
     _table: Table
-    _target_where: Node | None = None
+    _target_where: Node | None
 
     def where(self, predicate: BooleanExpression) -> ConflictBuilder[Row_co, Returns]:
         """Match a partial unique index by repeating its own index predicate.
@@ -366,7 +370,7 @@ class ConflictBuilder(Generic[Row_co, Returns]):
         )
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, init=False)
 class ConflictUpdateQuery(InsertQuery[Row_co, Returns], Generic[Row_co, Returns]):
     """A complete INSERT whose ``DO UPDATE`` can still be narrowed by a predicate.
 
@@ -374,6 +378,8 @@ class ConflictUpdateQuery(InsertQuery[Row_co, Returns], Generic[Row_co, Returns]
     It must come before ``returning()``, because the wider builder methods return
     a plain ``InsertQuery``.
     """
+
+    __slots__ = ()
 
     def where(self, predicate: BooleanExpression) -> InsertQuery[Row_co, Returns]:
         """Run the conflicting row's update only where ``predicate`` holds."""
@@ -389,8 +395,10 @@ class ConflictUpdateQuery(InsertQuery[Row_co, Returns], Generic[Row_co, Returns]
         )
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, init=False)
 class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
+    __slots__ = ()
+
     @property
     def _node(self) -> UpdateNode:
         node = extract_query(self).node
@@ -502,8 +510,10 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         return new_query(UpdateQuery, self._node, adapter, table=self._table)
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, init=False)
 class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
+    __slots__ = ()
+
     @property
     def _node(self) -> DeleteNode:
         node = extract_query(self).node
