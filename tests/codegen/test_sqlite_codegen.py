@@ -1,13 +1,15 @@
 """SQLite introspection, rendering, and generated-source runtime contracts."""
 
 import ast
+import dataclasses
 import enum
+import importlib.util
 import sqlite3
 from pathlib import Path
 from typing import cast
 
 import pytest
-from relq import JsonValue, Table
+from relq import JsonValue, RowAdapter, Table
 
 # relq-codegen deliberately does not depend on relq, so it mirrors this set
 # rather than importing it; reaching in here is what keeps the copy honest.
@@ -249,6 +251,28 @@ def test_sqlite_codegen_matches_committed_schema_snapshot() -> None:
         generate_sqlite(connection)
         == (Path(__file__).parents[1] / "snapshots" / "sqlite_schema.py").read_text()
     )
+
+
+def test_a_generated_row_refuses_mutation_with_frozen_instance_error(tmp_path: Path) -> None:
+    """Importing generated code from a file is part of the runtime contract."""
+    connection = sqlite3.connect(":memory:")
+    connection.execute("create table widgets (id integer primary key, name text not null)")
+    source = tmp_path / "widgets_schema.py"
+    source.write_text(generate_sqlite(connection))
+    spec = importlib.util.spec_from_file_location("widgets_schema", source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    row = cast("RowAdapter[object]", module.widgets_row_adapter).map((1, "bolt"))
+
+    assert dataclasses.is_dataclass(row)
+    for attribute in ("name", "undeclared"):
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(row, attribute, "nut")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            delattr(row, attribute)
+    assert repr(row) == "WidgetsRow(id=1, name='bolt')"
 
 
 def test_generated_names_survive_columns_and_tables_that_shadow_relq_builders() -> None:
