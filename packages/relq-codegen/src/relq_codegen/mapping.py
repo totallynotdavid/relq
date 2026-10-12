@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast, get_args
 
+from relq_codegen._frozen import frozen_guard
 from relq_codegen.errors import CodegenError
 from relq_codegen.model import (
     ArrayType,
@@ -72,6 +73,7 @@ def _display_identity(identity: TypeIdentity) -> str:
     return identity.name if identity.schema is None else f"{identity.schema}.{identity.name}"
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class ResolvedType:
     annotation: RenderExpression

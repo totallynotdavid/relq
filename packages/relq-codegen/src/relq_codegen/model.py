@@ -7,7 +7,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from relq_codegen._frozen import frozen_guard
 
+
+@frozen_guard
 @dataclass(frozen=True, slots=True, order=True)
 class Import:
     """A validated import declaration required by generated source."""
@@ -56,6 +59,7 @@ class RenderExpression:
         raise NotImplementedError
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class Name(RenderExpression):
     value: str
@@ -75,6 +79,7 @@ class Name(RenderExpression):
         return frozenset({self.value})
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class Attribute(RenderExpression):
     parent: RenderExpression
@@ -94,6 +99,7 @@ class Attribute(RenderExpression):
         return self.parent.names()
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class Subscript(RenderExpression):
     parent: RenderExpression
@@ -111,6 +117,7 @@ class Subscript(RenderExpression):
         return self.parent.names().union(*(argument.names() for argument in self.arguments))
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class StringLiteral(RenderExpression):
     value: str
@@ -125,6 +132,7 @@ class StringLiteral(RenderExpression):
         return frozenset()
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class Call(RenderExpression):
     function: RenderExpression
@@ -144,6 +152,7 @@ class Call(RenderExpression):
         return self.function.names().union(*(argument.names() for argument in self.arguments))
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class Union(RenderExpression):
     """A closed union annotation assembled from generated expressions."""
@@ -167,6 +176,7 @@ class Union(RenderExpression):
         return frozenset[str]().union(*(member.names() for member in self.members))
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class TypeIdentity:
     """A database type's stable namespace-qualified identity."""
@@ -175,6 +185,7 @@ class TypeIdentity:
     name: str
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class BuiltinType:
     """A dialect builtin or SQLite declared type."""
@@ -182,6 +193,7 @@ class BuiltinType:
     name: str
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class NamedType:
     """A PostgreSQL enum or domain, identified independently of its spelling."""
@@ -190,6 +202,7 @@ class NamedType:
     identity: TypeIdentity
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class ArrayType:
     """A PostgreSQL array whose element retains its complete type identity."""
@@ -200,6 +213,7 @@ class ArrayType:
 type SqlType = BuiltinType | NamedType | ArrayType
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class SchemaColumn:
     name: str
@@ -211,6 +225,7 @@ class SchemaColumn:
     generated: bool = False
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class SchemaTable:
     name: str
@@ -218,12 +233,14 @@ class SchemaTable:
     schema: str | None = None
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class SchemaEnum:
     identity: TypeIdentity
     labels: tuple[str, ...]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class DirectType:
     """Use a declared Python annotation and driver decoder for a database type."""
@@ -232,6 +249,7 @@ class DirectType:
     decoder: DecoderKind
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class GeneratedWrapper:
     """Emit a ``NewType`` for a domain whose distinction matters to callers."""
@@ -240,6 +258,7 @@ class GeneratedWrapper:
     base: DirectType
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class RejectedType:
     """Document and reject a type that cannot be represented safely."""
@@ -267,6 +286,7 @@ type DecoderKind = Literal[
 ]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class CodegenConfig:
     """Intentional decisions for types which catalog metadata cannot type safely."""

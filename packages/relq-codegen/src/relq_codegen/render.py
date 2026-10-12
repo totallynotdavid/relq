@@ -8,6 +8,7 @@ import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 
+from relq_codegen._frozen import frozen_guard
 from relq_codegen.errors import CodegenError
 from relq_codegen.mapping import MAPPING_IMPORTS, relq_name, resolve_type, used_wrapper_policies
 from relq_codegen.model import (
@@ -113,6 +114,7 @@ def _reserved_for(config: CodegenConfig | None) -> frozenset[str]:
     )
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class _TableNames:
     """Every module-level name one table contributes, allocated as a unit."""
@@ -176,6 +178,7 @@ def _allocate(stem: str, templates: tuple[str, ...], taken: set[str]) -> str:
     return candidate
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class _Namespace:
     """The one pass that decides what every generated declaration is called."""

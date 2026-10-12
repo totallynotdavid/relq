@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from relq_codegen._frozen import frozen_guard
 from relq_codegen.config import DEFAULT_ATTRIBUTE, load_config
 from relq_codegen.errors import CodegenError
 from relq_codegen.generate import generate_postgres, generate_sqlite, write_module
 from relq_codegen.model import CodegenConfig
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class _SqliteArguments:
     database: Path
@@ -22,6 +24,7 @@ class _SqliteArguments:
     exclude_tables: tuple[str, ...]
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class _PostgresArguments:
     dsn: str
