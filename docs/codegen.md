@@ -44,6 +44,9 @@ For each table:
 - A frozen `TableNameRow` dataclass and a `table_name_row_adapter` that decodes
   raw tuples into it.
 
+Assigning or deleting any attribute of a row raises
+`dataclasses.FrozenInstanceError`, on every Python release the project supports.
+
 An insert field is required only when introspection shows that the column is
 non-nullable and has no default, identity, generated, or primary-key behavior.
 Every other insert field is optional. Generated columns cannot be written, so
