@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ._frozen import frozen_guard
 from ._model import MigrationError, MigrationReport, MigrationStatus
 from .postgres import PostgresMigrator
 from .provider import FileMigrationProvider
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 _PROG = "relq-migrate"
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class _Codegen:
     output: Path
@@ -28,6 +30,7 @@ class _Codegen:
     check: bool
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class _Arguments:
     dialect: str

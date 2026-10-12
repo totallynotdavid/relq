@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
+from ._frozen import frozen_guard
+
 _IDENTIFIER_RE: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -16,6 +18,7 @@ class MigrationError(RuntimeError):
     """The migration history or migration file set is invalid."""
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class Migration:
     """One forward-only SQL migration file.
@@ -37,6 +40,7 @@ class MigrationStatus(StrEnum):
     NOT_EXECUTED = "NotExecuted"
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class MigrationResult:
     """The outcome for one migration considered by a migration run."""
@@ -46,6 +50,7 @@ class MigrationResult:
     error: BaseException | None = None
 
 
+@frozen_guard
 @dataclass(frozen=True, slots=True)
 class MigrationReport:
     """The result of migrating one database to the provider's latest file."""
