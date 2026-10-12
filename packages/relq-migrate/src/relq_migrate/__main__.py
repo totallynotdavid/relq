@@ -206,7 +206,9 @@ async def _migrate_postgres(
         )
     except (OSError, ValueError, asyncpg.PostgresError, asyncpg.InterfaceError) as error:
         # A malformed DSN is a ValueError (a bad port) or a ClientConfigurationError.
-        raise _Failure(f"cannot connect to PostgreSQL: {error}") from error
+        raise _Failure(
+            f"cannot connect to PostgreSQL: {str(error) or type(error).__name__}"
+        ) from error
     try:
         try:
             migrator = PostgresMigrator(connection, provider, table_name=arguments.table)

@@ -120,7 +120,9 @@ async def _generate_postgres(arguments: _PostgresArguments, config: CodegenConfi
         connection = await asyncpg.connect(arguments.dsn)
     except (OSError, ValueError, asyncpg.PostgresError, asyncpg.InterfaceError) as error:
         # A malformed DSN is a ValueError (a bad port) or a ClientConfigurationError.
-        raise CodegenError(f"cannot connect to PostgreSQL: {error}") from error
+        raise CodegenError(
+            f"cannot connect to PostgreSQL: {str(error) or type(error).__name__}"
+        ) from error
     try:
         return await generate_postgres(
             connection,
