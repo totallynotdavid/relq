@@ -37,7 +37,9 @@ query = (
 
 The compiler tracks which relations, aliases included, the join tree
 NULL-extends. It rejects an unmarked column or arithmetic projection over one of
-them.
+them. A marker acknowledges the nullable source wherever it appears in the
+expression tree. For example, `.nullable().as_("a")`, `.as_("a").nullable()`,
+and `add(x.nullable(), 1)` all satisfy the check.
 
 ## Subqueries
 

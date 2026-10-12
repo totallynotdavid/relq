@@ -473,8 +473,6 @@ def _validate_nested_selects(
 
 
 def _validate_selection_nullability(node: Node, nullable_sources: frozenset[str]) -> None:
-    if isinstance(node, NullableResultNode):
-        return
     sources = _nullable_result_sources(node) & nullable_sources
     if not sources:
         return
@@ -491,11 +489,17 @@ def _nullable_result_sources(node: Node) -> set[str]:
     This is narrower than ``referenced_sources`` on purpose. Predicates and
     analytic expressions have their own result semantics. Column and arithmetic
     projections inherit a NULL-extended input.
+
+    A ``NullableResultNode`` acknowledges every source beneath it, regardless of
+    where it appears. The arithmetic and ``CASE`` builders propagate that
+    optional result type to the enclosing expression.
     """
     match node:
         case ColumnNode(source, _):
             return {source}
-        case AliasNode(expression, _) | NullableResultNode(expression) | UuidCastNode(expression):
+        case NullableResultNode():
+            return set()
+        case AliasNode(expression, _) | UuidCastNode(expression):
             # A cast keeps its operand's nullability, so an outer join still
             # widens the result.
             return _nullable_result_sources(expression)
