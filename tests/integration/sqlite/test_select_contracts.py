@@ -5,6 +5,7 @@ import pytest
 from relq import (
     Column,
     CteTable,
+    Expr,
     Interval,
     SelectQuery,
     Table,
@@ -209,6 +210,28 @@ def test_outer_join_requires_marker_for_arithmetic_results() -> None:
         .left_join(accounts, on=users.id.eq(accounts.id))
     )
     assert compile_sqlite(query).sql.startswith('select ("accounts"."id" + ?)')
+
+
+def test_nullable_marker_clears_the_requirement_wherever_it_sits() -> None:
+    class Accounts(Table):
+        id: Column[int] = column()
+
+    accounts = Accounts("accounts")
+
+    def compiled[T](selection: Expr[T]) -> str:
+        query = select(selection).from_(users).left_join(accounts, on=users.id.eq(accounts.id))
+        return compile_sqlite(query).sql
+
+    outermost = compiled(accounts.id.as_("a").nullable())
+    assert compiled(accounts.id.nullable().as_("a")) == outermost
+
+    inside_arithmetic = compiled(add(accounts.id.nullable(), 1))
+    assert inside_arithmetic == compiled(add(accounts.id, 1).nullable())
+
+    with pytest.raises(ValueError, match=r"accounts.*\.nullable\(\)"):
+        compiled(accounts.id.as_("a"))
+    with pytest.raises(ValueError, match=r"accounts.*\.nullable\(\)"):
+        compiled(add(accounts.id, 1).as_("a"))
 
 
 def test_conditional_expressions_are_closed_and_parameterized() -> None:
