@@ -175,7 +175,7 @@ class PostgresMigrator:
                             migration.name,
                             migration_checksum(migration),
                         )
-                except Exception as error:  # noqa: BLE001 - report migration failures
+                except Exception as error:
                     results.append(MigrationResult(migration.name, MigrationStatus.ERROR, error))
                     results.extend(
                         MigrationResult(
@@ -187,13 +187,13 @@ class PostgresMigrator:
                     return MigrationReport(error, tuple(results))
                 results.append(MigrationResult(migration.name, MigrationStatus.SUCCESS))
             return MigrationReport(None, tuple(results))
-        except Exception as error:  # noqa: BLE001 - report migration failures
+        except Exception as error:
             return MigrationReport(error, ())
         finally:
             if locked and lock_key is not None:
                 try:
                     await connection.execute("SELECT pg_advisory_unlock($1)", lock_key)
-                except Exception as error:  # noqa: BLE001 - never replace the migration report
+                except Exception as error:
                     _LOGGER.warning(
                         "failed to release PostgreSQL advisory lock for history table %r: %s",
                         self._table_name,

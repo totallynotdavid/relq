@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, suppress
 from itertools import count
 from time import perf_counter
 from types import TracebackType
@@ -489,10 +489,8 @@ class SQLiteDatabase:
         try:
             yield cast(SQLiteDatabase, controlled)
         except BaseException:
-            try:
+            with suppress(TransactionUnavailableError):
                 controlled.rollback()
-            except TransactionUnavailableError:
-                pass
             raise
         else:
             controlled.commit()
@@ -574,7 +572,7 @@ class _SQLiteControlledTransaction(SQLiteDatabase):
                 else lambda: self._connection.execute(sql)
             )
             started = self._run_control(sql, operation)
-        except BaseException as commit_error:  # noqa: BLE001
+        except BaseException as commit_error:
             self._recover_after_control_failure(commit_error)
         else:
             self._close()
@@ -587,7 +585,7 @@ class _SQLiteControlledTransaction(SQLiteDatabase):
             sql = "rollback"
             try:
                 started = self._run_control(sql, self._top_level_control(sql))
-            except BaseException as rollback_error:  # noqa: BLE001
+            except BaseException as rollback_error:
                 self._recover_after_control_failure(rollback_error)
             else:
                 self._close()
@@ -601,23 +599,23 @@ class _SQLiteControlledTransaction(SQLiteDatabase):
             rollback_started = self._run_control(
                 rollback_sql, lambda: self._connection.execute(rollback_sql)
             )
-        except BaseException as rollback_error:  # noqa: BLE001
+        except BaseException as rollback_error:
             self._recover_after_control_failure(rollback_error)
         try:
             self._observe(rollback_sql, (), rollback_started, 0, None)
-        except BaseException as error:  # noqa: BLE001
+        except BaseException as error:
             observer_error = error
         try:
             release_started = self._run_control(
                 release_sql, lambda: self._connection.execute(release_sql)
             )
-        except BaseException as release_error:  # noqa: BLE001
+        except BaseException as release_error:
             self._recover_after_control_failure(release_error)
         else:
             self._close()
             try:
                 self._observe(release_sql, (), release_started, 0, None)
-            except BaseException as error:  # noqa: BLE001
+            except BaseException as error:
                 if observer_error is None:
                     observer_error = error
             if observer_error is not None:
@@ -695,7 +693,7 @@ class _SQLiteSavepoint:
             started = self._transaction._run_control(  # pyright: ignore[reportPrivateUsage]
                 sql, lambda: self._transaction.raw_connection.execute(sql)
             )
-        except BaseException as error:  # noqa: BLE001
+        except BaseException as error:
             self._transaction._invalidate_descendant_savepoints(self)  # pyright: ignore[reportPrivateUsage]
             self._invalidate()
             self._transaction._recover_after_control_failure(  # pyright: ignore[reportPrivateUsage]
@@ -713,7 +711,7 @@ class _SQLiteSavepoint:
             started = self._transaction._run_control(  # pyright: ignore[reportPrivateUsage]
                 sql, lambda: self._transaction.raw_connection.execute(sql)
             )
-        except BaseException as error:  # noqa: BLE001
+        except BaseException as error:
             self._transaction._invalidate_descendant_savepoints(self)  # pyright: ignore[reportPrivateUsage]
             self._invalidate()
             self._transaction._recover_after_control_failure(  # pyright: ignore[reportPrivateUsage]

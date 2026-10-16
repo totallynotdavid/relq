@@ -14,7 +14,7 @@ from typing import NewType, Protocol, cast, get_type_hints
 
 from relq._frozen import FrozenSlots, frozen_guard
 
-type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
 type Inet = (
     ipaddress.IPv4Address
     | ipaddress.IPv6Address

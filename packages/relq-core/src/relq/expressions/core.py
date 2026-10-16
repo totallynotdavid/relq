@@ -718,14 +718,14 @@ def add(
 
 @overload
 def add[Number: (int, float)](
-    left: Expr[Number | None], right: Number | None | Expr[Number] | Expr[Number | None]
+    left: Expr[Number | None], right: Number | Expr[Number] | Expr[Number | None] | None
 ) -> Expr[DecimalDialectNumber | None]: ...
 
 
 @overload
 def add(
     left: Expr[decimal.Decimal | None],
-    right: decimal.Decimal | None | Expr[decimal.Decimal] | Expr[decimal.Decimal | None],
+    right: decimal.Decimal | Expr[decimal.Decimal] | Expr[decimal.Decimal | None] | None,
 ) -> Expr[DecimalDialectNumber | None]: ...
 
 
@@ -747,14 +747,14 @@ def subtract(
 
 @overload
 def subtract[Number: (int, float)](
-    left: Expr[Number | None], right: Number | None | Expr[Number] | Expr[Number | None]
+    left: Expr[Number | None], right: Number | Expr[Number] | Expr[Number | None] | None
 ) -> Expr[DecimalDialectNumber | None]: ...
 
 
 @overload
 def subtract(
     left: Expr[decimal.Decimal | None],
-    right: decimal.Decimal | None | Expr[decimal.Decimal] | Expr[decimal.Decimal | None],
+    right: decimal.Decimal | Expr[decimal.Decimal] | Expr[decimal.Decimal | None] | None,
 ) -> Expr[DecimalDialectNumber | None]: ...
 
 
@@ -776,14 +776,14 @@ def multiply(
 
 @overload
 def multiply[Number: (int, float)](
-    left: Expr[Number | None], right: Number | None | Expr[Number] | Expr[Number | None]
+    left: Expr[Number | None], right: Number | Expr[Number] | Expr[Number | None] | None
 ) -> Expr[DecimalDialectNumber | None]: ...
 
 
 @overload
 def multiply(
     left: Expr[decimal.Decimal | None],
-    right: decimal.Decimal | None | Expr[decimal.Decimal] | Expr[decimal.Decimal | None],
+    right: decimal.Decimal | Expr[decimal.Decimal] | Expr[decimal.Decimal | None] | None,
 ) -> Expr[DecimalDialectNumber | None]: ...
 
 
@@ -805,14 +805,14 @@ def divide(
 
 @overload
 def divide[Number: (int, float)](
-    left: Expr[Number | None], right: Number | None | Expr[Number] | Expr[Number | None]
+    left: Expr[Number | None], right: Number | Expr[Number] | Expr[Number | None] | None
 ) -> Expr[DecimalDialectNumber | None]: ...
 
 
 @overload
 def divide(
     left: Expr[decimal.Decimal | None],
-    right: decimal.Decimal | None | Expr[decimal.Decimal] | Expr[decimal.Decimal | None],
+    right: decimal.Decimal | Expr[decimal.Decimal] | Expr[decimal.Decimal | None] | None,
 ) -> Expr[DecimalDialectNumber | None]: ...
 
 

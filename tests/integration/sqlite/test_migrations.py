@@ -15,7 +15,7 @@ def _write(folder: Path, name: str, sql: str) -> None:
 def _dict_row_factory(cursor: sqlite3.Cursor, row: tuple[object, ...]) -> dict[str, object]:
     description = cursor.description
     assert description is not None
-    return {str(column[0]): value for column, value in zip(description, row)}
+    return {str(column[0]): value for column, value in zip(description, row, strict=True)}
 
 
 def test_migrations_apply_in_order_and_are_idempotent(tmp_path: Path) -> None:

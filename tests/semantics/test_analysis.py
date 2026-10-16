@@ -45,7 +45,7 @@ def test_outer_join_analysis_and_validation_share_one_boundary() -> None:
     node = select_node(query)
 
     assert null_extended_sources(node) == {"manager"}
-    with pytest.raises(ValueError, match="NULL-extend.*manager"):
+    with pytest.raises(ValueError, match=r"NULL-extend.*manager"):
         validate_projected_nullability(node)
 
 

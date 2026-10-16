@@ -73,7 +73,7 @@ def test_a_toml_config_maps_the_type_the_cli_rejected(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "area: Column[str | None] = column()" in output.read_text()
     namespace: dict[str, object] = {}
-    exec(output.read_text(), namespace)  # noqa: S102 - generated source is the subject under test.
+    exec(output.read_text(), namespace)
 
 
 def test_a_toml_config_declares_qualified_python_types_and_wrappers(tmp_path: Path) -> None:

@@ -13,7 +13,7 @@ from collections.abc import (
     Iterator,
     Mapping,
 )
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from itertools import count
 from time import perf_counter
@@ -545,10 +545,8 @@ class PostgresDatabase:
         try:
             yield controlled
         except BaseException:
-            try:
+            with suppress(TransactionUnavailableError):
                 await controlled.rollback()
-            except TransactionUnavailableError:
-                pass
             raise
         else:
             await controlled.commit()
@@ -560,10 +558,8 @@ class PostgresDatabase:
         try:
             yield transaction.raw_connection
         except BaseException:
-            try:
+            with suppress(TransactionUnavailableError):
                 await transaction.rollback()
-            except TransactionUnavailableError:
-                pass
             raise
         else:
             await transaction.commit()
@@ -666,7 +662,7 @@ class ControlledTransaction(PostgresDatabase):
         sql = _control_sql(self._generated_savepoint_name, "commit")
         try:
             started = await self._run_control(sql, lambda: self.raw_connection.execute(sql))
-        except BaseException as commit_error:  # noqa: BLE001
+        except BaseException as commit_error:
             await self._recover_after_control_failure(commit_error)
         else:
             self._close()
@@ -685,7 +681,7 @@ class ControlledTransaction(PostgresDatabase):
             if nested:
                 try:
                     self._observe(sql, (), started, 0, None)
-                except BaseException as error:  # noqa: BLE001
+                except BaseException as error:
                     observer_error = error
                 release_sql = f"release savepoint {self._generated_savepoint_name}"
                 release_started = await self._run_control(
@@ -694,10 +690,10 @@ class ControlledTransaction(PostgresDatabase):
                 )
                 try:
                     self._observe(release_sql, (), release_started, 0, None)
-                except BaseException as error:  # noqa: BLE001
+                except BaseException as error:
                     if observer_error is None:
                         observer_error = error
-        except BaseException as rollback_error:  # noqa: BLE001
+        except BaseException as rollback_error:
             await self._recover_after_control_failure(rollback_error)
         else:
             self._close()
@@ -778,7 +774,7 @@ class _PostgresSavepoint:
             started = await self._transaction._run_control(  # pyright: ignore[reportPrivateUsage]
                 sql, lambda: self._transaction.raw_connection.execute(sql)
             )
-        except BaseException as error:  # noqa: BLE001
+        except BaseException as error:
             self._transaction._invalidate_descendant_savepoints(self)  # pyright: ignore[reportPrivateUsage]
             self._invalidate()
             await self._transaction._recover_after_control_failure(  # pyright: ignore[reportPrivateUsage]
@@ -796,7 +792,7 @@ class _PostgresSavepoint:
             started = await self._transaction._run_control(  # pyright: ignore[reportPrivateUsage]
                 sql, lambda: self._transaction.raw_connection.execute(sql)
             )
-        except BaseException as error:  # noqa: BLE001
+        except BaseException as error:
             self._transaction._invalidate_descendant_savepoints(self)  # pyright: ignore[reportPrivateUsage]
             self._invalidate()
             await self._transaction._recover_after_control_failure(  # pyright: ignore[reportPrivateUsage]
@@ -948,14 +944,14 @@ async def _recover_connection(
             await connection.execute("rollback")
         else:
             await recovery_control(connection, "rollback")
-    except BaseException as error:  # noqa: BLE001
+    except BaseException as error:
         recovery_error = error
 
     release_error: BaseException | None = None
     for handle in handles:
         try:
             await handle._release_connection()  # pyright: ignore[reportPrivateUsage]
-        except BaseException as error:  # noqa: BLE001
+        except BaseException as error:
             if release_error is None:
                 release_error = error
 

@@ -81,14 +81,14 @@ class SQLiteMigrator:
             applied = _read_applied(self._connection, table)
             pending = pending_migrations(migrations, applied)
             _commit(self._connection)
-        except Exception as error:  # noqa: BLE001 - report migration failures
+        except Exception as error:
             _rollback(self._connection)
             return MigrationReport(error, ())
 
         for index, migration in enumerate(pending):
             try:
                 executed = self._apply(migration, migrations, table)
-            except Exception as error:  # noqa: BLE001 - report migration failures
+            except Exception as error:
                 results.append(MigrationResult(migration.name, MigrationStatus.ERROR, error))
                 results.extend(
                     MigrationResult(later.name, MigrationStatus.NOT_EXECUTED)

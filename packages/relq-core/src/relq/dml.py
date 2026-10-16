@@ -637,4 +637,4 @@ def _insert_node[Returns: (Literal[False], Literal[True])](
 # ModifyingCteBody. Each module imports the other's names after defining its
 # own, so typing.get_type_hints() can resolve both public signatures without a
 # TYPE_CHECKING import.
-from relq.query import SelectQuery
+from relq.query import SelectQuery  # noqa: E402

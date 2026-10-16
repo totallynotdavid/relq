@@ -471,4 +471,4 @@ def _validate_compound_result_shape[LeftSqlRow, LeftRow, RightSqlRow, RightRow](
 
 
 # Imported after the definitions above for the reason given in dml.py.
-from relq.dml import ModifyingCteBody
+from relq.dml import ModifyingCteBody  # noqa: E402

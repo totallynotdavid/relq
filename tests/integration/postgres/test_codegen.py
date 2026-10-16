@@ -67,7 +67,7 @@ async def test_codegen_preserves_type_identity_and_generated_batch_helpers(
     assert "payload: Column[JsonValue | None] = column()" in generated
     assert "origin: Column[Inet | None] = column()" in generated
     namespace: dict[str, object] = {"select_all_from": select_all_from}
-    exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
+    exec(generated, namespace)
     assert "def insert_relq_codegen_values_many" in generated
 
 

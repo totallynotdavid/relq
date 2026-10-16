@@ -46,7 +46,7 @@ def test_sqlite_codegen_emits_nullable_and_primary_key_types() -> None:
     assert "id: Column[int] = column()" in generated
     assert "display_name: Column[str | None] = column(name='display name')" in generated
     namespace: dict[str, object] = {}
-    exec(generated, namespace)  # noqa: S102 - generated module must import.
+    exec(generated, namespace)
     assert isinstance(namespace["UserEvents"], type)
 
 
@@ -107,7 +107,7 @@ def test_codegen_maps_postgres_temporal_catalog_spellings_to_branded_domains() -
     assert "aware_time_decoder()" in generated
     assert "interval_decoder()" in generated
     namespace: dict[str, object] = {}
-    exec(generated, namespace)  # noqa: S102 - generated module must import.
+    exec(generated, namespace)
 
 
 def test_sqlite_codegen_keeps_plain_datetime_types_for_timezone_spellings() -> None:
@@ -128,7 +128,7 @@ def test_sqlite_codegen_keeps_plain_datetime_types_for_timezone_spellings() -> N
     for branded in ("AwareDateTime", "NaiveDateTime", "AwareTime", "NaiveTime"):
         assert branded not in generated
     namespace: dict[str, object] = {}
-    exec(generated, namespace)  # noqa: S102 - generated module must import.
+    exec(generated, namespace)
 
 
 def test_sqlite_codegen_rejects_interval_columns_instead_of_failing_at_decode_time() -> None:
@@ -159,7 +159,7 @@ def test_codegen_single_field_row_adapter_remains_a_tuple() -> None:
     )
     assert "decoders=(int_decoder(),)" in generated
     namespace: dict[str, object] = {}
-    exec(generated, namespace)  # noqa: S102 - generated module must import.
+    exec(generated, namespace)
 
 
 def test_codegen_uses_structured_mapping_annotations_and_imports() -> None:
@@ -193,7 +193,7 @@ def test_codegen_generates_enums_and_requires_explicit_domain_mapping() -> None:
             SchemaColumn("tenant", NamedType("domain", tenant), False, False),
         ),
     )
-    with pytest.raises(CodegenError, match="public.tenant_id"):
+    with pytest.raises(CodegenError, match=r"public\.tenant_id"):
         render((table,), enums=(SchemaEnum(state, ("todo", "in-progress")),), dialect="postgres")
     generated = render(
         (table,),
@@ -232,7 +232,7 @@ def test_codegen_uses_qualified_identities_and_explicit_type_policies() -> None:
             opaque: RejectedType("the application has not declared its value object"),
         }
     )
-    with pytest.raises(CodegenError, match="public.opaque_id is rejected"):
+    with pytest.raises(CodegenError, match=r"public\.opaque_id is rejected"):
         render((table,), enums=enums, config=config, dialect="postgres")
     generated = render(
         (SchemaTable("events", table.columns[:-1]),), enums=enums, config=config, dialect="postgres"
@@ -289,7 +289,7 @@ def test_generated_names_survive_columns_and_tables_that_shadow_relq_builders() 
     assert "_schema_: Column[str | None] = column(name='_schema')" in generated
     assert "payload: Column[JsonValue | None] = column()" in generated
     namespace: dict[str, object] = {}
-    exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
+    exec(generated, namespace)
     quirks = namespace["quirks"]
     assert isinstance(quirks, Table)
     assert quirks.column_names() == {"id", "json_column", "column", "_schema", "node", "payload"}
@@ -323,7 +323,7 @@ def test_a_table_named_after_an_import_does_not_rebind_it() -> None:
     assert "class JsonValue_(Table[" in generated
     assert "json_value = JsonValue_('json_value')" in generated
     namespace: dict[str, object] = {}
-    exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
+    exec(generated, namespace)
     assert namespace["JsonValue"] is JsonValue
     row = namespace["JsonValue_Row"]
     assert isinstance(row, type)
@@ -337,7 +337,7 @@ def test_two_tables_that_normalize_to_one_class_name_stay_distinct() -> None:
     generated = generate_sqlite(connection)
 
     namespace: dict[str, object] = {}
-    exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
+    exec(generated, namespace)
     first, second = namespace["user_note"], namespace["user_note_"]
     assert isinstance(first, Table)
     assert isinstance(second, Table)
@@ -427,7 +427,7 @@ def test_a_table_and_an_enum_that_want_the_same_class_name_stay_distinct() -> No
     generated = render(tables, enums=(SchemaEnum(identity, ("live", "dead")),), dialect="postgres")
 
     namespace: dict[str, object] = {}
-    exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
+    exec(generated, namespace)
     status_enum, status_table = namespace["Status"], namespace["Status_"]
     assert isinstance(status_enum, type) and issubclass(status_enum, enum.StrEnum)
     assert isinstance(status_table, type) and issubclass(status_table, Table)
@@ -441,7 +441,7 @@ def test_a_dunder_shaped_name_never_reaches_generated_code(name: str) -> None:
     generated = generate_sqlite(connection)
 
     namespace: dict[str, object] = {}
-    exec(generated, namespace)  # noqa: S102 - generated source is the subject under test.
+    exec(generated, namespace)
     tables = cast(
         list[Table[object]], [value for value in namespace.values() if isinstance(value, Table)]
     )
