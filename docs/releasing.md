@@ -16,6 +16,10 @@ Pushing a `v*` tag is the only thing that starts publishing.
    comparison link.
 3. Run `mise check`, commit the release preparation, and merge it.
 
+Before the first tag for a new distribution, create a pending trusted publisher
+on PyPI for owner `totallynotdavid`, repository `relq`, workflow `release.yml`,
+and environment `pypi`.
+
 ## Sign and publish the tag
 
 Create the tag from the merged commit using your configured signing key:
