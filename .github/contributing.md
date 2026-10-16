@@ -14,30 +14,29 @@ relq-core.
 git clone https://github.com/totallynotdavid/relq
 cd relq
 mise install
-uv sync --locked --all-packages
+mise run install
 ```
 
-`mise.toml` pins the Python, uv, and PostgreSQL versions used for development.
+`mise.toml` pins the Python, uv, oxfmt, and PostgreSQL versions used for
+development.
 
 ## Checks
 
 ```bash
-mise format          # apply formatting
-mise format-check    # check formatting
-mise lint            # Ruff
-mise typecheck       # basedpyright, strict mode
-mise test:sqlite     # SQLite and backend-independent tests
-mise test:postgres   # PostgreSQL integration tests on an ephemeral server
-mise test            # both test suites
-mise build           # build all workspace distributions
-mise release         # install the built wheels in clean environments
-mise check           # every check above; run it before submitting a change
+mise run install           # install every package from uv.lock
+mise run fix               # apply safe ruff fixes and format all files
+mise run lint              # Ruff plus oxfmt for Markdown, YAML and JSON
+mise run typecheck         # basedpyright, strict mode
+mise run test              # SQLite and backend-independent tests
+mise run test:integration  # PostgreSQL tests on an ephemeral server
+mise run build             # build and smoke-test every distribution
+mise run check             # lint, typecheck, test and build; run it before submitting
 ```
 
-`mise check` starts an ephemeral PostgreSQL server, runs the SQLite and
-PostgreSQL tests, and installs the built wheels into fresh SQLite-only and
-PostgreSQL-only environments. The last step catches a PostgreSQL dependency
-leaking into the SQLite-only install.
+`mise run build` installs the built wheels into fresh SQLite-only and
+PostgreSQL-only environments. That step catches a PostgreSQL dependency leaking
+into the SQLite-only install. `mise run check` starts no server, so run
+`mise run test:integration` as well when a change touches PostgreSQL code.
 
 ## Tests
 
@@ -56,8 +55,8 @@ generated schema modules that the codegen tests compare against.
 own DDL and data in a `matrix_fixture.py` next to its tests.
 
 The PostgreSQL integration tests run only when `RELQ_TEST_POSTGRES_DSN` is set,
-which `mise test:postgres` does for you. Set `RELQ_KEEP_TEST_SCHEMA=1` to keep
-the test schema after a local run.
+which `mise run test:integration` does for you. Set `RELQ_KEEP_TEST_SCHEMA=1` to
+keep the test schema after a local run.
 
 ## Releases
 

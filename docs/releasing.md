@@ -14,7 +14,7 @@ Pushing a `v*` tag is the only thing that starts publishing.
    the Release workflow stops before it builds. The workflow uses the file as
    the GitHub Release body, and GitHub appends its generated change list and
    comparison link.
-3. Run `mise check`, commit the release preparation, and merge it.
+3. Run `mise run check`, commit the release preparation, and merge it.
 
 Before the first tag for a new distribution, create a pending trusted publisher
 on PyPI for owner `totallynotdavid`, repository `relq`, workflow `release.yml`,
