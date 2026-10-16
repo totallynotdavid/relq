@@ -1,6 +1,6 @@
 [project]
 name = "relq"
-version = "0.0.1"
+version = "0.1.0"
 description = "Type-safe SQL query builder core for Python 3.13+"
 readme = "readme.md"
 license = "Apache-2.0"
@@ -9,9 +9,9 @@ requires-python = ">=3.13"
 dependencies = ["typing-extensions>=4.16.0"]
 
 [project.optional-dependencies]
-sqlite = ["relq-sqlite==0.0.1"]
-postgres = ["relq-postgres==0.0.1"]
-all = ["relq-sqlite==0.0.1", "relq-postgres==0.0.1"]
+sqlite = ["relq-sqlite==0.1.0"]
+postgres = ["relq-postgres==0.1.0"]
+all = ["relq-sqlite==0.1.0", "relq-postgres==0.1.0"]
 
 [tool.uv.sources]
 relq-sqlite = { workspace = true }

@@ -1,11 +1,11 @@
 [project]
 name = "relq-sqlite"
-version = "0.0.1"
+version = "0.1.0"
 description = "SQLite executor for relq's type-safe SQL queries"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.13"
-dependencies = ["relq==0.0.1"]
+dependencies = ["relq==0.1.0"]
 
 [tool.uv.sources]
 relq = { workspace = true }

@@ -1,6 +1,6 @@
 [project]
 name = "relq-codegen"
-version = "0.0.1"
+version = "0.1.0"
 description = "Schema generator for relq SQLite and PostgreSQL declarations"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

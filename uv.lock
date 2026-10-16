@@ -160,7 +160,7 @@ wheels = [
 
 [[package]]
 name = "relq"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "packages/relq-core" }
 dependencies = [
     { name = "typing-extensions" },
@@ -190,7 +190,7 @@ provides-extras = ["sqlite", "postgres", "all"]
 
 [[package]]
 name = "relq-codegen"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "packages/relq-codegen" }
 
 [package.optional-dependencies]
@@ -204,7 +204,7 @@ provides-extras = ["postgres"]
 
 [[package]]
 name = "relq-migrate"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "packages/relq-migrate" }
 
 [package.optional-dependencies]
@@ -224,7 +224,7 @@ provides-extras = ["postgres", "codegen"]
 
 [[package]]
 name = "relq-postgres"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "packages/relq-postgres" }
 dependencies = [
     { name = "asyncpg" },
@@ -239,7 +239,7 @@ requires-dist = [
 
 [[package]]
 name = "relq-sqlite"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "packages/relq-sqlite" }
 dependencies = [
     { name = "relq" },
