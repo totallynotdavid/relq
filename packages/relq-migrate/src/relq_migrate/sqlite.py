@@ -23,26 +23,7 @@ from .provider import FileMigrationProvider
 
 
 class SQLiteMigrator:
-    """Apply filesystem migrations through a synchronous SQLite connection.
-
-    SQLite has no advisory lock. ``BEGIN IMMEDIATE`` obtains the database write
-    lock before reading the history table, so concurrent migrators serialize.
-    Each migration and its history record are one transaction. A failed
-    migration therefore leaves earlier successful migrations committed, as the
-    PostgreSQL adapter does. The adapter supports legacy transaction control
-    and ``autocommit=True``. It does not support ``autocommit=False``.
-
-    ``busy_timeout`` is how many seconds a migrator waits for another writer's
-    lock before failing. It applies for the whole run and the connection's own
-    setting is restored afterwards. It should exceed your slowest migration,
-    because a second migrator waits for the first one's whole transaction.
-
-    A migration whose header says ``-- relq: foreign_keys = off`` runs with
-    foreign-key enforcement off, as SQLite's table-rebuild procedure requires.
-    SQLite ignores that pragma inside a transaction, so the migrator sets it
-    before ``BEGIN``, runs ``PRAGMA foreign_key_check`` before ``COMMIT``
-    (any violation rolls the migration back), and restores enforcement last.
-    """
+    """Apply filesystem migrations through a synchronous SQLite connection."""
 
     def __init__(
         self,

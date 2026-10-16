@@ -38,7 +38,7 @@ BUSY_COMPUTE = uuid.UUID("bbbbbbbb-2222-2222-2222-222222222222")
 
 
 async def _populate(admin: asyncpg.Connection, queue_schema: str) -> None:
-    """Create the two-schema fixture the retention queries were written against."""
+    """Create ``jobs`` in the queue schema and ``jobs`` in the harness schema."""
     await admin.execute(f"""create table {queue_schema}.jobs (
         id uuid primary key, queue text not null, state text not null,
         payload jsonb not null, finished_at timestamptz not null
@@ -192,8 +192,6 @@ async def test_a_schema_qualified_table_addresses_the_namespace_it_declares(
 async def test_a_generated_style_schema_bound_table_reaches_a_non_default_namespace(
     postgres_admin: asyncpg.Connection, postgres_queue_schema: str
 ) -> None:
-    """codegen now emits exactly this declaration for a non-default schema."""
-
     class Jobs(Table):
         id: Column[uuid.UUID] = column()
         state: Column[str] = column()

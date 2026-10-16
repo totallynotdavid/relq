@@ -1,4 +1,4 @@
-"""The acceptance check: the real cross-schema retention/purge pair compiles."""
+"""The cross-schema retention and purge pair compiles for both dialects."""
 
 import datetime
 import uuid

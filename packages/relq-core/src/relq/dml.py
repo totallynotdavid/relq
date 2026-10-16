@@ -208,15 +208,6 @@ class InsertQuery(_DmlQuery[Row_co], Generic[Row_co, Returns]):
         return self._with_source(DefaultValuesSourceNode())
 
     def on_conflict(self, *columns: ConflictTarget) -> ConflictBuilder[Row_co, Returns]:
-        """Start an ``ON CONFLICT`` clause.
-
-        The target takes any number of columns because a composite unique index
-        does. Unlike ``from_select`` and ``returning``, it has no per-arity
-        overloads, because a conflict target contributes nothing to the result
-        tuple. ``ConflictTarget`` is the unparameterized base that ``Column``
-        inherits. It sidesteps ``Column``'s invariance, so one composite target
-        can mix value types and nullability.
-        """
         if self._node.source is None:
             raise ValueError("on_conflict requires values() or from_select() first")
         match self._node.source:

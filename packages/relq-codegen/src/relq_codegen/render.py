@@ -44,8 +44,8 @@ _MODULE_IMPORTS: frozenset[Import] = frozenset(
 """Every import this renderer can emit, whether or not a given module needs it.
 
 Reserving the whole set rather than only the imports one module happens to use
-keeps generated names stable: adding a JSON column somewhere should not rename
-an unrelated class that was already called ``JsonValue``.
+keeps generated names stable: adding a JSON column must not rename an unrelated
+class called ``JsonValue``.
 """
 
 _BUILTIN_NAMES: frozenset[str] = frozenset(

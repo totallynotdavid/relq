@@ -1,24 +1,6 @@
 """Load the type mapping a caller commits next to their schema.
 
-Two spellings reach the same ``CodegenConfig``. A TOML file is the declarative
-form::
-
-    [types.citext]
-    python = "str"
-    decoder = "str"
-
-    [types."public.tenant_id"]
-    wrapper = "TenantId"
-    python = "int"
-    decoder = "int"
-
-    [types.geometry]
-    reject = "the application has no value object for it yet"
-
-A Python module (``package.module`` or ``package.module:NAME``) is for mappings
-that need an import-qualified ``RenderExpression`` or code to build them; it
-exposes a ``CodegenConfig`` as ``CONFIG`` unless the reference names another
-attribute.
+A TOML file or a Python module reaches the same ``CodegenConfig``.
 """
 
 from __future__ import annotations

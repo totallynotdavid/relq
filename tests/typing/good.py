@@ -253,7 +253,7 @@ assert_type(guarded.returning(users.id), InsertQuery[tuple[int], Literal[True]])
 
 
 class Composite(Table):
-    """A composite unique key wider than any per-position overload ladder."""
+    """A six-column composite unique key of mixed value types."""
 
     tenant: Column[int] = column()
     queue: Column[str] = column()

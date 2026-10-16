@@ -158,15 +158,6 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
     def with_[CteRow](
         self, source: CteTable[object], query: SelectQuery[CteRow], *, materialized: bool = False
     ) -> Self:
-        """Add a SELECT CTE, optionally fencing it with PostgreSQL's ``AS MATERIALIZED``.
-
-        A CTE that writes goes through ``with_modifying``, which returns a
-        :class:`ModifyingQuery` so the statement's writes show in its type.
-
-        ``AS MATERIALIZED`` needs SQLite 3.35.0 or PostgreSQL 12, both below
-        relq's documented engine floors. The compiler never sees a connection,
-        so an older engine rejects the statement itself.
-        """
         return self._with_node(
             _with_cte(select_node(self), source, _select_cte_node(query), materialized)
         )

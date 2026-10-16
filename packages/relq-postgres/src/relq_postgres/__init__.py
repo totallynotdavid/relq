@@ -59,16 +59,6 @@ _LOGGER = logging.getLogger(__name__)
 def row_batches[Row, Returns: (Literal[False], Literal[True])](
     rows: Iterable[Mapping[str, object]], statement: Callable[[Rows], InsertQuery[Row, Returns]]
 ) -> Iterator[InsertQuery[Row, Returns]]:
-    """Yield ``statement`` over batches of ``rows`` that each fit one PostgreSQL statement.
-
-    ``statement`` builds the whole INSERT from a batch, for example
-    ``lambda batch: insert_into(users).values_many(batch)``, so parameters bound
-    outside the rows (``on_conflict`` values, ``returning`` expressions) count
-    against asyncpg's 32,767-parameter ceiling. A plain value binds one
-    parameter and an expression binds as many as it contains. A batch holds as
-    many rows as fit. Execute the statements inside one transaction to keep the
-    insert atomic.
-    """
     return batch_rows(rows, statement, dialect=POSTGRES, max_parameters=POSTGRES_MAX_PARAMETERS)
 
 
@@ -163,15 +153,7 @@ class Savepoint(Protocol):
 
 
 class PostgresDatabase:
-    """Execute relq queries through an existing asyncpg pool or connection.
-
-    The caller owns the pool or connection lifecycle. A transaction on a pool
-    acquires one connection for its whole scope. A transaction on a direct
-    connection reuses that connection. Behind pgbouncer in ``transaction`` or
-    ``statement`` pooling mode, pass ``statement_cache_size=0`` to
-    ``asyncpg.connect`` or ``create_pool``, because asyncpg's automatic
-    prepared-statement cache does not survive that mode.
-    """
+    """Execute relq queries through an existing asyncpg pool or connection."""
 
     def __init__(
         self,
@@ -401,15 +383,7 @@ class PostgresDatabase:
     async def fetch_iter[SqlRow, Row](
         self, query: SelectQuery[SqlRow, Row]
     ) -> AsyncGenerator[AsyncIterator[Row]]:
-        """Stream the rows of a SELECT through a server-side cursor.
-
-        PostgreSQL declares cursors only for SELECT and VALUES, so INSERT, UPDATE
-        and DELETE with RETURNING and write CTEs are rejected with ``TypeError``;
-        read those with ``fetch_all``. A cursor is only valid inside a transaction.
-        This opens one for the whole iteration, as a savepoint when a relq
-        transaction is already open. On a pool it also holds one acquired
-        connection for that scope.
-        """
+        """Stream the rows of a SELECT through a server-side cursor."""
         self._ensure_usable()
         require_select(query)
         compiled = compile_postgres(query)

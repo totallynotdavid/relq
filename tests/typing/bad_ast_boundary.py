@@ -30,6 +30,6 @@ select(PretendExpression()).decode(UserRow)
 
 # ON CONFLICT takes an unbounded number of columns, but ConflictTarget is
 # narrower than Expression: a plain value expression and a structural
-# lookalike are both rejected, so widening the arity did not widen the kind.
+# lookalike is also rejected.
 insert_into(users).values(id=1).on_conflict(users.id, value(1))
 insert_into(users).values(id=1).on_conflict(PretendExpression())

@@ -74,9 +74,9 @@ async def test_codegen_preserves_type_identity_and_generated_batch_helpers(
 async def test_codegen_matches_committed_catalog_snapshot(
     database: PostgresDatabase, postgres_admin: asyncpg.Connection, postgres_schema: str
 ) -> None:
-    # Generated tables now carry the schema they were introspected from, and
-    # the harness owns a per-run schema name, so the snapshot is committed with
-    # the default one and rebound to whichever schema this run owns.
+    # Generated tables carry the schema they were introspected from. The harness
+    # owns a per-run schema name, so the snapshot is committed with the default
+    # one and rebound to the schema this run owns.
     snapshot = (Path(__file__).parents[2] / "snapshots" / "postgres_schema.py").read_text()
     assert await generate_postgres(
         postgres_admin, schema=postgres_schema, config=_direct_mapping(postgres_schema)

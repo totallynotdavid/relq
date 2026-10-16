@@ -30,7 +30,7 @@ class ActiveEmployees(CteTable):
 
 
 class CompositeKeys(Table):
-    """A conflict target wider than any per-position overload ladder."""
+    """A six-column conflict target of mixed value types."""
 
     tenant: Column[int] = column()
     queue: Column[str] = column()

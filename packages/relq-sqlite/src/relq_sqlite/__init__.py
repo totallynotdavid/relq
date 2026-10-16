@@ -46,15 +46,6 @@ _LOGGER = logging.getLogger(__name__)
 def row_batches[Row, Returns: (Literal[False], Literal[True])](
     rows: Iterable[Mapping[str, object]], statement: Callable[[Rows], InsertQuery[Row, Returns]]
 ) -> Iterator[InsertQuery[Row, Returns]]:
-    """Yield ``statement`` over batches of ``rows`` that each fit one SQLite statement.
-
-    ``statement`` builds the whole INSERT from a batch, for example
-    ``lambda batch: insert_into(users).values_many(batch)``, so parameters bound
-    outside the rows (``on_conflict`` values, ``returning`` expressions) count
-    against SQLite's 999-parameter ceiling. A plain value binds one parameter.
-    An expression binds as many as it contains. A batch holds as many rows as fit.
-    Execute the statements inside one transaction to keep the insert atomic.
-    """
     return batch_rows(rows, statement, dialect=SQLITE, max_parameters=SQLITE_MAX_PARAMETERS)
 
 

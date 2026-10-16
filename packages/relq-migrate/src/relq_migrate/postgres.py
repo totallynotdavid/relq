@@ -39,13 +39,7 @@ _SESSION_SCHEMA_CACHE: weakref.WeakKeyDictionary[object, dict[str, str]] = (
 
 
 class PostgresMigrator:
-    """Apply filesystem migrations through asyncpg.
-
-    The advisory lock is session-scoped and held across each migration's own
-    transaction. Earlier successful migrations stay committed if a later file
-    fails, and no other migrator can observe or apply the same pending file
-    concurrently.
-    """
+    """Apply filesystem migrations through asyncpg."""
 
     def __init__(
         self,

@@ -1,14 +1,8 @@
-"""The cross-schema retention/purge queries used as this feature's target shape.
+"""Cross-schema retention and purge queries.
 
-These reproduce a real production pair of statements: a materialized CTE that
-reads a runtime-selected queue schema, extracts a JSON member, guards it with a
-case-insensitive regular expression, casts it to ``uuid``, and joins it to a
-table in a second schema; then a data-modifying CTE that deletes the selected
-rows and counts them in the same statement.
-
-Both schemas are parameters rather than constants because the queue schema is
-chosen at deployment time, which is exactly why the SQL spelling of a schema
-has to be part of the table declaration instead of the table's name.
+The select reads a materialized CTE over a runtime-selected queue schema, extracts a
+JSON member, casts it to ``uuid``, and joins it to another schema. The delete CTE
+removes the selected rows and counts them in the same statement.
 """
 
 import datetime

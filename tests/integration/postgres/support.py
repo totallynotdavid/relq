@@ -64,7 +64,7 @@ slots = IntegrationSlots("relq_integration_slots")
 
 
 class IntegrationLedger(Table):
-    """A composite arbiter wider than any per-position overload ladder."""
+    """A table whose arbiter spans five of its columns."""
 
     tenant: Column[int] = column()
     queue: Column[str] = column()

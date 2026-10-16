@@ -1,8 +1,7 @@
 """Real PostgreSQL contracts for both ``ON CONFLICT`` predicates.
 
-Each test reproduces one of the two hand-written statements this feature
-exists for, then asserts on stored row state -- the generated SQL alone
-cannot show that PostgreSQL honoured either predicate.
+Each test asserts on stored row state, because the generated SQL alone cannot
+show that PostgreSQL honoured either predicate.
 """
 
 import datetime
@@ -299,11 +298,7 @@ def _ledger_upsert(state: str, revision: int):
 async def test_a_wide_composite_arbiter_honours_both_predicates(
     conflict_database: PostgresDatabase,
 ) -> None:
-    """Five target columns, past the four the old overload ladder could spell.
-
-    The arity fix has to hold up where it matters: a composite arbiter that
-    still infers a partial unique index and still gates its update.
-    """
+    """A five-column composite arbiter infers a partial unique index and gates its update."""
     database = conflict_database
     compiled = compile_postgres(_ledger_upsert("pending", 1))
     assert (
