@@ -55,8 +55,9 @@ generated schema modules that the codegen tests compare against.
 own DDL and data in a `matrix_fixture.py` next to its tests.
 
 The PostgreSQL integration tests run only when `RELQ_TEST_POSTGRES_DSN` is set,
-which `mise run test:integration` does for you. Set `RELQ_KEEP_TEST_SCHEMA=1` to
-keep the test schema after a local run.
+which `mise run test:integration` does for you by starting an ephemeral server.
+When you set it yourself, the task uses that server instead. Set
+`RELQ_KEEP_TEST_SCHEMA=1` to keep the test schema after a local run.
 
 ## Releases
 
