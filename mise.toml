@@ -2,50 +2,59 @@
 python = "3.13.15"
 uv = "0.12.3"
 postgres = "18.4"
+oxfmt = "0.73.0"
 
-[tasks.format]
-description = "Format Python source"
-run = "uv run --locked --all-packages ruff format ."
-
-[tasks.format-check]
-description = "Check formatting without modifying files"
-run = "uv run --locked --all-packages ruff format --check ."
+[tasks.install]
+description = "Install every workspace package and dev dependency from uv.lock"
+run = "uv sync --locked --all-packages --all-groups"
 
 [tasks.lint]
-description = "Lint the workspace"
-run = "uv run --locked --all-packages ruff check ."
+description = "Check Python lint and formatting, and Markdown, YAML and JSON formatting"
+depends = ["lint:*"]
+
+[tasks."lint:py"]
+description = "Check Python lint and formatting with ruff"
+run = [
+  "uv run --locked --all-packages ruff check --no-fix .",
+  "uv run --locked --all-packages ruff format --check .",
+]
+
+[tasks."lint:fmt"]
+description = "Check Markdown, YAML and JSON formatting with oxfmt"
+run = "oxfmt --check ."
+
+[tasks.fix]
+description = "Apply safe ruff fixes and format Python, Markdown, YAML and JSON"
+run = [
+  "uv run --locked --all-packages ruff check --fix .",
+  "uv run --locked --all-packages ruff format .",
+  "oxfmt .",
+]
 
 [tasks.typecheck]
 description = "Run strict static type checks"
 run = "uv run --locked --all-packages basedpyright"
 
-[tasks."test:sqlite"]
+[tasks.test]
 description = "Run compiler, SQLite integration, and backend-independent tests"
 run = "uv run --locked --all-packages pytest --ignore=tests/integration/postgres"
 
-[tasks."test:postgres"]
+[tasks."test:integration"]
 description = "Run PostgreSQL integration tests against an ephemeral server"
 run = "scripts/test-postgres.sh"
 
-[tasks.test]
-description = "Run the complete SQLite and PostgreSQL test suite"
-depends = ["test:sqlite", "test:postgres"]
-
 [tasks.build]
-description = "Build every workspace package"
+description = "Build every workspace distribution and verify it installs outside the workspace"
 run = [
-  "uv build --package relq --clear",
-  "uv build --package relq-sqlite",
-  "uv build --package relq-postgres",
-  "uv build --package relq-codegen",
-  "uv build --package relq-migrate",
+  "rm -rf dist",
+  "uv build --all-packages",
+  "scripts/check-install.sh \"$PWD/dist\"",
 ]
 
-[tasks.release]
-description = "Verify built distributions install and run outside this workspace"
-depends = ["build"]
-run = "scripts/check-install.sh \"$PWD/dist\""
+[tasks."verify:release"]
+description = "Check that RELEASE_TAG, the package versions and the release notes agree"
+run = "scripts/verify-release.sh"
 
 [tasks.check]
-description = "Run the complete local quality gate"
-depends = ["format-check", "lint", "typecheck", "test", "release"]
+description = "Run every gate that needs no service"
+depends = ["lint", "typecheck", "test", "build"]
