@@ -6,7 +6,9 @@ Pushing a `v*` tag is the only thing that starts publishing.
 
 ## Prepare a release
 
-1. Update all five package versions and their exact cross-package dependencies.
+1. Update all five package versions and their exact cross-package dependencies,
+   then run `uv lock`. The workflow installs with `uv sync --locked`, which
+   fails when `uv.lock` still names the old versions.
 2. Rewrite `.github/release-notes.md` as a short, direct summary for users. Its
    first line must be `relq X.Y.Z is out.` for the version you are releasing, or
    the Release workflow stops before it builds. The workflow uses the file as
