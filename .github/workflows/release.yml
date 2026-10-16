@@ -108,6 +108,8 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          # Skip distributions already uploaded to PyPI on reruns.
+          skip-existing: true
 
   github-release:
     needs: publish
