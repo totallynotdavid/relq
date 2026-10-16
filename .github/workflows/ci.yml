@@ -4,54 +4,51 @@ on:
   pull_request:
   push:
     branches: [master]
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group:
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v5
+      - run: mise run install
+      - run: mise run check
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v5
+      - run: mise run install
+      - run: mise run test:integration
+
+  # The package supports Python 3.13 and later. Test the oldest patch of each
+  # minor and the newest release, including the version mise pins.
+  python:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Test the oldest and newest patch of each supported minor, plus the release candidate.
-        # Keep the oldest patches because later patches fixed dataclasses behavior in Python 3.13
-        # and 3.14. Bare minor versions resolve to the newest patch and would not exercise the
-        # compatibility workarounds in _node_value.py and relations.py.
-        python-version: ["3.13.0", "3.13", "3.14.0", "3.14", "3.15.0-rc.1"]
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_DB: relq
-          POSTGRES_PASSWORD: relq
-          POSTGRES_USER: relq
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U relq -d relq" --health-interval 5s
-          --health-timeout 5s --health-retries 10
+        python-version: ["3.13.0", "3.14.0", "3.14", "3.15"]
     env:
-      RELQ_TEST_POSTGRES_DSN: postgresql://relq:relq@localhost:5432/relq
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        id: python
         with:
-          python-version: ${{ matrix.python-version }}
-          allow-prereleases: true
-      - uses: astral-sh/setup-uv@v7
-      - run: uv sync --locked --all-packages
-        env:
-          UV_PYTHON: ${{ steps.python.outputs.python-path }}
-      - run: uv run --no-sync ruff format --check .
-      - run: uv run --no-sync ruff check .
-      - run: uv run --no-sync basedpyright
-      - run: uv run --no-sync pytest
-      - run: uv build --package relq --clear --out-dir dist
-      - run: uv build --package relq-sqlite --out-dir dist
-      - run: uv build --package relq-postgres --out-dir dist
-      - run: uv build --package relq-codegen --out-dir dist
-      - run: uv build --package relq-migrate --out-dir dist
-      - run: scripts/check-install.sh "$PWD/dist"
+          persist-credentials: false
+      - uses: jdx/mise-action@v5
+      - run: mise run install
+      - run: mise run test

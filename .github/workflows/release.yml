@@ -8,85 +8,22 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # Test the oldest and newest patch of each supported minor, plus the release candidate.
-        # Keep the oldest patches because later patches fixed dataclasses behavior in Python 3.13
-        # and 3.14. Bare minor versions resolve to the newest patch and would not exercise the
-        # compatibility workarounds in _node_value.py and relations.py.
-        python-version: ["3.13.0", "3.13", "3.14.0", "3.14", "3.15.0-rc.1"]
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_DB: relq
-          POSTGRES_PASSWORD: relq
-          POSTGRES_USER: relq
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U relq -d relq" --health-interval 5s
-          --health-timeout 5s --health-retries 10
-    env:
-      RELQ_TEST_POSTGRES_DSN: postgresql://relq:relq@localhost:5432/relq
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        id: python
-        with:
-          python-version: ${{ matrix.python-version }}
-          allow-prereleases: true
-      - uses: astral-sh/setup-uv@v7
-      - run: uv sync --locked --all-packages
-        env:
-          UV_PYTHON: ${{ steps.python.outputs.python-path }}
-      - run: uv run --no-sync ruff format --check .
-      - run: uv run --no-sync ruff check .
-      - run: uv run --no-sync basedpyright
-      - run: uv run --no-sync pytest
+  ci:
+    uses: ./.github/workflows/ci.yml
 
   verify-and-build:
-    needs: test
+    needs: ci
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v7
-      # The distributions are interpreter-independent, so they are built once,
-      # on the floor the metadata declares.
-      - uses: actions/setup-python@v7
-        id: python
         with:
-          python-version: "3.13"
-      - uses: astral-sh/setup-uv@v7
-      - run: uv sync --locked --all-packages
-        env:
-          UV_PYTHON: ${{ steps.python.outputs.python-path }}
-      - name: Verify the release tag and all distribution versions agree
-        run: >-
-          uv run --no-sync python -c 'from importlib.metadata import version;
-          from os import environ; tag = environ["RELEASE_TAG"].removeprefix("v"); versions =
-          {version(name) for name in ("relq", "relq-sqlite", "relq-postgres",
-          "relq-codegen", "relq-migrate")}; assert versions == {tag}, f"tag {tag!r} does not
-          match distribution versions {versions!r}"'
-      - name: Verify the release notes are written for this version
-        run: |
-          expected="relq ${RELEASE_TAG#v} is out."
-          first_line=$(head -n 1 .github/release-notes.md)
-          if [ "$first_line" != "$expected" ]; then
-            echo "first line of .github/release-notes.md is '$first_line', expected '$expected'" >&2
-            exit 1
-          fi
-      - run: uv build --package relq --clear --out-dir dist
-      - run: uv build --package relq-sqlite --out-dir dist
-      - run: uv build --package relq-postgres --out-dir dist
-      - run: uv build --package relq-codegen --out-dir dist
-      - run: uv build --package relq-migrate --out-dir dist
-      - name: Verify release artifacts install outside the workspace
-        run: scripts/check-install.sh "$PWD/dist"
+          persist-credentials: false
+      - uses: jdx/mise-action@v5
+      - run: mise run install
+      - run: mise run verify:release
+      - run: mise run build
       - uses: actions/upload-artifact@v5
         with:
           name: python-distributions
