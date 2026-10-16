@@ -20,6 +20,9 @@ target-version = "py313"
 line-length = 100
 exclude = ["tests/snapshots"]
 
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "I", "UP", "SIM", "RUF"]
+
 [tool.basedpyright]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"
@@ -35,13 +38,9 @@ include = [
   "packages/relq-postgres/src",
   "tests",
 ]
-exclude = [
-  ".venv",
-  "dist",
-  "tests/snapshots",
-  "tests/typing/bad_*.py",
-]
+exclude = [".venv", "dist", "tests/snapshots", "tests/typing/bad_*.py"]
 
 [tool.pytest.ini_options]
+addopts = "--strict-markers"
 testpaths = ["tests"]
 asyncio_mode = "auto"
