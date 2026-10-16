@@ -36,7 +36,7 @@ from relq_sqlite import SQLiteDatabase
 
 # relq.postgres is a compiler-side expression surface, not a driver binding.
 assert importlib.util.find_spec("asyncpg") is None
-assert (cast_uuid, json_text, regex_match)
+assert all(callable(function) for function in (cast_uuid, json_text, regex_match))
 namespace = {}
 exec("from relq_migrate import *", namespace)
 assert namespace["PostgresMigrator"] is PostgresMigrator
