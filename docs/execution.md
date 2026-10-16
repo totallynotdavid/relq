@@ -22,7 +22,9 @@ database = PostgresDatabase(pool)
 
 `SQLiteDatabase` wraps `sqlite3` and is synchronous. `PostgresDatabase` wraps
 `asyncpg` and is asynchronous. It accepts an existing `asyncpg.Pool` or
-`asyncpg.Connection`, and the application creates and closes it.
+`asyncpg.Connection`, and the application creates and closes it. A transaction
+on a pool holds one acquired connection for its whole scope. A transaction on a
+direct connection uses that connection.
 
 asyncpg's prepared-statement cache does not survive pgbouncer's `transaction` or
 `statement` pooling mode. Behind pgbouncer, pass `statement_cache_size=0` to
