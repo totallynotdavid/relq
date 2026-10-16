@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+# The release jobs need no PostgreSQL, and the runner cannot build it.
+env:
+  MISE_DISABLE_TOOLS: postgres
+
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml

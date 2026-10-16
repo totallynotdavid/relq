@@ -14,6 +14,11 @@ concurrency:
 permissions:
   contents: read
 
+# mise.toml pins PostgreSQL for local development. The runner has no readline,
+# so mise cannot build it, and the jobs that need a server use a service.
+env:
+  MISE_DISABLE_TOOLS: postgres
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -27,6 +32,20 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: relq
+          POSTGRES_PASSWORD: relq
+          POSTGRES_USER: relq
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U relq -d relq" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      RELQ_TEST_POSTGRES_DSN: postgresql://relq:relq@localhost:5432/relq
     steps:
       - uses: actions/checkout@v7
         with:
