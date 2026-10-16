@@ -279,16 +279,24 @@ async def test_detects_set_config_string_mode_before_hidden_transaction_control(
     assert await postgres_admin.fetchval("select count(*) from relq_migrations") == 0
 
 
-async def test_rejects_migration_local_standard_conforming_strings_change(
-    postgres_admin: asyncpg.Connection, tmp_path: Path
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "set standard_conforming_strings = off",
+        'set "standard_conforming_strings" = off',
+        "reset standard_conforming_strings",
+        "reset all",
+    ],
+)
+async def test_rejects_a_migration_that_changes_standard_conforming_strings(
+    postgres_admin: asyncpg.Connection, tmp_path: Path, statement: str
 ) -> None:
     migrations = tmp_path / "migrations"
     migrations.mkdir()
     _write(
         migrations,
         "0001_changes_string_mode.sql",
-        "set standard_conforming_strings = off; "
-        "create table rejected_string_mode_users (id integer);",
+        f"{statement}; create table rejected_string_mode_users (id integer);",
     )
 
     report = await PostgresMigrator(
@@ -298,62 +306,6 @@ async def test_rejects_migration_local_standard_conforming_strings_change(
     assert report.error is not None
     assert "standard_conforming_strings" in str(report.error)
     assert await postgres_admin.fetchval("select to_regclass('rejected_string_mode_users')") is None
-    assert await postgres_admin.fetchval("select count(*) from relq_migrations") == 0
-
-
-async def test_rejects_quoted_migration_local_standard_conforming_strings_change(
-    postgres_admin: asyncpg.Connection, tmp_path: Path
-) -> None:
-    migrations = tmp_path / "migrations"
-    migrations.mkdir()
-    _write(
-        migrations,
-        "0001_changes_quoted_string_mode.sql",
-        'set "standard_conforming_strings" = off; '
-        "create table rejected_quoted_string_mode_users (id integer);",
-    )
-
-    report = await PostgresMigrator(
-        postgres_admin, FileMigrationProvider(migrations)
-    ).migrate_to_latest()
-
-    assert report.error is not None
-    assert "standard_conforming_strings" in str(report.error)
-    assert (
-        await postgres_admin.fetchval("select to_regclass('rejected_quoted_string_mode_users')")
-        is None
-    )
-    assert await postgres_admin.fetchval("select count(*) from relq_migrations") == 0
-
-
-@pytest.mark.parametrize(
-    "reset_statement",
-    [
-        "reset standard_conforming_strings",
-        "reset all",
-    ],
-)
-async def test_rejects_migration_standard_conforming_strings_reset(
-    postgres_admin: asyncpg.Connection, tmp_path: Path, reset_statement: str
-) -> None:
-    migrations = tmp_path / "migrations"
-    migrations.mkdir()
-    _write(
-        migrations,
-        "0001_resets_string_mode.sql",
-        f"{reset_statement}; create table rejected_reset_string_mode_users (id integer);",
-    )
-
-    report = await PostgresMigrator(
-        postgres_admin, FileMigrationProvider(migrations)
-    ).migrate_to_latest()
-
-    assert report.error is not None
-    assert "standard_conforming_strings" in str(report.error)
-    assert (
-        await postgres_admin.fetchval("select to_regclass('rejected_reset_string_mode_users')")
-        is None
-    )
     assert await postgres_admin.fetchval("select count(*) from relq_migrations") == 0
 
 
@@ -443,16 +395,21 @@ async def test_rejects_caller_owned_transaction_before_reporting_success(
     assert await postgres_admin.fetchval("select to_regclass('caller_transaction_users')") is None
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "create table leaked (id integer); commit;",
+        "savepoint migration_work; create table leaked (id integer); rollback to migration_work;",
+        "create table leaked (id integer); commit; begin; create table unrecorded (id integer);",
+    ],
+    ids=["commit", "savepoint", "commit and begin"],
+)
 async def test_rejects_embedded_transaction_control(
-    postgres_admin: asyncpg.Connection, tmp_path: Path
+    postgres_admin: asyncpg.Connection, tmp_path: Path, sql: str
 ) -> None:
     migrations = tmp_path / "migrations"
     migrations.mkdir()
-    _write(
-        migrations,
-        "0001_owns_transaction.sql",
-        "create table postgres_leaked (id integer); commit;",
-    )
+    _write(migrations, "0001_owns_transaction.sql", sql)
     migrator = PostgresMigrator(postgres_admin, FileMigrationProvider(migrations))
 
     report = await migrator.migrate_to_latest()
@@ -460,49 +417,6 @@ async def test_rejects_embedded_transaction_control(
     assert report.error is not None
     assert [result.status for result in report.results] == [MigrationStatus.ERROR]
     assert "transaction-control SQL" in str(report.error)
-    assert await postgres_admin.fetchval("select to_regclass('postgres_leaked')") is None
-    assert await postgres_admin.fetchval("select count(*) from relq_migrations") == 0
-
-
-async def test_rejects_embedded_savepoint_control(
-    postgres_admin: asyncpg.Connection, tmp_path: Path
-) -> None:
-    migrations = tmp_path / "migrations"
-    migrations.mkdir()
-    _write(
-        migrations,
-        "0001_owns_savepoint.sql",
-        "savepoint migration_work; create table postgres_savepoint_leaked (id integer); "
-        "rollback to migration_work;",
-    )
-
-    report = await PostgresMigrator(
-        postgres_admin, FileMigrationProvider(migrations)
-    ).migrate_to_latest()
-
-    assert report.error is not None
-    assert "transaction-control SQL" in str(report.error)
-    assert await postgres_admin.fetchval("select to_regclass('postgres_savepoint_leaked')") is None
-    assert await postgres_admin.fetchval("select count(*) from relq_migrations") == 0
-
-
-async def test_rejects_transaction_control_before_running_migration(
-    postgres_admin: asyncpg.Connection, tmp_path: Path
-) -> None:
-    migrations = tmp_path / "migrations"
-    migrations.mkdir()
-    _write(
-        migrations,
-        "0001_replaces_transaction.sql",
-        "create table postgres_committed (id integer); "
-        "commit; begin; create table postgres_unrecorded (id integer);",
-    )
-    migrator = PostgresMigrator(postgres_admin, FileMigrationProvider(migrations))
-
-    report = await migrator.migrate_to_latest()
-
-    assert report.error is not None
-    assert "transaction-control SQL" in str(report.error)
-    assert await postgres_admin.fetchval("select to_regclass('postgres_committed')") is None
-    assert await postgres_admin.fetchval("select to_regclass('postgres_unrecorded')") is None
+    assert await postgres_admin.fetchval("select to_regclass('leaked')") is None
+    assert await postgres_admin.fetchval("select to_regclass('unrecorded')") is None
     assert await postgres_admin.fetchval("select count(*) from relq_migrations") == 0

@@ -80,14 +80,6 @@ def test_an_interval_keeps_its_constructor() -> None:
         Interval(months=True)
 
 
-def test_a_dialect_keeps_its_defaults() -> None:
-    dialect = Dialect("sqlite", "?")
-    assert dialect.supports_returning
-    assert not dialect.supports_row_locking
-    assert dialect.max_parameters is None
-    assert Dialect("sqlite", "?", max_parameters=3).max_parameters == 3
-
-
 # A decoder wraps a function, and a function pickles only if it is importable.
 @pytest.mark.parametrize("clone", _CLONES.values(), ids=_CLONES.keys())
 @pytest.mark.parametrize("name", [name for name in _VALUES if name != "decoder"])

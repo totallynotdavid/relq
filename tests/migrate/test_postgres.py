@@ -1,5 +1,6 @@
 from typing import cast
 
+import pytest
 from relq_migrate.postgres import (
     _Connection,  # pyright: ignore[reportPrivateUsage]
     _history_table_reference,  # pyright: ignore[reportPrivateUsage]
@@ -40,21 +41,25 @@ async def test_history_schema_cache_is_scoped_to_the_physical_connection() -> No
     assert second_connection.lookup_count == 1
 
 
-def test_standard_conforming_strings_detects_quoted_guc_names() -> None:
-    assert _is_standard_conforming_strings_statement('SET "standard_conforming_strings" = off')
-    assert _is_standard_conforming_strings_statement(
-        'SET SESSION "standard_conforming_strings" = off'
-    )
+@pytest.mark.parametrize(
+    "statement",
+    [
+        'SET "standard_conforming_strings" = off',
+        'SET SESSION "standard_conforming_strings" = off',
+        "RESET standard_conforming_strings",
+        "RESET ALL",
+        'RESET "standard_conforming_strings"',
+    ],
+)
+def test_standard_conforming_strings_changes_are_detected(statement: str) -> None:
+    assert _is_standard_conforming_strings_statement(statement)
+
+
+def test_a_doubled_quote_in_a_quoted_guc_name_is_unescaped() -> None:
     assert tuple(_leading_keywords('SET "standard_conforming_""strings" = off', limit=2)) == (
         "SET",
         'STANDARD_CONFORMING_"STRINGS',
     )
-
-
-def test_standard_conforming_strings_detects_reset_forms() -> None:
-    assert _is_standard_conforming_strings_statement("RESET standard_conforming_strings")
-    assert _is_standard_conforming_strings_statement("RESET ALL")
-    assert _is_standard_conforming_strings_statement('RESET "standard_conforming_strings"')
 
 
 def test_splitter_keeps_nested_atomic_body_statements_together() -> None:

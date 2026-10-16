@@ -1,5 +1,0 @@
-{
-  "extends": "../../pyproject.toml",
-  "include": ["bad_dialect.py"],
-  "exclude": []
-}

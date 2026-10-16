@@ -18,7 +18,7 @@ dev = [
 [tool.ruff]
 target-version = "py313"
 line-length = 100
-exclude = ["tests/snapshots", "tests/typing/generated_schema.py"]
+exclude = ["tests/snapshots"]
 
 [tool.basedpyright]
 pythonVersion = "3.13"
@@ -26,6 +26,7 @@ typeCheckingMode = "strict"
 reportAny = "error"
 reportExplicitAny = "error"
 reportUnusedCallResult = "none"
+extraPaths = ["tests/snapshots"]
 include = [
   "packages/relq-core/src",
   "packages/relq-codegen/src",
@@ -39,7 +40,6 @@ exclude = [
   "dist",
   "tests/snapshots",
   "tests/typing/bad_*.py",
-  "tests/typing/generated_schema.py",
 ]
 
 [tool.pytest.ini_options]

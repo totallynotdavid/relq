@@ -1,5 +1,0 @@
-{
-  "extends": "../../pyproject.toml",
-  "include": ["good.py"],
-  "exclude": []
-}

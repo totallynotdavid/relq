@@ -161,28 +161,17 @@ def test_controlled_transaction_savepoint_and_lifecycle() -> None:
     assert database.fetch_all(select(users.id).from_(users)) == [(1,)]
 
 
-def test_controlled_transaction_rejects_duplicate_savepoint_names() -> None:
+@pytest.mark.parametrize("duplicate", ["same", "SAME"])
+def test_controlled_transaction_rejects_duplicate_savepoint_names(duplicate: str) -> None:
     connection = sqlite3.connect(":memory:")
     database = SQLiteDatabase(connection)
     transaction = database.begin()
 
     savepoint = transaction.savepoint("same")
     with pytest.raises(ValueError, match="already active"):
-        transaction.savepoint("same")
+        transaction.savepoint(duplicate)
     savepoint.release()
     transaction.savepoint("same").release()
-    transaction.rollback()
-
-
-def test_controlled_transaction_rejects_case_insensitive_duplicate_savepoint_names() -> None:
-    connection = sqlite3.connect(":memory:")
-    database = SQLiteDatabase(connection)
-    transaction = database.begin()
-
-    savepoint = transaction.savepoint("same")
-    with pytest.raises(ValueError, match="already active"):
-        transaction.savepoint("SAME")
-    savepoint.release()
     transaction.rollback()
 
 

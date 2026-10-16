@@ -286,14 +286,18 @@ def test_failed_migration_reports_error_and_not_executed_files(tmp_path: Path) -
         database.close()
 
 
-def test_rejects_migration_transaction_control(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "create table leaked (id integer); end transaction;",
+        "savepoint migration_work; create table leaked (id integer); rollback to migration_work;",
+    ],
+    ids=["transaction", "savepoint"],
+)
+def test_rejects_migration_transaction_control(tmp_path: Path, sql: str) -> None:
     migrations = tmp_path / "migrations"
     migrations.mkdir()
-    _write(
-        migrations,
-        "0001_owns_transaction.sql",
-        "create table leaked (id integer); end transaction;",
-    )
+    _write(migrations, "0001_owns_transaction.sql", sql)
     database = sqlite3.connect(":memory:")
     try:
         migrator = SQLiteMigrator(database, FileMigrationProvider(migrations))
@@ -316,30 +320,5 @@ def test_rejects_migration_transaction_control(tmp_path: Path) -> None:
             ).fetchall()
             == []
         )
-    finally:
-        database.close()
-
-
-def test_rejects_migration_savepoint_control(tmp_path: Path) -> None:
-    migrations = tmp_path / "migrations"
-    migrations.mkdir()
-    _write(
-        migrations,
-        "0001_owns_savepoint.sql",
-        "savepoint migration_work; create table leaked (id integer); rollback to migration_work;",
-    )
-    database = sqlite3.connect(":memory:")
-    try:
-        report = SQLiteMigrator(database, FileMigrationProvider(migrations)).migrate_to_latest()
-
-        assert report.error is not None
-        assert "transaction-control SQL" in str(report.error)
-        assert (
-            database.execute(
-                "select name from sqlite_master where type = 'table' and name = 'leaked'"
-            ).fetchall()
-            == []
-        )
-        assert database.execute("select count(*) from relq_migrations").fetchone() == (0,)
     finally:
         database.close()

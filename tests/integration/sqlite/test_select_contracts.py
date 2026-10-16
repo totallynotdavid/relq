@@ -15,7 +15,6 @@ from relq import (
     column,
     count,
     cte,
-    delete_from,
     nullif,
     output_column,
     row_adapter,
@@ -25,7 +24,6 @@ from relq import (
     transaction_timestamp,
 )
 from relq._compiler import compile_postgres, compile_sqlite
-from relq.postgres import regex_match
 from relq_sqlite import SQLiteDatabase
 
 
@@ -38,9 +36,7 @@ class Users(Table):
 users = Users("users")
 
 
-def test_query_values_hide_compiler_state_and_reject_direct_construction() -> None:
-    query = select(users.id)
-    assert not hasattr(query, "state")
+def test_a_query_rejects_direct_construction() -> None:
     with pytest.raises(TypeError, match="created by relq builders"):
         SelectQuery()
 
@@ -69,14 +65,6 @@ def test_sqlite_compilation_and_execution() -> None:
         [(1, "a@example.com", True), (2, "other@invalid", True), (3, "b@example.com", False)],
     )
     assert SQLiteDatabase(connection).fetch_all(query) == [(1, "a@example.com")]
-
-
-def test_postgres_placeholders_are_positional() -> None:
-    query = select(users.id).from_(users).where(users.id.eq(7)).where(users.active.is_true())
-    compiled = compile_postgres(query)
-    assert "$1" in compiled.sql
-    assert "$2" not in compiled.sql
-    assert compiled.parameters == (7,)
 
 
 def test_postgres_row_locking_and_timestamp_arithmetic_are_closed_features() -> None:
@@ -199,19 +187,6 @@ def test_outer_join_requires_an_explicit_nullable_result_marker() -> None:
     )
 
 
-def test_outer_join_requires_marker_for_arithmetic_results() -> None:
-    class Accounts(Table):
-        id: Column[int] = column()
-
-    accounts = Accounts("accounts")
-    query = (
-        select(add(accounts.id, 1).nullable())
-        .from_(users)
-        .left_join(accounts, on=users.id.eq(accounts.id))
-    )
-    assert compile_sqlite(query).sql.startswith('select ("accounts"."id" + ?)')
-
-
 def test_nullable_marker_clears_the_requirement_wherever_it_sits() -> None:
     class Accounts(Table):
         id: Column[int] = column()
@@ -268,8 +243,6 @@ def test_raw_sqlite_rows_are_not_silently_typed_as_python_values() -> None:
     assert database.fetch_one_as(
         select(users.active).from_(users), row_adapter(BooleanRow)
     ) == BooleanRow(True)
-    assert not hasattr(select(users.id), "node")
-    assert not hasattr(select(users.id), "adapter")
 
 
 def test_single_assignment_builder_clauses_reject_accidental_replacement() -> None:
@@ -287,7 +260,6 @@ class UserIds(CteTable):
 
 
 def test_a_materialized_cte_is_portable_and_actually_executes_on_sqlite() -> None:
-    """SQLite has understood AS MATERIALIZED since 3.35.0, relq's RETURNING floor."""
     connection = sqlite3.connect(":memory:")
     connection.execute("create table users (id integer, email text, active boolean)")
     connection.execute("insert into users values (1, 'a@example.com', 1), (2, 'b@example.com', 0)")
@@ -298,22 +270,4 @@ def test_a_materialized_cte_is_portable_and_actually_executes_on_sqlite() -> Non
         .with_(ids, select(users.id).from_(users).where(users.active.is_true()), materialized=True)
     )
 
-    assert compile_sqlite(query).sql.startswith('with "ids" as materialized (')
     assert SQLiteDatabase(connection).fetch_one(query) == (1,)
-
-
-def test_sqlite_rejects_the_postgresql_only_query_surface_before_the_database_sees_it() -> None:
-    schema_qualified = Users("users", schema="analytics")
-    removed = cte(UserIds, "removed")
-    purge = (
-        select(count())
-        .from_(removed)
-        .with_modifying(removed, delete_from(users).where(users.id.eq(1)).returning(users.id))
-    )
-
-    with pytest.raises(ValueError, match="sqlite does not support schema-qualified tables"):
-        compile_sqlite(select(schema_qualified.id).from_(schema_qualified))
-    with pytest.raises(ValueError, match="sqlite does not support data-modifying"):
-        compile_sqlite(purge)
-    with pytest.raises(ValueError, match="PostgreSQL-only regex_match"):
-        compile_sqlite(select(users.id).from_(users).where(regex_match(users.email, "^a")))

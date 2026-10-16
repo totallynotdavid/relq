@@ -33,6 +33,7 @@ _INSERT = insert_into(employees).values(id=1, name="Ada")
 
 _CALLS: dict[str, Callable[[], object]] = {
     "on_conflict": lambda: _INSERT.on_conflict(_Unbuilt()),
+    "on_conflict target": lambda: _INSERT.on_conflict(_UnbuiltTarget()),
     "on_conflict base": lambda: _INSERT.on_conflict(employees.id, _UnbuiltTarget()),
     "from_select": lambda: insert_into(employees).from_select(
         select(employees.name).from_(employees),

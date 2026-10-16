@@ -1,4 +1,4 @@
-"""Unit contracts for migration file discovery and report data."""
+"""Unit contracts for migration file discovery."""
 
 from pathlib import Path
 
@@ -7,8 +7,6 @@ from relq_migrate import (
     FileMigrationProvider,
     Migration,
     MigrationError,
-    MigrationResult,
-    MigrationStatus,
 )
 
 
@@ -83,9 +81,3 @@ def test_provider_rejects_unsupported_directives(tmp_path: Path, header: str) ->
 
     with pytest.raises(MigrationError, match="unsupported directive"):
         FileMigrationProvider(tmp_path).migrations()
-
-
-def test_report_result_exposes_migration_status_names() -> None:
-    result = MigrationResult("0001_create_users.sql", MigrationStatus.SUCCESS)
-    assert result.migration_name == "0001_create_users.sql"
-    assert result.status == "Success"

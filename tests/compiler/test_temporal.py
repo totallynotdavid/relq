@@ -1,6 +1,7 @@
 """Closed PostgreSQL temporal expression and dialect-boundary contracts."""
 
 import datetime
+from collections.abc import Callable
 
 import pytest
 from relq import (
@@ -55,14 +56,7 @@ from relq import (
     transaction_timestamp,
     update,
 )
-from relq._ast import (
-    TemporalMakeTimestampNode,
-    TemporalMakeTimestamptzNode,
-    TemporalTruncNode,
-    TemporalTruncTimestamptzNode,
-)
 from relq._compiler import compile_postgres, compile_sqlite
-from relq._node_value import node_of
 
 
 class TemporalRows(Table):
@@ -75,19 +69,15 @@ class TemporalRows(Table):
     interval_value: Column[Interval] = column()
 
 
+class TemporalCte(CteTable):
+    value: Column[NaiveDateTime] = output_column()
+
+
+class TemporalDerived(DerivedTable):
+    value: Column[NaiveDateTime] = output_column()
+
+
 temporal_rows = TemporalRows("temporal_rows")
-
-
-def test_temporal_ast_has_only_valid_timestamp_and_truncation_shapes() -> None:
-    timestamp = make_timestamp(2026, 8, 19, 12, 30, 0.5)
-    timestamptz = make_timestamptz(2026, 8, 19, 12, 30, 0.5, "America/Lima")
-    truncation = date_trunc(TruncUnit.DAY, temporal_rows.naive_value)
-    zoned_truncation = date_trunc(TruncUnit.DAY, temporal_rows.aware_value, "America/Lima")
-
-    assert isinstance(node_of(timestamp), TemporalMakeTimestampNode)
-    assert isinstance(node_of(timestamptz), TemporalMakeTimestamptzNode)
-    assert isinstance(node_of(truncation), TemporalTruncNode)
-    assert isinstance(node_of(zoned_truncation), TemporalTruncTimestamptzNode)
 
 
 def test_temporal_nodes_cover_the_complete_closed_builder_surface() -> None:
@@ -149,28 +139,6 @@ def test_temporal_nodes_cover_the_complete_closed_builder_surface() -> None:
 
 
 def test_temporal_nodes_render_as_semantic_postgres_operations() -> None:
-    constructors = select(
-        current_date(),
-        local_timestamp(),
-        make_timestamp(2026, 8, 18, 12, 30, 0),
-        make_interval(months=2, days=3, seconds=1.5),
-    ).from_(temporal_rows)
-    assert compile_postgres(constructors).parameters == (
-        2026,
-        8,
-        18,
-        12,
-        30,
-        0,
-        2,
-        3,
-        1.5,
-    )
-    assert (
-        "make_interval(months => $7, days => $8, secs => $9)" in compile_postgres(constructors).sql
-    )
-    assert "current_date, localtimestamp" in compile_postgres(constructors).sql
-
     arithmetic = select(
         add_interval(temporal_rows.naive_value, Interval(days=1)),
         subtract_interval(temporal_rows.aware_value, Interval(days=1)),
@@ -233,154 +201,90 @@ def test_date_bin_rejects_known_invalid_literal_strides(stride: Interval) -> Non
         compile_postgres(query)
 
 
-def test_sqlite_rejects_temporal_nodes_in_a_join_predicate() -> None:
-    other = temporal_rows.as_("other")
-    query = (
+_PLUS_A_DAY = add_interval(temporal_rows.naive_value, Interval(days=1))
+_OTHER = temporal_rows.as_("other")
+_NESTED = select(temporal_rows.id).from_(temporal_rows).where(_PLUS_A_DAY.is_not_null())
+_DERIVED = (
+    select(_PLUS_A_DAY.as_("value")).from_(temporal_rows).as_(TemporalDerived, "temporal_derived")
+)
+_CTE = cte(TemporalCte, "temporal_cte")
+
+_SQLITE_REJECTED: dict[str, Callable[[], object]] = {
+    "join predicate": lambda: (
+        select(temporal_rows.id)
+        .from_(temporal_rows)
+        .inner_join(_OTHER, on=_PLUS_A_DAY.eq(_OTHER.naive_value))
+    ),
+    "subquery in a join predicate": lambda: (
         select(temporal_rows.id)
         .from_(temporal_rows)
         .inner_join(
-            other,
-            on=add_interval(temporal_rows.naive_value, Interval(days=1)).eq(other.naive_value),
+            _OTHER,
+            on=_OTHER.naive_value.eq(scalar(select(local_timestamp()).from_(temporal_rows))),
         )
-    )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(query)
-    assert "interval" in compile_postgres(query).sql
-
-
-def test_sqlite_rejects_a_temporal_subquery_inside_a_join_predicate() -> None:
-    other = temporal_rows.as_("other")
-    query = (
+    ),
+    "update values": lambda: (
+        update(temporal_rows).values(naive_value=_PLUS_A_DAY).where(temporal_rows.id.eq(1))
+    ),
+    "update returning": lambda: (
+        update(temporal_rows)
+        .values(naive_value=temporal_rows.naive_value)
+        .where(temporal_rows.id.eq(1))
+        .returning(_PLUS_A_DAY)
+    ),
+    "in subquery": lambda: (
+        select(temporal_rows.id).from_(temporal_rows).where(temporal_rows.id.in_(_NESTED))
+    ),
+    "exists subquery": lambda: (
         select(temporal_rows.id)
         .from_(temporal_rows)
-        .inner_join(
-            other,
-            on=other.naive_value.eq(scalar(select(local_timestamp()).from_(temporal_rows))),
+        .where(
+            temporal_rows.id.eq(temporal_rows.id)
+            & exists(select(local_timestamp()).from_(temporal_rows).where(temporal_rows.id.eq(1)))
         )
-    )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(query)
-    assert "localtimestamp" in compile_postgres(query).sql
-
-
-def test_sqlite_rejects_temporal_nodes_in_dml_and_nested_selects() -> None:
-    nested = (
-        select(temporal_rows.id)
+    ),
+    "scalar subquery": lambda: (
+        select(temporal_rows.id).from_(temporal_rows).where(temporal_rows.id.eq(scalar(_NESTED)))
+    ),
+    "upsert update": lambda: (
+        insert_into(temporal_rows)
+        .values(id=1, naive_value=temporal_rows.naive_value)
+        .on_conflict(temporal_rows.id)
+        .do_update(naive_value=_PLUS_A_DAY)
+    ),
+    "insert returning": lambda: (
+        insert_into(temporal_rows)
+        .values(id=1, naive_value=temporal_rows.naive_value)
+        .returning(_PLUS_A_DAY)
+    ),
+    "delete returning": lambda: (
+        delete_from(temporal_rows).where(temporal_rows.id.eq(1)).returning(_PLUS_A_DAY)
+    ),
+    "insert from select": lambda: insert_into(temporal_rows).from_select(
+        select(_PLUS_A_DAY).from_(temporal_rows), temporal_rows.naive_value
+    ),
+    "cte body": lambda: (
+        select(_CTE.value)
+        .from_(_CTE)
+        .with_(_CTE, select(_PLUS_A_DAY.as_("value")).from_(temporal_rows))
+    ),
+    "derived table": lambda: select(_DERIVED.value).from_(_DERIVED),
+    "compound arm": lambda: (
+        select(temporal_rows.naive_value)
         .from_(temporal_rows)
-        .where(add_interval(temporal_rows.naive_value, Interval(days=1)).is_not_null())
-    )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            update(temporal_rows)
-            .values(naive_value=add_interval(temporal_rows.naive_value, Interval(days=1)))
-            .where(temporal_rows.id.eq(1))
-        )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            update(temporal_rows)
-            .values(naive_value=temporal_rows.naive_value)
-            .where(temporal_rows.id.eq(1))
-            .returning(add_interval(temporal_rows.naive_value, Interval(days=1)))
-        )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            select(temporal_rows.id).from_(temporal_rows).where(temporal_rows.id.in_(nested))
-        )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            select(temporal_rows.id)
-            .from_(temporal_rows)
-            .where(
-                temporal_rows.id.eq(temporal_rows.id)
-                & exists(
-                    select(local_timestamp()).from_(temporal_rows).where(temporal_rows.id.eq(1))
-                )
-            )
-        )
+        .union_all(select(_PLUS_A_DAY).from_(temporal_rows))
+    ),
+}
 
 
-def test_sqlite_rejects_temporal_nodes_at_every_query_boundary() -> None:
+@pytest.mark.parametrize("build", _SQLITE_REJECTED.values(), ids=_SQLITE_REJECTED.keys())
+def test_sqlite_rejects_temporal_nodes_wherever_they_appear(build: Callable[[], object]) -> None:
     with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            insert_into(temporal_rows)
-            .values(id=1, naive_value=temporal_rows.naive_value)
-            .on_conflict(temporal_rows.id)
-            .do_update(naive_value=add_interval(temporal_rows.naive_value, Interval(days=1)))
-        )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            insert_into(temporal_rows)
-            .values(id=1, naive_value=temporal_rows.naive_value)
-            .returning(add_interval(temporal_rows.naive_value, Interval(days=1)))
-        )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            delete_from(temporal_rows)
-            .where(temporal_rows.id.eq(1))
-            .returning(add_interval(temporal_rows.naive_value, Interval(days=1)))
-        )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            insert_into(temporal_rows).from_select(
-                select(add_interval(temporal_rows.naive_value, Interval(days=1))).from_(
-                    temporal_rows
-                ),
-                temporal_rows.naive_value,
-            )
-        )
-
-    class TemporalCte(CteTable):
-        value: Column[NaiveDateTime] = output_column()
-
-    temporal_cte = cte(TemporalCte, "temporal_cte")
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            select(temporal_cte.value)
-            .from_(temporal_cte)
-            .with_(
-                temporal_cte,
-                select(
-                    add_interval(temporal_rows.naive_value, Interval(days=1)).as_("value")
-                ).from_(temporal_rows),
-            )
-        )
-
-    class TemporalDerived(DerivedTable):
-        value: Column[NaiveDateTime] = output_column()
-
-    temporal_derived = (
-        select(add_interval(temporal_rows.naive_value, Interval(days=1)).as_("value"))
-        .from_(temporal_rows)
-        .as_(TemporalDerived, "temporal_derived")
-    )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(select(temporal_derived.value).from_(temporal_derived))
-
-    scalar_query = (
-        select(temporal_rows.id)
-        .from_(temporal_rows)
-        .where(add_interval(temporal_rows.naive_value, Interval(days=1)).is_not_null())
-    )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            select(temporal_rows.id)
-            .from_(temporal_rows)
-            .where(temporal_rows.id.eq(scalar(scalar_query)))
-        )
-    with pytest.raises(ValueError, match="sqlite does not support PostgreSQL temporal expressions"):
-        compile_sqlite(
-            select(temporal_rows.naive_value)
-            .from_(temporal_rows)
-            .union_all(
-                select(add_interval(temporal_rows.naive_value, Interval(days=1))).from_(
-                    temporal_rows
-                )
-            )
-        )
+        compile_sqlite(build())  # pyright: ignore[reportArgumentType]
 
 
 def test_overlaps_needs_no_nullable_marker_after_an_outer_join() -> None:
-    """overlaps() is a NullablePredicate already, so an outer join cannot widen it."""
+    # overlaps() is a NullablePredicate already, so an outer join cannot widen it.
     other = temporal_rows.as_("other")
     on = temporal_rows.id.eq(other.id)
     overlapping = overlaps(

@@ -32,7 +32,7 @@ from relq_codegen import (
     generate_sqlite,
     render,
 )
-from relq_codegen.mapping import RELQ_NAMES, relq_name
+from relq_codegen.mapping import relq_name
 from relq_codegen.render import RELATION_ATTRIBUTES, RESERVED_NAMES
 
 
@@ -406,8 +406,6 @@ def test_codegen_reserves_exactly_the_attributes_relq_relations_claim() -> None:
 
 def test_an_undeclared_relq_import_is_refused_at_the_helper_that_emits_it() -> None:
     """The reserved set cannot fall behind: emitting an import requires declaring it."""
-    assert "Inet" in RELQ_NAMES
-
     with pytest.raises(ValueError, match="not_a_relq_export"):
         relq_name("not_a_relq_export")
 

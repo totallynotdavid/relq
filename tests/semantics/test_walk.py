@@ -18,41 +18,30 @@ from relq._ast import (
     ValueNode,
 )
 
+_ID = ColumnNode("t", "id")
+_ONE = ValueNode(1)
+_TWO = ValueNode(2)
+_SUBQUERY = SelectNode((ColumnNode("t", "id"),))
 
-def test_children_of_a_leaf_node_is_empty() -> None:
-    assert list(children(ColumnNode("t", "id"))) == []
-    assert list(children(ValueNode(1))) == []
-    assert list(children(StarNode())) == []
-
-
-def test_children_of_a_single_child_node_yields_the_operand() -> None:
-    operand = ColumnNode("t", "id")
-    assert list(children(AliasNode(operand, "alias"))) == [operand]
-
-
-def test_children_of_a_binary_node_yields_both_sides() -> None:
-    left, right = ColumnNode("t", "a"), ValueNode(1)
-    assert list(children(BinaryNode(left, "=", right))) == [left, right]
-
-
-def test_children_of_a_function_node_yields_every_argument_in_order() -> None:
-    first, second = ColumnNode("t", "name"), ValueNode("x")
-    assert list(children(FunctionNode("lower", (first, second)))) == [first, second]
+# A nested select is its own scope, so children() never descends into it.
+_CHILDREN: dict[str, tuple[Node, list[Node]]] = {
+    "column": (_ID, []),
+    "value": (_ONE, []),
+    "star": (StarNode(), []),
+    "alias": (AliasNode(_ID, "alias"), [_ID]),
+    "binary": (BinaryNode(_ID, "=", _ONE), [_ID, _ONE]),
+    "function": (FunctionNode("lower", (_ID, _ONE)), [_ID, _ONE]),
+    "scalar subquery": (ScalarSubqueryNode(_SUBQUERY), []),
+    "exists": (ExistsNode(_SUBQUERY), []),
+    "in tuple": (InNode(_ID, (_ONE, _TWO)), [_ID, _ONE, _TWO]),
+    "in subquery": (InNode(_ID, _SUBQUERY), [_ID]),
+}
 
 
-def test_children_never_crosses_into_a_nested_select() -> None:
-    subquery = SelectNode((ColumnNode("t", "id"),))
-    assert list(children(ScalarSubqueryNode(subquery))) == []
-    assert list(children(ExistsNode(subquery))) == []
-
-
-def test_children_of_in_node_only_descends_the_tuple_branch() -> None:
-    expression = ColumnNode("t", "id")
-    first, second = ValueNode(1), ValueNode(2)
-    assert list(children(InNode(expression, (first, second)))) == [expression, first, second]
-
-    subquery = SelectNode((ColumnNode("t", "id"),))
-    assert list(children(InNode(expression, subquery))) == [expression]
+@pytest.mark.parametrize("name", _CHILDREN)
+def test_children_yields_the_operands_in_order(name: str) -> None:
+    node, expected = _CHILDREN[name]
+    assert list(children(node)) == expected
 
 
 def test_children_raises_for_a_node_outside_the_closed_union() -> None:
@@ -70,7 +59,6 @@ def test_walk_yields_the_node_and_every_descendant() -> None:
 
 
 def test_walk_stops_at_a_nested_select_like_children_does() -> None:
-    subquery = SelectNode((ColumnNode("t", "id"),))
-    node = ExistsNode(subquery)
+    node = ExistsNode(_SUBQUERY)
 
     assert list(walk(node)) == [node]

@@ -37,26 +37,23 @@ def test_migrates_without_codegen(tmp_path: Path) -> None:
     assert (tmp_path / "app.db").exists()
 
 
-def test_codegen_follows_the_migration_and_leaves_out_the_history_table(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("table_option", "history_table"),
+    [([], "relq_migrations"), (["--table", "history"], "history")],
+    ids=["default history table", "custom history table"],
+)
+def test_codegen_follows_the_migration_and_leaves_out_the_history_table(
+    tmp_path: Path, table_option: list[str], history_table: str
+) -> None:
     folder = _folder(tmp_path, **{"0001_accounts": _ACCOUNTS})
     output = tmp_path / "schema.py"
 
-    result = _run("sqlite", tmp_path / "app.db", folder, "--codegen", output)
+    result = _run("sqlite", tmp_path / "app.db", folder, *table_option, "--codegen", output)
 
     assert result.returncode == 0, result.stderr
     generated = output.read_text()
     assert "class Accounts(Table" in generated
-    assert "relq_migrations" not in generated
-
-
-def test_codegen_leaves_out_a_custom_history_table(tmp_path: Path) -> None:
-    folder = _folder(tmp_path, **{"0001_accounts": _ACCOUNTS})
-    output = tmp_path / "schema.py"
-
-    result = _run("sqlite", tmp_path / "app.db", folder, "--table", "history", "--codegen", output)
-
-    assert result.returncode == 0, result.stderr
-    assert "history" not in output.read_text()
+    assert history_table not in generated
 
 
 def test_check_passes_when_current_and_fails_when_the_module_is_stale(tmp_path: Path) -> None:

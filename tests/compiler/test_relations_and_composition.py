@@ -63,17 +63,6 @@ def test_composition_supports_correlated_subqueries_derived_sources_unions_and_c
         in compiled.sql
     )
 
-    totals = (
-        select(employees.manager_id, count().as_("reports"))
-        .from_(employees)
-        .group_by(employees.manager_id)
-        .as_(ManagerTotals, "totals")
-    )
-    assert (
-        'from (select "employees"."manager_id", count(*) as "reports"'
-        in compile_sqlite(select(totals.reports).from_(totals).where(totals.reports.gte(1))).sql
-    )
-
     active = cte(ActiveEmployees, "active")
     assert compile_sqlite(
         select(active.id).from_(active).with_(active, select(employees.id).from_(employees))

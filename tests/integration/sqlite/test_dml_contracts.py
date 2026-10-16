@@ -3,7 +3,7 @@
 import sqlite3
 
 import pytest
-from relq import ConflictTarget, delete_from, excluded, insert_into, select, update, value
+from relq import delete_from, excluded, insert_into, select, update, value
 from relq._compiler import compile_postgres, compile_sqlite
 from relq_sqlite import SQLiteDatabase
 
@@ -253,8 +253,6 @@ def test_conflict_target_accepts_any_number_of_columns() -> None:
         )
         .do_update(payload=excluded(composite_keys.payload))
     )
-    # Six target columns: past the four the old overload ladder could spell,
-    # and spanning four value types including a nullable one.
     assert (
         'on conflict ("tenant", "queue", "dedupe_key", "active", "epoch", "day")'
         in compile_sqlite(upsert).sql
@@ -270,19 +268,6 @@ def test_conflict_target_gate_matches_its_annotation_exactly() -> None:
     # but not the other, and is refused at runtime just as it is statically.
     with pytest.raises(TypeError, match="must be table columns"):
         insert.on_conflict(composite_keys.tenant, value(1))  # pyright: ignore[reportArgumentType]
-
-    # A ConflictTarget declared outside relq type-checks, so the runtime must
-    # answer for it rather than leaking a private attribute.  Inheriting the
-    # base does not confer a node; skipping the construction token is exactly
-    # how a subclass would try.
-    class Unbuilt(ConflictTarget):
-        __slots__ = ()
-
-        def __init__(self) -> None:
-            pass
-
-    with pytest.raises(TypeError, match="must be table columns"):
-        insert.on_conflict(Unbuilt())
 
     # A real Column still has to belong to the INSERT table.
     with pytest.raises(ValueError, match="must belong to the INSERT table"):

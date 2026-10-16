@@ -60,20 +60,6 @@ async def drop_schema(harness: PostgresHarness) -> None:
         await connection.close()
 
 
-async def schema_exists(harness: PostgresHarness) -> bool:
-    """Check lifecycle state through an independent control connection."""
-    connection = await asyncpg.connect(harness.dsn)
-    try:
-        return (
-            await connection.fetchval(
-                "select exists(select 1 from pg_namespace where nspname = $1)", harness.schema
-            )
-            is True
-        )
-    finally:
-        await connection.close()
-
-
 async def connect_admin(harness: PostgresHarness) -> asyncpg.Connection:
     """Open a test-only connection whose unqualified names use the harness schema."""
     connection = await asyncpg.connect(harness.dsn)
