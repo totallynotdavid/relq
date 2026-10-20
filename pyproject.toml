@@ -8,11 +8,11 @@ members = ["packages/*"]
 
 [dependency-groups]
 dev = [
-  "asyncpg-stubs>=0.31.3",
-  "basedpyright>=1.39.9",
+  "asyncpg-stubs>=0.32.0",
+  "basedpyright>=1.40.2",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.4.0",
-  "ruff>=0.16.2",
+  "ruff>=0.17.1",
 ]
 
 [tool.ruff]
