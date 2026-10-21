@@ -19,5 +19,9 @@ build/
 dist/
 *.egg-info/
 
+.env
+.env.*
+!.env.example
+
 # Generated local CodeGraph index
 .codegraph/
