@@ -6,7 +6,7 @@ readme = "readme.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.13"
-dependencies = ["typing-extensions>=4.16.0"]
+dependencies = []
 
 [project.optional-dependencies]
 sqlite = ["relq-sqlite==0.1.0"]
@@ -18,5 +18,5 @@ relq-sqlite = { workspace = true }
 relq-postgres = { workspace = true }
 
 [build-system]
-requires = ["uv_build>=0.12.3,<0.13"]
+requires = ["uv_build>=0.13.6,<0.14"]
 build-backend = "uv_build"

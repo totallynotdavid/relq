@@ -19,8 +19,8 @@ uv add "relq[sqlite,postgres]"
 | `relq-migrate`  | `uv add relq-migrate`          | [Migrations](./migrations.md)                         |
 | `relq-codegen`  | `uv tool run relq-codegen`     | [Code generation](./codegen.md)                       |
 
-`relq` itself depends only on `typing-extensions`. Each extra pins the executor
-package to the same version as `relq`. `relq[all]` installs both executors.
+`relq` itself has no dependencies. Each extra pins the executor package to the
+same version as `relq`. `relq[all]` installs both executors.
 
 `relq-migrate` has no dependencies for SQLite. Its PostgreSQL migrator needs the
 `postgres` extra, and the `codegen` extra adds `relq-codegen` for the
