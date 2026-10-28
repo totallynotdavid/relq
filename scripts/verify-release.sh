@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Check that the release tag, the distribution versions and the release notes agree.
-# Reads the tag from RELEASE_TAG, for example v0.1.0.
+# Reads the tag from RELEASE_TAG, for example v0.1.0. Without it, checks the
+# release notes against the current version, as a pull request does.
 
 set -euo pipefail
 
-: "${RELEASE_TAG:?set RELEASE_TAG to the tag being released}"
-
 cd "$(dirname -- "${BASH_SOURCE[0]}")/.."
+
+: "${RELEASE_TAG:=v$(uv run --locked --all-packages python -c 'from importlib.metadata import version; print(version("relq"))')}"
+export RELEASE_TAG
 
 uv run --locked --all-packages python -c '
 from importlib.metadata import version

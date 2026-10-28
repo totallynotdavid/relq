@@ -2,7 +2,9 @@
 
 Each release publishes one tested version set: `relq`, `relq-sqlite`,
 `relq-postgres`, `relq-codegen`, and `relq-migrate` all have the same version.
-Pushing a `v*` tag is the only thing that starts publishing.
+Pushing a `v*` tag is the only thing that starts publishing. A pull request runs
+the same workflow without the publish and GitHub Release jobs, so a broken
+release shows before the tag.
 
 ## Prepare a release
 
