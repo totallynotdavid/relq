@@ -9,24 +9,31 @@ version = "18.6"
 backend = "vfox:mise-plugins/vfox-postgres"
 
 [tools.postgres."platforms.linux-arm64"]
+checksum = "sha256:983ee554ec53dbeb9b70797bef9fcf4e67e117e7e48ca1463cc80b3ff8e8ff3f"
 url = "https://ftp.postgresql.org/pub/source/v18.6/postgresql-18.6.tar.gz"
 
 [tools.postgres."platforms.linux-arm64-musl"]
+checksum = "sha256:983ee554ec53dbeb9b70797bef9fcf4e67e117e7e48ca1463cc80b3ff8e8ff3f"
 url = "https://ftp.postgresql.org/pub/source/v18.6/postgresql-18.6.tar.gz"
 
 [tools.postgres."platforms.linux-x64"]
+checksum = "sha256:983ee554ec53dbeb9b70797bef9fcf4e67e117e7e48ca1463cc80b3ff8e8ff3f"
 url = "https://ftp.postgresql.org/pub/source/v18.6/postgresql-18.6.tar.gz"
 
 [tools.postgres."platforms.linux-x64-musl"]
+checksum = "sha256:983ee554ec53dbeb9b70797bef9fcf4e67e117e7e48ca1463cc80b3ff8e8ff3f"
 url = "https://ftp.postgresql.org/pub/source/v18.6/postgresql-18.6.tar.gz"
 
 [tools.postgres."platforms.macos-arm64"]
+checksum = "sha256:983ee554ec53dbeb9b70797bef9fcf4e67e117e7e48ca1463cc80b3ff8e8ff3f"
 url = "https://ftp.postgresql.org/pub/source/v18.6/postgresql-18.6.tar.gz"
 
 [tools.postgres."platforms.macos-x64"]
+checksum = "sha256:983ee554ec53dbeb9b70797bef9fcf4e67e117e7e48ca1463cc80b3ff8e8ff3f"
 url = "https://ftp.postgresql.org/pub/source/v18.6/postgresql-18.6.tar.gz"
 
 [tools.postgres."platforms.windows-x64"]
+checksum = "sha256:983ee554ec53dbeb9b70797bef9fcf4e67e117e7e48ca1463cc80b3ff8e8ff3f"
 url = "https://ftp.postgresql.org/pub/source/v18.6/postgresql-18.6.tar.gz"
 
 [[tools.python]]
