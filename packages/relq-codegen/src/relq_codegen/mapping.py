@@ -156,18 +156,28 @@ def _resolve_builtin(
                 ),
             )
         raise CodegenError(f"database type {sql_type.name!r} is rejected: {mapping.reason}")
+    if dialect == "sqlite":
+        if normalized == "interval":
+            # sqlite3 returns an interval-declared column as text, and
+            # interval_decoder() accepts only a relq.Interval, so generated code
+            # would fail at decode time. A configured mapping, checked earlier,
+            # is how to read such a column.
+            raise CodegenError(
+                f"database type {sql_type.name!r} is rejected: SQLite has no interval type, "
+                "and relq.Interval is PostgreSQL-only; map it in a relq-codegen --config file"
+            )
+        affinity_type = _sqlite_affinity_type(normalized)
+        if affinity_type is not None:
+            return affinity_type
     if "uuid" in normalized:
         return ResolvedType(_attribute("uuid", "UUID"), Call(relq_name("uuid_decoder")))
     if normalized == "inet":
         return ResolvedType(relq_name("Inet"), Call(relq_name("inet_decoder")))
-    if "json" in normalized:
+    if normalized in {"json", "jsonb"}:
         return ResolvedType(relq_name("JsonValue"), Call(relq_name("json_decoder")))
     if "bool" in normalized:
         return ResolvedType(Name("bool"), Call(relq_name("bool_decoder")))
-    if (
-        normalized in {"int2", "int4", "int8", "integer", "smallint", "bigint"}
-        or "serial" in normalized
-    ):
+    if normalized in _INTEGER_TYPES or "serial" in normalized:
         return ResolvedType(Name("int"), Call(relq_name("int_decoder")))
     if any(token in normalized for token in ("numeric", "decimal")):
         return ResolvedType(
@@ -204,21 +214,49 @@ def _resolve_builtin(
     if normalized.startswith("time"):
         return ResolvedType(_attribute("datetime", "time"), Call(relq_name("time_decoder")))
     if normalized == "interval":
-        if dialect == "sqlite":
-            # sqlite3 returns an interval-declared column as text, and
-            # interval_decoder() accepts only a relq.Interval, so generated code
-            # would fail at decode time. A configured mapping, checked earlier,
-            # is how to read such a column.
-            raise CodegenError(
-                f"database type {sql_type.name!r} is rejected: SQLite has no interval type, "
-                "and relq.Interval is PostgreSQL-only; map it in a relq-codegen --config file"
-            )
         return ResolvedType(relq_name("Interval"), Call(relq_name("interval_decoder")))
-    if any(token in normalized for token in ("char", "text", "string", "citext", "xml", "name")):
+    if dialect == "postgres" and normalized in _POSTGRES_TEXT_TYPES:
         return ResolvedType(Name("str"), Call(relq_name("str_decoder")))
     raise CodegenError(
         f"unsupported database type {sql_type.name!r}; map it in a relq-codegen --config file"
     )
+
+
+_INTEGER_TYPES = frozenset(
+    {
+        "int",
+        "int2",
+        "int4",
+        "int8",
+        "integer",
+        "tinyint",
+        "smallint",
+        "mediumint",
+        "bigint",
+        "unsigned big int",
+    }
+)
+_POSTGRES_TEXT_TYPES = frozenset(
+    {"text", "name", "xml", "citext", "bpchar", "varchar", "char", "character", "character varying"}
+)
+
+
+def _sqlite_affinity_type(normalized: str) -> ResolvedType | None:
+    """Apply SQLite's declared-type affinity rules in their documented order.
+
+    INT wins over CHAR, CLOB and TEXT, which win over BLOB, which wins over REAL,
+    FLOA and DOUB. Anything else has NUMERIC affinity and is named by the
+    spellings the generic mapping recognises.
+    """
+    if "int" in normalized:
+        return ResolvedType(Name("int"), Call(relq_name("int_decoder")))
+    if any(token in normalized for token in ("char", "clob", "text")):
+        return ResolvedType(Name("str"), Call(relq_name("str_decoder")))
+    if "blob" in normalized:
+        return ResolvedType(Name("bytes"), Call(relq_name("bytes_decoder")))
+    if any(token in normalized for token in ("real", "floa", "doub")):
+        return ResolvedType(Name("float"), Call(relq_name("float_decoder")))
+    return None
 
 
 def _attribute(module: str, name: str) -> Attribute:

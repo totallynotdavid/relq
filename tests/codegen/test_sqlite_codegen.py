@@ -2,6 +2,7 @@
 
 import ast
 import dataclasses
+import datetime
 import enum
 import importlib.util
 import sqlite3
@@ -80,6 +81,89 @@ def test_codegen_maps_richer_database_value_types() -> None:
     assert "price: Column[decimal.Decimal]" in generated
     assert "occurred: Column[datetime.date | None]" in generated
     assert "payload: Column[JsonValue | None] = column()" in generated
+
+
+def test_sqlite_codegen_skips_only_reserved_sqlite_tables() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute("create table sqlitelog (id integer primary key)")
+    connection.execute("create table counters (id integer primary key autoincrement)")
+    connection.execute("insert into counters default values")
+    generated = generate_sqlite(connection)
+    assert "class Sqlitelog(Table" in generated
+    assert "class Counters(Table" in generated
+    assert "SqliteSequence" not in generated
+
+
+@pytest.mark.parametrize(
+    ("declared", "annotation"),
+    [
+        ("int", "int"),
+        ("tinyint", "int"),
+        ("unsigned big int", "int"),
+        ("clob", "str"),
+        ("nvarchar(20)", "str"),
+        ("jsonb", "JsonValue"),
+    ],
+)
+def test_sqlite_codegen_maps_documented_affinity_spellings(declared: str, annotation: str) -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(f"create table t (v {declared} not null)")
+    assert f"v: Column[{annotation}] = column()" in generate_sqlite(connection)
+
+
+@pytest.mark.parametrize("declared", ["hostname", "username", "xml"])
+def test_sqlite_codegen_rejects_declared_types_that_only_resemble_text(declared: str) -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(f"create table t (v {declared} not null)")
+    connection.execute("insert into t values ('123')")
+    assert connection.execute("select typeof(v) from t").fetchone() == ("integer",)
+    with pytest.raises(CodegenError, match="unsupported database type"):
+        generate_sqlite(connection)
+
+
+@pytest.mark.parametrize(
+    ("declared", "stored", "annotation", "decoded"),
+    [
+        ("charint", "123", "int", 123),
+        ("textint", "123", "int", 123),
+        ("clobint", "123", "int", 123),
+        ("floating point", "7", "int", 7),
+        ("blobchar", "abc", "str", "abc"),
+        ("charreal", "1.5", "str", "1.5"),
+        ("decimalfloat", "1.5", "float", 1.5),
+    ],
+)
+def test_sqlite_codegen_resolves_affinity_in_sqlite_precedence_order(
+    declared: str, stored: str, annotation: str, decoded: object
+) -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(f'create table t (v "{declared}" not null)')
+    connection.execute("insert into t values (?)", (stored,))
+    generated = generate_sqlite(connection)
+    assert f"v: Column[{annotation}] = column()" in generated
+    namespace: dict[str, object] = {}
+    exec(generated, namespace)
+    adapter = cast(RowAdapter[object], namespace["t_row_adapter"])
+    row = cast(tuple[object, ...], connection.execute("select * from t").fetchone())
+    assert vars(adapter.map(row)) == {"v": decoded}
+
+
+def test_generated_sqlite_adapter_decodes_what_sqlite_returns() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "create table flags (id integer primary key, active boolean not null, day date, at timestamp)"
+    )
+    connection.execute("insert into flags values (1, 1, '2020-01-01', '2020-01-01 10:00:00')")
+    namespace: dict[str, object] = {}
+    exec(generate_sqlite(connection), namespace)
+    adapter = cast(RowAdapter[object], namespace["flags_row_adapter"])
+    row = cast(tuple[object, ...], connection.execute("select * from flags").fetchone())
+    assert vars(adapter.map(row)) == {
+        "id": 1,
+        "active": True,
+        "day": datetime.date(2020, 1, 1),
+        "at": datetime.datetime(2020, 1, 1, 10, 0),
+    }
 
 
 def test_codegen_maps_postgres_temporal_catalog_spellings_to_branded_domains() -> None:

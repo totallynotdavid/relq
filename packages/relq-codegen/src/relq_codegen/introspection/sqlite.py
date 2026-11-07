@@ -10,7 +10,7 @@ def inspect_sqlite(connection: sqlite3.Connection) -> tuple[SchemaTable, ...]:
     """Read user tables and columns using SQLite's stable PRAGMA metadata."""
     names = _rows(
         connection.execute(
-            "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' order by name"
+            "select name from sqlite_master where type = 'table' and name not glob 'sqlite_*' order by name"
         )
     )
     tables: list[SchemaTable] = []
