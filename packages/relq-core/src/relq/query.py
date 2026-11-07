@@ -117,16 +117,14 @@ class _SelectQuery[SqlRow, Row_co](Query[Row_co]):
         node = select_node(self)
         if node.limit is not None:
             raise ValueError("limit() can only be specified once")
-        if amount < 0:
-            raise ValueError("limit must be non-negative")
+        _validate_row_count("limit", amount)
         return self._with_node(replace(node, limit=amount))
 
     def offset(self, amount: int) -> Self:
         node = select_node(self)
         if node.offset is not None:
             raise ValueError("offset() can only be specified once")
-        if amount < 0:
-            raise ValueError("offset must be non-negative")
+        _validate_row_count("offset", amount)
         return self._with_node(replace(node, offset=amount))
 
     def as_[Relation: DerivedTable[object]](self, relation: type[Relation], alias: str) -> Relation:
@@ -364,6 +362,13 @@ def select_all_from[SqlRow](source: Source[SqlRow]) -> SelectQuery[SqlRow]:
     if not columns:
         raise ValueError("select_all_from requires a relation with declared columns")
     return new_query(SelectQuery, SelectNode(tuple(expression_node(column) for column in columns)))
+
+
+def _validate_row_count(clause: str, amount: object) -> None:
+    if type(amount) is not int:
+        raise TypeError(f"{clause} must be an int, not {type(amount).__name__}")
+    if amount < 0:
+        raise ValueError(f"{clause} must be non-negative")
 
 
 def _selection_nodes(

@@ -10,7 +10,7 @@ SQLITE_MAX_PARAMETERS = 999
 # supported driver, rejects a statement with more than 32,767.
 POSTGRES_MAX_PARAMETERS = 32_767
 
-SQLITE = Dialect("sqlite", "?", max_parameters=SQLITE_MAX_PARAMETERS)
+SQLITE = Dialect("sqlite", "?", max_parameters=SQLITE_MAX_PARAMETERS, offset_requires_limit=True)
 POSTGRES = Dialect(
     "postgres",
     "$",

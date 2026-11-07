@@ -255,6 +255,41 @@ def test_single_assignment_builder_clauses_reject_accidental_replacement() -> No
         query.offset(1).offset(2)
 
 
+@pytest.mark.parametrize("clause", ["limit", "offset"])
+@pytest.mark.parametrize(
+    ("amount", "error"),
+    [
+        pytest.param(True, TypeError, id="bool"),
+        pytest.param(1.5, TypeError, id="float"),
+        pytest.param("1", TypeError, id="text"),
+        pytest.param(-1, ValueError, id="negative"),
+    ],
+)
+def test_limit_and_offset_accept_only_non_negative_integers(
+    clause: str, amount: object, error: type[Exception]
+) -> None:
+    query = select(users.id).from_(users)
+    with pytest.raises(error):
+        getattr(query, clause)(amount)
+
+
+def test_offset_without_limit_executes_on_sqlite_and_compiles_for_postgres() -> None:
+    query = select(users.id).from_(users).order_by(users.id.asc()).offset(1)
+    assert compile_sqlite(query).sql == (
+        'select "users"."id" from "users" order by "users"."id" asc limit -1 offset 1'
+    )
+    assert compile_postgres(query).sql == (
+        'select "users"."id" from "users" order by "users"."id" asc offset 1'
+    )
+    connection = sqlite3.connect(":memory:")
+    connection.execute("create table users (id integer, email text, active boolean)")
+    connection.executemany(
+        "insert into users values (?, ?, ?)",
+        [(1, "a@example.com", True), (2, "b@example.com", True), (3, "c@example.com", False)],
+    )
+    assert SQLiteDatabase(connection).fetch_all(query) == [(2,), (3,)]
+
+
 class UserIds(CteTable):
     id: Column[int] = output_column()
 

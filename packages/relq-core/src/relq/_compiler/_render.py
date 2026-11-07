@@ -144,6 +144,8 @@ def _compile_select(
         )
     if node.limit is not None:
         sql += " limit " + str(node.limit)
+    elif node.offset is not None and dialect.offset_requires_limit:
+        sql += " limit -1"
     if node.offset is not None:
         sql += " offset " + str(node.offset)
     for lock in node.locks:

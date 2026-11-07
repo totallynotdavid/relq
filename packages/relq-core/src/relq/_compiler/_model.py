@@ -12,6 +12,7 @@ class Dialect(FrozenSlots):
     __slots__ = (
         "max_parameters",
         "name",
+        "offset_requires_limit",
         "placeholder",
         "supports_conflict_predicates",
         "supports_data_modifying_ctes",
@@ -32,6 +33,7 @@ class Dialect(FrozenSlots):
     supports_schema_qualified_tables: bool
     supports_data_modifying_ctes: bool
     supports_postgres_expressions: bool
+    offset_requires_limit: bool
 
     def __init__(
         self,
@@ -45,6 +47,7 @@ class Dialect(FrozenSlots):
         supports_schema_qualified_tables: bool = False,
         supports_data_modifying_ctes: bool = False,
         supports_postgres_expressions: bool = False,
+        offset_requires_limit: bool = False,
     ) -> None:
         # Slots rule out class-level field defaults, so the defaults live here.
         set_field = object.__setattr__
@@ -58,6 +61,7 @@ class Dialect(FrozenSlots):
         set_field(self, "supports_schema_qualified_tables", supports_schema_qualified_tables)
         set_field(self, "supports_data_modifying_ctes", supports_data_modifying_ctes)
         set_field(self, "supports_postgres_expressions", supports_postgres_expressions)
+        set_field(self, "offset_requires_limit", offset_requires_limit)
 
 
 @dataclass(frozen=True)

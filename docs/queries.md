@@ -16,6 +16,10 @@ query = (
 )
 ```
 
+`limit` and `offset` take non-negative `int` values and can each be set once.
+`offset` without `limit` is valid on both dialects: SQLite renders it with
+`limit -1`.
+
 Joins are `inner_join`, `left_join`, `right_join`, `full_join`, and
 `cross_join`. A join predicate is validated where it is introduced, so it cannot
 reference a relation that appears later in the query.
