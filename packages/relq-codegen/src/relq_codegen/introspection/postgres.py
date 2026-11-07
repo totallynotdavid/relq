@@ -66,7 +66,7 @@ async def inspect_postgres(
         join pg_namespace table_ns on table_ns.oid = table_class.relnamespace
         join pg_type column_type on column_type.oid = attribute.atttypid
         join pg_namespace type_ns on type_ns.oid = column_type.typnamespace
-        left join pg_type element_type on element_type.oid = column_type.typelem
+        left join pg_type element_type on element_type.typarray = column_type.oid
         left join pg_namespace element_type_ns on element_type_ns.oid = element_type.typnamespace
         where table_ns.nspname = $1
           and table_class.relkind in ('r', 'p')

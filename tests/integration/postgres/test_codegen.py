@@ -12,12 +12,16 @@ import asyncpg
 import pytest
 from relq import aware_datetime, naive_time, select_all_from
 from relq_codegen import (
+    ArrayType,
+    BuiltinType,
     CodegenConfig,
+    CodegenError,
     DirectType,
     GeneratedWrapper,
     Name,
     TypeIdentity,
     generate_postgres,
+    inspect_postgres,
 )
 from relq_codegen.__main__ import main as codegen_main
 from relq_postgres import PostgresDatabase
@@ -110,6 +114,31 @@ async def test_generated_temporal_model_decodes_postgres_temporal_columns(
             computed=None,
         )
     ]
+
+
+async def test_catalog_arrays_are_only_real_array_types(
+    postgres_codegen_admin: asyncpg.Connection, postgres_codegen_schema: str
+) -> None:
+    await postgres_codegen_admin.execute(
+        "create table kinds (n name not null, p point not null, "
+        "tags text[] not null, path jsonpath not null)"
+    )
+    (table,) = await inspect_postgres(postgres_codegen_admin, schema=postgres_codegen_schema)
+    assert {column.name: column.sql_type for column in table.columns} == {
+        "n": BuiltinType("name"),
+        "p": BuiltinType("point"),
+        "tags": ArrayType(BuiltinType("text")),
+        "path": BuiltinType("jsonpath"),
+    }
+    with pytest.raises(CodegenError, match="unsupported database type 'point'"):
+        await generate_postgres(postgres_codegen_admin, schema=postgres_codegen_schema)
+    await postgres_codegen_admin.execute("alter table kinds drop column p")
+    with pytest.raises(CodegenError, match="unsupported database type 'jsonpath'"):
+        await generate_postgres(postgres_codegen_admin, schema=postgres_codegen_schema)
+    await postgres_codegen_admin.execute("alter table kinds drop column path")
+    generated = await generate_postgres(postgres_codegen_admin, schema=postgres_codegen_schema)
+    assert "n: Column[str] = column()" in generated
+    assert "tags: Column[list[str]] = column()" in generated
 
 
 async def test_codegen_cli_detects_changed_schema(
