@@ -241,7 +241,9 @@ def aware_datetime_decoder() -> Decoder[AwareDateTime]:
 
 
 def date_decoder() -> Decoder[datetime.date]:
-    return _temporal_decoder("date", datetime.date, datetime.date.fromisoformat)
+    return _temporal_decoder(
+        "date", datetime.date, datetime.date.fromisoformat, reject=datetime.datetime
+    )
 
 
 def time_decoder() -> Decoder[datetime.time]:
@@ -289,7 +291,16 @@ def str_decoder() -> Decoder[str]:
 
 
 def bool_decoder() -> Decoder[bool]:
-    return _instance_decoder("bool", bool)
+    """Decode a ``bool``, or the ``0`` and ``1`` SQLite stores for booleans."""
+
+    def decode(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int) and value in {0, 1}:
+            return bool(value)
+        raise TypeError("expected bool")
+
+    return Decoder("bool", decode)
 
 
 def bytes_decoder() -> Decoder[bytes]:
@@ -324,9 +335,15 @@ def _field_names[Model](model: type[Model]) -> tuple[str, ...]:
 
 
 def _temporal_decoder[Value](
-    name: str, expected: type[Value], parse: Callable[[str], Value]
+    name: str,
+    expected: type[Value],
+    parse: Callable[[str], Value],
+    *,
+    reject: type[object] | None = None,
 ) -> Decoder[Value]:
     def decode(value: object) -> Value:
+        if reject is not None and isinstance(value, reject):
+            raise TypeError(f"{name} values must not be {reject.__name__} instances")
         if isinstance(value, expected):
             return value
         if isinstance(value, str):

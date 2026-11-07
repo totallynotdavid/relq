@@ -9,6 +9,8 @@ import uuid
 import pytest
 from relq import (
     RowDecodingError,
+    bool_decoder,
+    date_decoder,
     datetime_decoder,
     decimal_decoder,
     enum_decoder,
@@ -120,3 +122,28 @@ def test_explicit_row_decoders_are_opt_in_and_diagnose_precisely() -> None:
         null_uuid.map((None,))
     assert inet_decoder().decode("203.0.113.7") == ipaddress.IPv4Address("203.0.113.7")
     assert inet_decoder().decode("2001:db8::1/64") == ipaddress.IPv6Interface("2001:db8::1/64")
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(True, True), (False, False), (1, True), (0, False)],
+    ids=["true", "false", "sqlite-one", "sqlite-zero"],
+)
+def test_bool_decoder_reads_booleans_and_sqlite_flags(value: object, expected: bool) -> None:
+    assert bool_decoder().decode(value) is expected
+
+
+@pytest.mark.parametrize("value", [2, -1, 1.0, "1", None], ids=repr)
+def test_bool_decoder_rejects_other_values(value: object) -> None:
+    with pytest.raises(TypeError):
+        bool_decoder().decode(value)
+
+
+def test_date_decoder_rejects_a_datetime_that_is_not_a_date() -> None:
+    assert date_decoder().decode(datetime.date(2020, 1, 1)) == datetime.date(2020, 1, 1)
+    assert date_decoder().decode("2020-01-01") == datetime.date(2020, 1, 1)
+    with pytest.raises(TypeError, match="must not be datetime"):
+        date_decoder().decode(datetime.datetime(2020, 1, 1, 12))
+    assert datetime_decoder().decode(datetime.datetime(2020, 1, 1, 12)) == datetime.datetime(
+        2020, 1, 1, 12
+    )
