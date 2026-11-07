@@ -47,6 +47,21 @@ def test_dml_requires_explicit_execution_intent() -> None:
         database.execute(select(employees.id).from_(employees))  # pyright: ignore[reportArgumentType]
 
 
+def test_dml_where_is_single_assignment() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute("create table employees (id integer primary key, name text, salary integer)")
+    connection.executemany(
+        "insert into employees values (?, ?, ?)", [(1, "Ada", 10), (2, "Grace", 10)]
+    )
+    database = SQLiteDatabase(connection)
+    with pytest.raises(ValueError, match=r"where\(\) can only"):
+        update(employees).values(salary=0).where(employees.id.eq(1)).where(employees.name.eq("x"))
+    with pytest.raises(ValueError, match=r"where\(\) can only"):
+        delete_from(employees).where(employees.id.eq(1)).where(employees.name.eq("x"))
+    assert database.execute(delete_from(employees).where(employees.id.eq(1))) == 1
+    assert database.fetch_all(select(employees.id).from_(employees)) == [(2,)]
+
+
 def test_insert_from_select_and_conflict_updates_compile_and_execute() -> None:
     connection = sqlite3.connect(":memory:")
     connection.execute("create table employees (id integer primary key, name text not null unique)")

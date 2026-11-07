@@ -403,6 +403,8 @@ class UpdateQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         return self.with_node(replace(self._node, values=_values(self._table, entries)))
 
     def where(self, predicate: BooleanExpression) -> UpdateQuery[Row_co, Returns, Literal[True]]:
+        if self._node.where is not None:
+            raise ValueError("where() can only be specified once")
         return new_query(
             UpdateQuery,
             replace(self._node, where=node_of(predicate), bounded=True),
@@ -513,6 +515,8 @@ class DeleteQuery(_DmlQuery[Row_co], Generic[Row_co, Returns, Bounded]):
         return node
 
     def where(self, predicate: BooleanExpression) -> DeleteQuery[Row_co, Returns, Literal[True]]:
+        if self._node.where is not None:
+            raise ValueError("where() can only be specified once")
         return new_query(
             DeleteQuery,
             replace(self._node, where=node_of(predicate), bounded=True),

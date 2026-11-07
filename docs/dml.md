@@ -125,7 +125,8 @@ delete_from(users).where(users.id.eq(42))
 
 Neither compiles until `.where(...)` bounds it or `.all_rows()` marks a
 deliberate full-table operation. An unbounded `UPDATE` or `DELETE` is a build
-error.
+error. `.where(...)` can be called once on an `UPDATE` or `DELETE`; combine
+predicates with `&` instead of calling it twice.
 
 ## Returning
 
